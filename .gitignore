@@ -38,6 +38,9 @@ logs/
 *.whl
 output.txt
 
+.env.example
+.env.template
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
