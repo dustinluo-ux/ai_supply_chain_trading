@@ -1,0 +1,73 @@
+# Data Configuration
+# Configure where to load stock market data and how to filter the universe
+
+data_sources:
+  # Path to historical stock market data directory
+  # Can contain subdirectories for nasdaq, sp500, forbes2000, nyse, etc.
+  # Updated: Now in OneDrive for cloud storage
+  data_dir: "C:/Users/dusro/OneDrive/Programming/ai_supply_chain_trading/data/stock_market_data"
+  
+  # File format to look for (auto-detect if not specified)
+  file_format: "csv"  # Options: csv, parquet, auto
+  
+  # Subdirectories to search (empty = search all)
+  subdirectories:
+    - "nasdaq/csv"
+    - "sp500/csv"
+    - "forbes2000/csv"
+    - "nyse/csv"
+
+# Universe Selection
+universe_selection:
+  # Which index/source to use (if metadata exists)
+  source: "all"  # Options: nasdaq, sp500, forbes2000, nyse, all
+  
+  # Maximum number of tickers to include
+  max_tickers: 15
+  
+  # Minimum data points required (252 = 1 year of trading days)
+  # Reduced to 100 to allow stocks with partial data
+  min_data_points: 100
+  
+  # Date range filter
+  # Note: If your data is older, adjust these dates
+  # The backtest will use whatever date range is available in the data
+  date_range:
+    start: "2020-01-01"  # Start earlier to catch more data
+    end: "2024-12-31"
+
+# Filtering Criteria
+filtering:
+  # Tickers to explicitly exclude (e.g., delisted, bad data)
+  exclude_tickers: []
+  
+  # Require news data to be present
+  require_news: false
+  
+  # Minimum price (exclude penny stocks)
+  min_price: 1.0
+  
+  # Exclude tickers with too many missing days
+  max_missing_days_ratio: 0.1  # 10% missing days max
+
+# News Data Configuration
+news_data:
+  # Enable news analysis
+  enabled: true
+  
+  # Directory containing news JSON files
+  directory: "data/news"
+  
+  # News data source
+  source: "FNSPID"  # Options: FNSPID, Polygon, MarketAux, custom
+  
+  # Date range of news data
+  date_range:
+    start: "2023-01-01"
+    end: "2024-12-31"
+  
+  # Lookback window for news analysis (days)
+  lookback_days: 7
+  
+  # Minimum articles required for analysis
+  min_articles: 1

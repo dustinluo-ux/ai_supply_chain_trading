@@ -1,0 +1,73 @@
+# Model Configuration
+# Change 'active_model' to switch between models - NO CODE CHANGES NEEDED
+
+# Enable ML model (set to true to use regression, false to use weighted signals)
+use_ml: false  # Set to true to enable ML predictions
+
+# Which model to use for predictions
+active_model: 'linear'  # Options: linear, ridge, lasso, xgboost
+
+# Model-specific hyperparameters
+models:
+  linear:
+    # No hyperparameters for basic linear regression
+    
+  ridge:
+    alpha: 1.0  # Regularization strength
+    
+  lasso:
+    alpha: 0.1  # Regularization strength (higher = more feature selection)
+    
+  xgboost:
+    n_estimators: 100  # Number of trees
+    max_depth: 3       # Tree depth (keep low to avoid overfitting)
+    learning_rate: 0.1
+    subsample: 0.8     # Row sampling
+    colsample_bytree: 0.8  # Feature sampling
+    random_state: 42
+    
+  # Add new models here:
+  # random_forest:
+  #   n_estimators: 100
+  #   max_depth: 5
+  
+  # lightgbm:
+  #   num_leaves: 31
+  #   learning_rate: 0.05
+
+# Feature configuration
+features:
+  # Technical features
+  momentum_window: 20      # Days for momentum calculation
+  volume_window: 30        # Days for volume average
+  rsi_window: 14          # Days for RSI
+
+  # News features  
+  news_lookback_days: 7   # Days of news to analyze
+  
+  # Feature list (order matters!)
+  feature_names:
+    - momentum_20d
+    - volume_ratio_30d
+    - rsi_14d
+    - news_supply_chain
+    - news_sentiment
+
+# Training configuration
+training:
+  train_start: '2022-09-01'  # Training period start
+  train_end: '2022-10-31'     # Training period end
+  test_start: '2022-11-01'    # Test period start
+  test_end: '2022-11-30'      # Test period end
+  
+  validation_split: 0.2  # Use 20% of training data for validation
+  
+  # Model persistence
+  save_models: true
+  model_save_dir: 'models/saved/'
+  
+# Logging
+logging:
+  log_predictions: true
+  log_feature_importance: true
+  log_dir: 'logs/models/'

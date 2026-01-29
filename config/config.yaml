@@ -1,0 +1,97 @@
+# AI Supply Chain Trading Strategy Configuration
+
+# Data Sources
+data:
+  price_source: yfinance
+  date_range:
+    start: "2023-01-01"
+    end: "2024-12-31"
+
+# News Source Configuration
+news:
+  source: "alphavantage"  # Options: "newsapi", "alphavantage", "finnhub", "marketaux"
+  # Source-specific configurations
+  newsapi:
+    rate_limit_daily: 100  # Free tier limit
+  alphavantage:
+    calls_per_minute: 5  # Free tier limit
+    calls_per_day: 500  # Free tier limit
+  finnhub:
+    calls_per_minute: 60  # Free tier limit
+  marketaux:
+    requests_per_day: 100  # Free tier limit
+    articles_per_request: 3  # Free tier limit
+  
+# Market Cap Filter
+market_cap:
+  min: 500000000  # $500M
+  max: 5000000000  # $5B
+
+# News Keywords for AI Supply Chain
+news_keywords:
+  - "AI"
+  - "artificial intelligence"
+  - "datacenter"
+  - "supply chain"
+  - "OpenAI"
+  - "NVDA"
+  - "NVIDIA"
+  - "GPU"
+  - "semiconductor"
+  - "chip"
+  - "data center"
+  - "cloud computing"
+  - "machine learning"
+  - "LLM"
+  - "large language model"
+
+# LLM Configuration
+llm:
+  provider: "gemini"  # Options: "finbert" (local, free), "gemini" (API, free tier available)
+  model: "gemini-2.0-flash-exp"  # Gemini model name (or "ProsusAI/finbert" for FinBERT)
+  # Gemini requires GEMINI_API_KEY in .env file
+  # Get free API key from: https://aistudio.google.com/app/apikey
+
+# Signal Generation Weights
+signal_weights:
+  supply_chain_score: 0.4
+  sentiment_momentum: 0.3
+  price_momentum: 0.2
+  volume_spike: 0.1
+
+# Signal Filters
+filters:
+  min_sentiment_momentum: 0.0
+  min_market_cap: 500000000
+  max_market_cap: 5000000000
+
+# Backtest Configuration
+backtest:
+  mode: "technical_only"  # Options: "technical_only", "full_with_news"
+  initial_capital: 100000
+  trading_fees: 0.001  # 10 bps
+  stop_loss_pct: -0.08  # -8%
+  max_drawdown_pct: -0.15  # -15% kill switch
+  rebalance_frequency: "weekly"  # Every Monday
+  portfolio_size: 10  # Top N stocks
+  buffer_size: 15  # Hold until drops out of top 15
+
+# Technical-Only Signal Weights (used when mode = "technical_only")
+technical_signal_weights:
+  price_momentum: 0.5
+  volume_spike: 0.3
+  rsi_score: 0.2
+
+# Technical Indicators
+technical:
+  rsi_period: 14
+  momentum_short: 5
+  momentum_long: 20
+  volume_window: 30
+  bollinger_period: 20
+  bollinger_std: 2
+
+# Sentiment Analysis
+sentiment:
+  rolling_short: 7  # days
+  rolling_long: 30  # days

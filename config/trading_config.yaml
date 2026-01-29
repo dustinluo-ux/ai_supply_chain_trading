@@ -1,0 +1,33 @@
+# Trading Configuration
+# Controls data provider, executor, and trading mode
+
+trading:
+  # Mode: backtest, paper, live
+  mode: "backtest"
+  
+  # Data provider: csv, ib
+  data_provider: "csv"
+  
+  # Executor: mock, ib_paper, ib_live
+  executor: "mock"
+  
+  # Initial capital for backtesting
+  initial_capital: 100000
+  
+  # IB Settings (for paper/live trading)
+  ib:
+    host: "127.0.0.1"
+    port: 7497  # 7497 = paper, 7496 = live
+    client_id: 1
+    
+  # Data Settings
+  data:
+    csv_dir: "data/prices"
+    cache_dir: "data/cache"
+    
+  # Execution Settings
+  execution:
+    paper_account: "DU123456"  # Your paper trading account
+    live_account: "U123456"     # Your live account (if applicable)
+    min_order_size: 1
+    max_position_size: 10000

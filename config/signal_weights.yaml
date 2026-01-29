@@ -1,0 +1,27 @@
+# Signal Weights Configuration
+# Adjust these weights to optimize trading signals without changing code
+# Weights should sum to approximately 1.0
+
+signal_weights:
+  supply_chain: 0.40  # AI supply chain relevance (from news analysis)
+  sentiment: 0.30     # News sentiment score
+  momentum: 0.20      # Price momentum
+  volume: 0.10        # Volume spike
+
+# Technical Indicator Parameters
+technical_indicators:
+  momentum_period: 20  # Long period for momentum calculation
+  volume_period: 30    # Period for volume rolling average
+  rsi_period: 14       # Period for RSI calculation
+
+# News Analysis Parameters
+news_analysis:
+  enabled: true        # Enable/disable news analysis
+  lookback_days: 7     # Number of days to look back for news
+  min_articles: 1      # Minimum articles required for analysis
+
+# Portfolio Weighting Method
+# Options:
+#   "proportional" - Weight positions by signal strength (higher score = larger position)
+#   "equal" - Equal weights for all selected stocks (1/N for top N stocks)
+weighting_method: "proportional"
