@@ -1,10 +1,18 @@
 # Documentation Index
 
-**Last Updated:** 2026-01-25
+**Last Updated:** 2026-01-29
+
+**Single entry point:** [INDEX.md](INDEX.md) — use it to find where each topic lives and avoid overlapping docs.
 
 ---
 
 ## Start Here
+
+| Doc | Purpose |
+|-----|--------|
+| [INDEX.md](INDEX.md) | **Entry point:** list of all canonical and active docs, archive, logs. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Target architecture (4 pillars, data flow, principles). |
+| [MULTI_SOURCE_QUANT_PIPELINE_PLAN.md](MULTI_SOURCE_QUANT_PIPELINE_PLAN.md) | Build plan (phases A–E), porting, what we are not changing. |
 
 This documentation is organized into 6 canonical documents:
 

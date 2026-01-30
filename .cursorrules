@@ -1,0 +1,10 @@
+# Documentation Rules
+- ALWAYS update the relevant documentation file in `/docs` whenever a core logic change is made.
+- Master Pillars (exactly three): `docs/ARCHITECTURE.md`, `docs/TECHNICAL_SPEC.md`, `docs/BACKTEST_JOURNAL.md`.
+- If you change an indicator's math, update `docs/TECHNICAL_SPEC.md`.
+- If you change backtest logic (friction, slippage, timing, execution), update `docs/BACKTEST_JOURNAL.md`.
+- If you change data flow, pillars, or key paths, update `docs/ARCHITECTURE.md`.
+- Before finishing any task, check if the "Areas to be Completed" in `README.md` needs to be checked off or updated.
+- Avoid creating new `.md` files unless explicitly asked; prefer appending to the Master Pillars.
+- At the end of every task, provide a "Doc Update Status" confirming which files in `/docs` were modified to reflect the changes.
+- Every time you finish a task, you must start your summary with the word 'EXCELSIOR'.

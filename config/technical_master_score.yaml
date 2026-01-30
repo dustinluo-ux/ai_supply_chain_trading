@@ -1,0 +1,89 @@
+# Technical Library: Master Score and Normalization
+# Location: config/technical_master_score.yaml (single source of truth for scoring)
+# Used by: src.signals.technical_library (calculate_all_indicators, compute_signal_strength)
+
+# ---------------------------------------------------------------------------
+# Weight mode: "fixed" | "regime" | "rolling" | "ml"
+# fixed: use category_weights below.
+# regime: use BULL_WEIGHTS if SPY > 200-SMA, BEAR_WEIGHTS if SPY < 200-SMA.
+# rolling: weights from PyPortfolioOpt (EfficientFrontier or HRP) via get_optimized_weights.
+# ml: weights from Scikit-Learn Random Forest + TimeSeriesSplit CV (weight_model.py).
+# ---------------------------------------------------------------------------
+weight_mode: "fixed"
+
+# ---------------------------------------------------------------------------
+# Category weights for Master Score (must sum to 1.0) — used when weight_mode is "fixed" or as fallback
+# Trend 40%, Momentum 30%, Volume 20%, Volatility 10%
+# ---------------------------------------------------------------------------
+category_weights:
+  trend: 0.40
+  momentum: 0.30
+  volume: 0.20
+  volatility: 0.10
+
+# ---------------------------------------------------------------------------
+# News Alpha overlay: news_composite blended with technical Master Score.
+# final_master = (1 - news_weight) * technical_master + news_weight * news_composite
+# News composite = FinBERT + EventDetector + strategies A–D (Buzz, Surprise, Sector, Event).
+# ---------------------------------------------------------------------------
+news_weight: 0.20
+
+# ---------------------------------------------------------------------------
+# 3-State Regime (weight_mode == "regime"): hmmlearn GaussianHMM(n_components=3).
+# BULL: high mean, low vol → BULL_WEIGHTS.
+# BEAR: negative mean, high vol → DEFENSIVE_WEIGHTS; CASH_OUT if SPY < 200-SMA.
+# SIDEWAYS: mean ~0, moderate vol → SIDEWAYS_WEIGHTS; position size × 0.5.
+# Fallback: if HMM fails, use SPY vs 200-SMA binary (BULL/BEAR).
+# ---------------------------------------------------------------------------
+BULL_WEIGHTS:
+  trend: 0.40
+  momentum: 0.30
+  volume: 0.20
+  volatility: 0.10
+DEFENSIVE_WEIGHTS:   # BEAR regime when SPY >= 200-SMA
+  trend: 0.20
+  momentum: 0.10
+  volume: 0.20
+  volatility: 0.50
+BEAR_WEIGHTS:        # alias for DEFENSIVE_WEIGHTS (backward compat)
+  trend: 0.20
+  momentum: 0.10
+  volume: 0.20
+  volatility: 0.50
+SIDEWAYS_WEIGHTS:   # chop reduction: same weights, position × 0.5
+  trend: 0.25
+  momentum: 0.25
+  volume: 0.25
+  volatility: 0.25
+
+# ---------------------------------------------------------------------------
+# Rolling window (trading days) for unbounded indicator normalization.
+# 252 ≈ 1 year. Prevents look-ahead bias by scaling each value only against
+# its past 252 days, not the full history.
+# ---------------------------------------------------------------------------
+rolling_window: 252
+
+# ---------------------------------------------------------------------------
+# Indicator _norm columns per category (for sub-score calculation).
+# Sub-score = mean of present values in that category; missing cols = 0.5 (neutral).
+# ---------------------------------------------------------------------------
+categories:
+  trend:
+    - adx_norm
+    - macd_norm
+  momentum:
+    - rsi_norm
+    - willr_norm
+    - stoch_STOCHk_14_3_3_norm
+    - stoch_STOCHd_14_3_3_norm
+    - roc_norm
+    - cci_norm
+    - momentum_5d_norm
+    - momentum_20d_norm
+  volume:
+    - volume_ratio_norm
+    - cmf_norm
+    - obv_norm
+  volatility:
+    - atr_norm
+    - bb_position_norm

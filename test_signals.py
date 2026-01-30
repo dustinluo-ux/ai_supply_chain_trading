@@ -300,6 +300,44 @@ if not prices_dict:
 data_load_time = time.time() - start_time
 print(f"  [OK] Loaded {len(prices_dict)} stocks in {data_load_time:.1f}s", flush=True)
 
+# ============================================================================
+# SIGNAL STRENGTH REPORT (technical library - Master Score from indicators)
+# ============================================================================
+_report_ticker = "NVDA" if "NVDA" in prices_dict else (list(prices_dict.keys())[0] if prices_dict else None)
+if _report_ticker:
+    try:
+        from src.signals.technical_library import (
+            calculate_all_indicators,
+            compute_signal_strength,
+            OHLCV_COLS,
+        )
+        _df = prices_dict[_report_ticker].copy()
+        _df.columns = [c.lower() for c in _df.columns]
+        for _col in ["open", "high", "low"]:
+            if _col not in _df.columns and "close" in _df.columns:
+                _df[_col] = _df["close"]
+        if "volume" not in _df.columns:
+            _df["volume"] = 0.0
+        if all(c in _df.columns for c in OHLCV_COLS):
+            _ind = calculate_all_indicators(_df)
+            _row = _ind.iloc[-1]
+            _score, _result = compute_signal_strength(_row)
+            print(f"\n--- Signal Strength Report ({_report_ticker}) ---", flush=True)
+            print(f"  Master Score: {_score:.4f} (0=bearish, 0.5=neutral, 1=bullish)", flush=True)
+            print(f"  As-of date:   {_row.name}", flush=True)
+            _sub = _result.get("category_sub_scores", {})
+            print("  Category sub-scores (Trend 40%, Momentum 30%, Volume 20%, Volatility 10%):", flush=True)
+            for _cat, _val in _sub.items():
+                print(f"    {_cat}: {_val:.4f}", flush=True)
+            _breakdown = _result.get("breakdown", {})
+            _top = sorted(_breakdown.items(), key=lambda x: -abs(x[1] - 0.5))[:8]
+            print("  Top normalized indicators:", flush=True)
+            for _k, _v in _top:
+                print(f"    {_k}: {_v:.4f}", flush=True)
+            print("---", flush=True)
+    except Exception as e:
+        print(f"  [WARNING] Signal Strength report skipped: {e}", flush=True)
+
 # Determine actual date range from loaded data
 if prices_dict:
     all_starts = [df.index.min() for df in prices_dict.values()]
@@ -312,19 +350,15 @@ else:
     price_data_end = pd.to_datetime('2024-12-31')
 
 # ============================================================================
-# NEWS DATE RANGE DETECTION - BEST COVERAGE APPROACH
+# NEWS DATE RANGE DETECTION - 6+ MONTH CONTINUOUS PERIOD
 # ============================================================================
-# COMPROMISE NOTE: This uses "best coverage period" (month with most tickers)
-# instead of union approach. This is a TEMPORARY solution to ensure we have
-# enough tickers with news data. Future pivot: Use intersection or per-ticker
-# ranges for more inclusive backtesting.
-#
-# To pivot later:
-# 1. Change USE_BEST_COVERAGE to False
-# 2. Implement intersection logic (common period across all tickers)
-# 3. Or use per-ticker date ranges in the backtest loop
+# Target: 6-12 months with overlapping price AND news coverage for statistical
+# significance (24+ weekly rebalances). Uses longest continuous overlap of
+# price data and news (union of news ranges for universe tickers).
 # ============================================================================
-USE_BEST_COVERAGE = True  # Set to False to use union/intersection approach
+USE_BEST_COVERAGE = True  # Set to False to use fallback union approach
+MIN_BACKTEST_MONTHS = 6   # Minimum period (24+ rebalances)
+MAX_BACKTEST_MONTHS = 12  # Cap for investor presentation
 
 print(f"\n  [DEBUG] Detecting news data date range...", flush=True)
 news_dir = Path("data/news")
@@ -380,109 +414,85 @@ print(f"  [OK] Scanned {tickers_scanned} news files, found date ranges for {len(
 news_data_start = None
 news_data_end = None
 
-if USE_BEST_COVERAGE and ticker_date_ranges:
-    # Step 2: Find month with best coverage (aligned with price data years)
-    print(f"  [STEP 2] Finding month with best ticker coverage...", flush=True)
-    from collections import Counter
+if USE_BEST_COVERAGE and ticker_date_ranges and TICKERS:
+    # Step 2: Find longest continuous period (6-12 months) with BOTH price AND news
+    print(f"  [STEP 2] Finding 6+ month continuous period (price + news overlap)...", flush=True)
     
-    # Get price data years for alignment
-    price_data_years = set()
-    if prices_dict:
-        for df in prices_dict.values():
-            if not df.empty:
-                price_data_years.update([d.year for d in df.index])
-    print(f"  [INFO] Price data years: {sorted(price_data_years)}", flush=True)
-    
-    # Count tickers per month
-    month_coverage = Counter()
-    for ticker, ranges in ticker_date_ranges.items():
-        # Generate all months this ticker covers
-        start_month = ranges['start'].replace(day=1)
-        end_month = ranges['end'].replace(day=1)
-        months = pd.date_range(start_month, end_month, freq='MS')
-        for month in months:
-            month_key = month.strftime('%Y-%m')
-            month_coverage[month_key] += 1
-    
-    if month_coverage:
-        # Filter to months that align with price data years (if available)
-        aligned_months = {}
-        unaligned_months = {}
-        
-        for month_str, count in month_coverage.items():
-            month_year = int(month_str[:4])
-            if price_data_years and month_year in price_data_years:
-                aligned_months[month_str] = count
-            else:
-                unaligned_months[month_str] = count
-        
-        # Prefer aligned months, but fall back to all months if no alignment
-        if aligned_months:
-            print(f"  [INFO] Found {len(aligned_months)} months aligned with price data years", flush=True)
-            print(f"  [INFO] Top 5 aligned months: {sorted(aligned_months.items(), key=lambda x: x[1], reverse=True)[:5]}", flush=True)
-            best_month_str, ticker_count = max(aligned_months.items(), key=lambda x: x[1])
-            print(f"  [OK] Using ALIGNED month: {best_month_str} with {ticker_count} tickers", flush=True)
-        else:
-            print(f"  [WARNING] No months align with price data years {sorted(price_data_years)}", flush=True)
-            print(f"  [WARNING] Using best available month (may cause date mismatch)", flush=True)
-            best_month_str, ticker_count = month_coverage.most_common(1)[0]
-        
-        best_month = pd.to_datetime(best_month_str)
-        
-        print(f"  [OK] Best coverage: {best_month_str} with {ticker_count} tickers", flush=True)
-        print(f"  [NOTE] Using best-coverage approach (compromise - see code comments)", flush=True)
-        
-        # Show top 3 months for reference
-        top_months = month_coverage.most_common(3)
-        print(f"  [INFO] Top 3 months: {', '.join([f'{m}({c})' for m, c in top_months])}", flush=True)
-        
-        # Step 3: Set date range to best month
-        news_data_start = best_month
-        # End of month
-        if best_month.month == 12:
-            news_data_end = best_month.replace(year=best_month.year + 1, month=1) - pd.Timedelta(days=1)
-        else:
-            news_data_end = best_month.replace(month=best_month.month + 1) - pd.Timedelta(days=1)
-        
-        # Step 4: Filter to tickers with news in this period
-        valid_tickers_with_news = [
-            ticker for ticker, ranges in ticker_date_ranges.items()
-            if ranges['start'] <= news_data_end and ranges['end'] >= news_data_start
-        ]
-        
-        print(f"  [OK] Using period: {news_data_start.date()} to {news_data_end.date()}", flush=True)
-        print(f"  [OK] {len(valid_tickers_with_news)} tickers have news coverage in this period", flush=True)
-        
-        # Step 5: Verify coverage for sample tickers
-        print(f"  [VERIFY] Sample ticker coverage in {best_month_str}:", flush=True)
-        for ticker in list(valid_tickers_with_news)[:5]:
-            news_file = news_dir / f"{ticker}_news.json"
-            try:
-                with open(news_file, 'r', encoding='utf-8') as f:
-                    articles = json.load(f)
-                period_articles = [
-                    a for a in articles 
-                    if a.get('publishedAt', '') and best_month_str in a['publishedAt']
-                ]
-                print(f"    {ticker}: {len(period_articles)} articles in {best_month_str}", flush=True)
-            except Exception:
-                pass
-        
-        # Update TICKERS list to only include tickers that:
-        # 1. Have price data (in prices_dict)
-        # 2. Have news in the best coverage period
-        original_ticker_count = len(TICKERS)
-        valid_tickers_for_backtest = [
-            t for t in TICKERS 
-            if t in prices_dict.keys() and t in valid_tickers_with_news
-        ]
-        TICKERS = valid_tickers_for_backtest
-        print(f"  [OK] Filtered TICKERS: {original_ticker_count} -> {len(TICKERS)}", flush=True)
-        print(f"       (Only tickers with BOTH price data AND news in {best_month_str})", flush=True)
-    else:
-        # Fallback to union approach if no month coverage found
+    # Union of news ranges for universe tickers only
+    tickers_in_news = [t for t in TICKERS if t in ticker_date_ranges]
+    if not tickers_in_news:
+        print(f"  [WARNING] No universe tickers have news data; falling back to union approach", flush=True)
         USE_BEST_COVERAGE = False
-        print(f"  [WARNING] No month coverage found, falling back to union approach", flush=True)
+    else:
+        news_union_start = min(ticker_date_ranges[t]['start'] for t in tickers_in_news)
+        news_union_end = max(ticker_date_ranges[t]['end'] for t in tickers_in_news)
+        overlap_start = max(price_data_start, news_union_start)
+        overlap_end = min(price_data_end, news_union_end)
+        
+        if overlap_start >= overlap_end:
+            print(f"  [WARNING] No overlap between price and news; falling back to union approach", flush=True)
+            USE_BEST_COVERAGE = False
+        else:
+            duration_days = (overlap_end - overlap_start).days
+            duration_months = duration_days / 30.44
+            print(f"  [INFO] Price/news overlap: {overlap_start.date()} to {overlap_end.date()} ({duration_months:.1f} months)", flush=True)
+            
+            # Use 6-12 months within overlap (start at overlap start, month-aligned)
+            if duration_months >= MIN_BACKTEST_MONTHS:
+                use_months = min(MAX_BACKTEST_MONTHS, int(duration_months))
+                print(f"  [OK] Using {use_months} months (target 6-12 for statistical significance)", flush=True)
+            else:
+                use_months = max(1, int(round(duration_months)))
+                print(f"  [WARNING] Overlap has only {duration_months:.1f} months; using all {use_months} month(s)", flush=True)
+                print(f"  [TIP] For 6+ months ensure price and news both cover the same period (e.g. news from at least 6 months before price end)", flush=True)
+            
+            # Month-aligned period start (first day of month)
+            period_start = overlap_start.replace(day=1)
+            # End: start + use_months (last day of that month)
+            period_end = period_start + pd.DateOffset(months=use_months) - pd.Timedelta(days=1)
+            # Clamp to actual overlap
+            period_end = min(period_end, overlap_end)
+            if period_end <= period_start:
+                period_end = overlap_end
+            
+            news_data_start = period_start
+            news_data_end = period_end
+            
+            # Which calendar months are included
+            months_in_period = pd.date_range(period_start.replace(day=1), period_end, freq='MS')
+            months_list = [m.strftime('%Y-%m') for m in months_in_period]
+            print(f"  [INFO] Months in period: {months_list}", flush=True)
+            
+            # Rebalance count (Mondays in period; need 30-day buffer for tech indicators)
+            signal_start_calc = period_start + pd.Timedelta(days=30)
+            signal_end_calc = period_end
+            if signal_start_calc < signal_end_calc:
+                mondays_in_period = pd.date_range(signal_start_calc, signal_end_calc, freq='W-MON')
+                num_rebalances = len(mondays_in_period)
+            else:
+                num_rebalances = 0
+            print(f"  [INFO] Expected rebalances (weeks): {num_rebalances}", flush=True)
+            
+            # Gemini estimate: 1x universe ranking at load + (weeks x tickers) news analyses (cached after first run)
+            num_tickers_final = len(tickers_in_news)  # will filter again below
+            gemini_ranking_calls = 1
+            gemini_news_per_week = len(TICKERS) * num_rebalances if num_rebalances else 0
+            print(f"  [INFO] Expected Gemini API usage: ~1 ranking run + up to {num_rebalances} weeks x {len(TICKERS)} tickers = {gemini_ranking_calls + gemini_news_per_week} analyses (cached after first run)", flush=True)
+            
+            # Filter to tickers with news in chosen period
+            valid_tickers_with_news = [
+                t for t, ranges in ticker_date_ranges.items()
+                if ranges['start'] <= news_data_end and ranges['end'] >= news_data_start
+            ]
+            original_ticker_count = len(TICKERS)
+            valid_tickers_for_backtest = [
+                t for t in TICKERS
+                if t in prices_dict.keys() and t in valid_tickers_with_news
+            ]
+            TICKERS = valid_tickers_for_backtest
+            print(f"  [OK] Using period: {news_data_start.date()} to {news_data_end.date()}", flush=True)
+            print(f"  [OK] {len(valid_tickers_with_news)} tickers have news in period; {len(TICKERS)} tickers for backtest (price + news)", flush=True)
+            print(f"  [OK] Filtered TICKERS: {original_ticker_count} -> {len(TICKERS)}", flush=True)
 
 # Only use fallback if best coverage didn't set the dates
 if (not USE_BEST_COVERAGE or not ticker_date_ranges) and (news_data_start is None or news_data_end is None):
@@ -1177,8 +1187,9 @@ print(f"  [OK] Combined Sharpe: {results['combined']['sharpe']:.2f} (took {bt_ti
 # Summary
 total_time = time.time() - start_time
 print("\n" + "=" * 60)
-print("RESULTS SUMMARY")
+print("RESULTS SUMMARY (6+ month expanded backtest)")
 print("=" * 60)
+print(f"  Period: {len(mondays)} weekly rebalances ({mondays[0].date() if len(mondays) else 'N/A'} to {mondays[-1].date() if len(mondays) else 'N/A'})")
 for approach, result in results.items():
     print(f"{approach:20s}: Sharpe={result['sharpe']:6.2f}, Return={result['total_return']:7.2%}, Drawdown={result['max_drawdown']:7.2%}")
 
@@ -1190,7 +1201,13 @@ print(f"  Backtests: {total_time - total_prep_time:.1f}s")
 if all('sharpe' in r for r in results.values()):
     best = max(results.items(), key=lambda x: x[1]['sharpe'] if x[1]['sharpe'] is not None else -999)
     print(f"\n[BEST] Best approach: {best[0]} (Sharpe: {best[1]['sharpe']:.2f})")
-    
+    tech_sharpe = results.get('technical_only', {}).get('sharpe')
+    news_sharpe = results.get('news_only', {}).get('sharpe')
+    if tech_sharpe is not None and news_sharpe is not None:
+        if news_sharpe < tech_sharpe:
+            print(f"  News vs technical: news underperforms (Sharpe {news_sharpe:.2f} < technical {tech_sharpe:.2f})")
+        else:
+            print(f"  News vs technical: news matches or beats technical (Sharpe {news_sharpe:.2f} vs {tech_sharpe:.2f})")
     print("\nRecommendations:")
     if best[0] == 'technical_only':
         print("  -> Use technical-only signals (news adds noise)")

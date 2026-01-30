@@ -1,6 +1,14 @@
 # Data Sources and Management
 
-**Last Updated:** 2026-01-25
+**Last Updated:** 2026-01-29
+
+---
+
+## Warm-Up and Self-Healing
+
+- **Warm-Up:** `src/data/warmup.py` — Loads historical from `data/prices/` (parquet), optionally fetches last 30 days from yfinance (Recent), merges with no gap. Use `warm_up(tickers, start_date, end_date, last_n_days=30)` before pipeline steps that need continuous data.
+- **Self-Healing:** After any live fetch, call `heal_append(ticker, new_bars_df, data_dir="data/prices")` to append new bars to the historical store (duplicate dates dropped).
+- **Historical store:** `data/prices/` is the append target for price data; same dir is used for Warm-Up historical load.
 
 ---
 

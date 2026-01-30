@@ -496,9 +496,12 @@ def process_fnspid(
         for ticker, count in top_tickers:
             print(f"  {ticker}: {count:,} articles")
     
-    # Remove checkpoint file on success
+    # Remove checkpoint file on success (ignore permission errors on Windows)
     if checkpoint_file.exists():
-        checkpoint_file.unlink()
+        try:
+            checkpoint_file.unlink()
+        except (PermissionError, OSError):
+            pass
     
     print("=" * 60)
     print("[SUCCESS] Processing complete!")

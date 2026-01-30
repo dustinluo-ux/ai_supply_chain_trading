@@ -48,9 +48,12 @@ class GeminiAnalyzer:
         if not GEMINI_AVAILABLE:
             raise ImportError("google-generativeai not installed. Run: pip install google-generativeai")
         
-        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables or provided as argument")
+            raise ValueError(
+                "Gemini API key not found. Set GEMINI_API_KEY or GOOGLE_API_KEY in .env "
+                "(get key from https://aistudio.google.com/app/apikey)"
+            )
         
         self.model_name = model
         

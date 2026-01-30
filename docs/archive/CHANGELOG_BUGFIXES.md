@@ -1,6 +1,28 @@
 # Changelog and Bug Fixes
 
-**Last Updated:** 2026-01-25
+**Last Updated:** 2026-01-29
+
+---
+
+## 2026-01-29: Multi-Source Quant Pipeline Build
+
+### Added
+
+- **Warm-Up and self-healing:** `src/data/warmup.py` — `warm_up()` loads historical from `data/prices/`, fetches last 30 days from yfinance, merges; `heal_append()` appends new bars to historical store.
+- **Client ID rotation:** `src/utils/client_id_rotation.py` — IBKR client IDs start at `IBKR_CLIENT_ID_START` (default 99), rotate 99, 100, 101, …; used by `IBDataProvider`.
+- **yfinance cache init:** `src/utils/yfinance_cache_init.py` — `init_yfinance_cache()` to avoid SQLite issues; called from run scripts.
+- **IBKR real-time volume:** `IBDataProvider.get_realtime_volume(ticker)` — reqMktData Tick 8, x100 multiplier for US equities.
+- **Tiingo news source:** `src/data/news_sources/tiingo_source.py` — TiingoSource (TIINGO_API_KEY); registered in NewsFetcherFactory.
+- **Dual-stream news:** `src/data/news_aggregator.py` — DualStreamNewsAggregator (Marketaux + Tiingo); config source `dual_stream`.
+- **Position manager:** `src/portfolio/position_manager.py` — PositionManager(provider or executor), get_current_positions, get_account_value, calculate_delta_trades.
+- **Weekly rebalance runner:** `run_weekly_rebalance.py` — Composite score → top N → delta trades → BUY/SELL/HOLD; dry-run or --live.
+- **E2E pipeline test:** `run_e2e_pipeline.py` — Warm-up (optional) → signals → weekly rebalance dry-run; logs to `logs/`.
+- **Docs:** `docs/INDEX.md` (entry point), `docs/ARCHITECTURE.md` (target architecture); DATA.md updated with Warm-Up/self-healing; README updated with weekly rebalance and E2E.
+
+### Changed
+
+- `IBDataProvider`: client_id defaults to `next_client_id()` (rotation) instead of randint(100, 999).
+- `.env.example`: already had TIINGO_API_KEY, MARKETAUX_API_KEY, GOOGLE_API_KEY, IBKR_CLIENT_ID_START.
 
 ---
 
