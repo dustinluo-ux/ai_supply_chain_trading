@@ -194,8 +194,7 @@
 - ❌ No walk-forward analysis
 
 **Parameter sensitivity:**
-- ⚠️ Framework exists (`run_parameter_sensitivity()`) but stub only
-- Need: Actual parameter sweeps with results
+- Parameter sweep is implemented in `scripts/research_grid_search.py`. `run_parameter_sensitivity()` never existed in code; the doc reference was incorrect. Sweep is now fully wired: CLI flags, JSON output, and regime_stats (n_weeks, sharpe, max_drawdown per BULL/BEAR/SIDEWAYS) are all populated in `scripts/backtest_technical_library.py`.
 
 ### Known Technical Debt
 
@@ -351,7 +350,7 @@
 |---|------|--------|--------|
 | 6 | Multi-year backtest (2020-2024) | 4 hrs | ❌ Not started |
 | 7 | Statistical validation (confidence intervals, p-values) | 3 hrs | ❌ Not started |
-| 8 | Parameter sensitivity sweep | 2 hrs | ⚠️ Stub exists |
+| 8 | Parameter sensitivity sweep | 2 hrs | ✅ Complete |
 | 9 | Update regime ledger post-run | 2 hrs | ❌ Planned |
 | 10 | Wire ML pipeline to main flow | 3 hrs | ❌ Not started |
 

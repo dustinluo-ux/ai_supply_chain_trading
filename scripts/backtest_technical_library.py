@@ -11,6 +11,7 @@ Saves log to outputs/backtest_master_score_*.txt
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -167,7 +168,7 @@ def run_backtest_master_score(
         from src.signals.performance_logger import append_row as performance_append_row
     performance_csv_path = Path(performance_csv) if performance_csv else None
     adaptive_selector = AdaptiveSelector(performance_csv_path) if (news_dir and performance_csv_path and news_weight_fixed is None and not dynamic_selector) else None
-    from src.signals.performance_logger import _default_ledger_path
+    from src.signals.performance_logger import _default_ledger_path, update_regime_ledger
     strategy_selector = StrategySelector(_default_ledger_path()) if dynamic_selector else None
     from src.signals.signal_engine import SignalEngine
     from src.core import PolicyEngine, PortfolioEngine
@@ -181,7 +182,7 @@ def run_backtest_master_score(
     signal_engine = SignalEngine()
     policy_engine = PolicyEngine()
     portfolio_engine = PortfolioEngine()
-    week_meta_list: list[tuple] = []  # (monday, regime_state, news_weight_used) per week
+    week_meta_list: list[tuple] = []  # (monday, regime_state, news_weight_used, active_strategy_id) per week
     # P0 safety initialization
     active_strategy_id = None
     last_regime = None
@@ -407,7 +408,7 @@ def run_backtest_master_score(
             news_buzz = "T" if (news_dir and intent.tickers and any(buzz_by_ticker.get(t, False) for t in intent.tickers)) else ("-" if not news_dir else "F")
             print(f"  [STATE] {monday.date()} | Regime: {regime_letter} | News Buzz: {news_buzz} | Action: {action}", flush=True)
         prev_regime = regime_state
-        week_meta_list.append((monday, regime_state, news_weight_used))
+        week_meta_list.append((monday, regime_state, news_weight_used, active_strategy_id))
 
     prices_df = pd.DataFrame({t: prices_dict[t]["close"] for t in tickers}, index=all_dates)
     opens_df = pd.DataFrame({t: prices_dict[t]["open"] for t in tickers}, index=all_dates)
@@ -450,12 +451,54 @@ def run_backtest_master_score(
     total_return = cumulative.iloc[-1] - 1 if len(cumulative) else 0.0
     sharpe = (portfolio_returns.mean() * 252) / (portfolio_returns.std() * np.sqrt(252)) if portfolio_returns.std() > 0 else 0.0
     max_dd = ((cumulative - cumulative.expanding().max()) / cumulative.expanding().max().replace(0, np.nan)).min()
-    
+
+    _regime_keys = ("BULL", "BEAR", "SIDEWAYS")
+    _returns_by_regime: dict[str, list[float]] = {k: [] for k in _regime_keys}
+    _drawdowns_by_regime: dict[str, list[float]] = {k: [] for k in _regime_keys}
+
+    for i in range(len(week_meta_list)):
+        monday_i, regime_state_i, _news_w_i, strategy_id_i = week_meta_list[i]
+        start_idx, end_idx = blocks[i]
+        base = cumulative.iloc[start_idx - 1] if start_idx > 0 else 1.0
+        weekly_return = (float(cumulative.iloc[end_idx - 1]) / base) - 1.0
+        slice_cum = cumulative.iloc[start_idx:end_idx]
+        peak = slice_cum.max()
+        trough = slice_cum.min()
+        weekly_drawdown = 0.0 if (peak == 0 or pd.isna(peak)) else (float(trough) / float(peak)) - 1.0
+        _regime_key = regime_state_i if regime_state_i in _regime_keys else "SIDEWAYS"
+        _returns_by_regime[_regime_key].append(weekly_return)
+        _drawdowns_by_regime[_regime_key].append(weekly_drawdown)
+        update_regime_ledger(
+            regime=str(regime_state_i or "UNKNOWN"),
+            combination_id=str(strategy_id_i) if strategy_id_i is not None else "fixed",
+            weekly_return=weekly_return,
+            weekly_drawdown=weekly_drawdown,
+            ledger_path=None,
+            timestamp=monday_i,
+        )
+
+    regime_stats: dict[str, dict] = {}
+    for _k in _regime_keys:
+        _ret_list = _returns_by_regime[_k]
+        _dd_list = _drawdowns_by_regime[_k]
+        n_weeks = len(_ret_list)
+        if n_weeks > 1 and len(_ret_list) > 0:
+            _arr = np.array(_ret_list)
+            _std = float(np.std(_arr))
+            _sharpe = (float(np.mean(_arr)) / _std * np.sqrt(52)) if _std > 0 else 0.0
+        else:
+            _sharpe = 0.0
+        regime_stats[_k] = {
+            "n_weeks": n_weeks,
+            "sharpe": float(_sharpe),
+            "max_drawdown": float(min(_dd_list)) if _dd_list else 0.0,
+        }
+
     return {
         "sharpe": float(sharpe),
         "total_return": float(total_return),
         "max_drawdown": float(max_dd or 0),
-        "regime_stats": {}, # Simplified for logic fix
+        "regime_stats": regime_stats,
         "n_rebalances": len(mondays),
         "period_start": str(mondays[0].date()),
         "period_end": str(mondays[-1].date()),
@@ -490,6 +533,10 @@ def main():
     parser.add_argument("--weight-mode", type=str, default="fixed")
     parser.add_argument("--news-dir", type=str, default=None)
     parser.add_argument("--news-weight", type=float, default=None)
+    parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
+    parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
+    parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
+    parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
     args = parser.parse_args()
 
     if args.tickers is not None:
@@ -552,16 +599,32 @@ def main():
         print("ERROR: Could not load price data into dictionary.")
         return 1
 
-    result = run_backtest_master_score(
-        prices_dict,
-        data_dir=data_dir,
-        news_dir=args.news_dir,
-        top_n=args.top_n,
-        start_date=args.start,
-        end_date=args.end,
-        weight_mode=args.weight_mode,
-        news_weight_fixed=args.news_weight,
-    )
+    run_kw: dict = {
+        "prices_dict": prices_dict,
+        "data_dir": data_dir,
+        "news_dir": args.news_dir,
+        "top_n": args.top_n,
+        "start_date": args.start,
+        "end_date": args.end,
+        "weight_mode": args.weight_mode,
+        "news_weight_fixed": args.news_weight,
+    }
+    if args.signal_horizon_days is not None:
+        run_kw["signal_horizon_days"] = args.signal_horizon_days
+    if args.sideways_risk_scale is not None:
+        run_kw["sideways_risk_scale"] = args.sideways_risk_scale
+    result = run_backtest_master_score(**run_kw)
+
+    if args.out_json is not None:
+        _json_subset = {
+            k: result[k]
+            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers")
+            if k in result
+        }
+        _out_path = Path(args.out_json)
+        _out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(_out_path, "w", encoding="utf-8") as _f:
+            json.dump(_json_subset, _f, indent=2)
 
     _audit_metrics = {
         k: result[k]
@@ -598,7 +661,8 @@ def main():
         trade_summary=_audit_trade_summary,
     )
 
-    _print_safety_report()
+    if not args.no_safety_report:
+        _print_safety_report()
     print("\n--- RESULTS ---")
     print(f"  Sharpe:        {result['sharpe']:.4f}")
     print(f"  Total return:  {result['total_return']:.2%}")

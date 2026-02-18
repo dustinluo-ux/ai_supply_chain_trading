@@ -458,4 +458,12 @@ diff run1.txt run2.txt  # Should be empty
 
 ---
 
+## 9. Claude Code Usage Rules
+
+- **Role**: Planning, strategizing, prompt generation ONLY
+- **No code generation**: Draft instructions for Cursor, not code snippets
+- **Output format**: Cursor prompts, analysis, recommendations
+- **Cursor handles**: All code writing, refactoring, file manipulation
+---
+
 **End of Context Document**
