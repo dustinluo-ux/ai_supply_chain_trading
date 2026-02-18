@@ -390,7 +390,10 @@ def run_backtest_master_score(
             w = intent.weights.get(t, 0.0)
             if pd.isna(w): w = 0.0
             signals_df.loc[monday, t] = float(w)
-        
+        _ws = sum(signals_df.loc[monday, t] for t in tickers)
+        if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
+            for t in tickers:
+                signals_df.loc[monday, t] *= 1.0 / _ws
         weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
         if action == "Cash":
             assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"

@@ -66,6 +66,8 @@ class GeminiAnalyzer:
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        from dotenv import load_dotenv
+        load_dotenv()
         if not GENAI_AVAILABLE or genai is None:
             raise ImportError(
                 "google-genai is required for GeminiAnalyzer. pip install google-genai"
