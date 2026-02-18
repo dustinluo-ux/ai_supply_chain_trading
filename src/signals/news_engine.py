@@ -272,20 +272,37 @@ def load_ticker_news(news_dir: Path | str, ticker: str, dedupe: bool = True) -> 
     When dedupe=True (default), Levenshtein fuzzy matching on headlines is applied
     so we do not process redundant data (e.g. DualStream Marketaux + Tiingo duplicates).
     """
-    path = Path(news_dir) / f"{ticker}_news.json"
-    if not path.exists():
+    news_dir = Path(news_dir)
+    path = news_dir / f"{ticker}_news.json"
+
+    def _root_to_articles(root):
+        if isinstance(root, list):
+            return root
+        if isinstance(root, dict):
+            if "articles" in root:
+                return root["articles"] if isinstance(root["articles"], list) else []
+            return [root]
         return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        logger.warning("Load news %s: %s", path, e)
-        return []
-    if not isinstance(data, list):
-        data = [data] if isinstance(data, dict) else []
+
+    all_articles = []
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            all_articles = _root_to_articles(data)
+        except Exception as e:
+            logger.warning("Load news %s: %s", path, e)
+    else:
+        for p in sorted(news_dir.glob(f"{ticker}_*.json")):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                all_articles.extend(_root_to_articles(data))
+            except Exception as e:
+                logger.warning("Load news %s: %s", p, e)
     if dedupe:
-        data = deduplicate_articles(data, headline_key="title")
-    return data
+        all_articles = deduplicate_articles(all_articles, headline_key="title")
+    return all_articles
 
 
 def _parse_date(published: Any) -> Optional[pd.Timestamp]:
