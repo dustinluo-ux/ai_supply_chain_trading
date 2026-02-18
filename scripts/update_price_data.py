@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
 import time
 from pathlib import Path
@@ -113,7 +114,7 @@ def main() -> int:
         help="Comma-separated tickers (default: watchlist from data_config.yaml + SPY)",
     )
     parser.add_argument("--start", type=str, default="2015-01-01")
-    parser.add_argument("--end", type=str, default="2025-01-01")
+    parser.add_argument("--end", type=str, default=datetime.date.today().isoformat())
     parser.add_argument(
         "--delay", type=float, default=1.0,
         help="Seconds between downloads (rate-limit courtesy)",
@@ -145,7 +146,7 @@ def main() -> int:
     success = 0
     failed = 0
     for i, ticker in enumerate(tickers, 1):
-        csv_path = resolve_csv_path(data_dir, ticker)
+        csv_path = Path(resolve_csv_path(data_dir, ticker))
         tag = "UPDATE" if csv_path.exists() else "NEW"
 
         # Load existing data if present

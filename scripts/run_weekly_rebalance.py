@@ -22,6 +22,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+import update_price_data
 from src.utils.audit_logger import log_audit_record
 
 
@@ -40,6 +41,16 @@ def _get_watchlist() -> list[str]:
 
 
 def main() -> int:
+    # Update price data first (watchlist from config, end=today); continue on non-zero
+    _saved_argv = sys.argv
+    try:
+        sys.argv = ["update_price_data.py"]
+        _update_code = update_price_data.main()
+    finally:
+        sys.argv = _saved_argv
+    if _update_code != 0:
+        print("WARNING: Price data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
+
     import datetime as _dt
     _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"
     parser = argparse.ArgumentParser(
