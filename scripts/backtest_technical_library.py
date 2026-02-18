@@ -238,7 +238,7 @@ def run_backtest_master_score(
         spy_above_sma200 = None
         regime_state = None
         regime_info = None
-        need_regime = weight_mode == "regime" or (news_dir and performance_csv_path) or (news_dir and news_weight_fixed is not None) or (news_weight_fixed is not None) or dynamic_selector
+        need_regime = kill_switch_active or weight_mode == "regime" or (news_dir and performance_csv_path) or (news_dir and news_weight_fixed is not None) or (news_weight_fixed is not None) or dynamic_selector
         if need_regime:
             if spy_close_native is not None:
                 regime_state, regime_info = get_regime_hmm(spy_close_native, monday, min_obs=60, n_components=3)
