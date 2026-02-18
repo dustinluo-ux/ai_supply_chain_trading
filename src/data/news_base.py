@@ -79,6 +79,7 @@ class NewsDataSource(ABC):
             filtered = []
             for article in cached:
                 article_date = pd.to_datetime(article.get('publishedAt', ''))
+                article_date = article_date.tz_convert("UTC").tz_localize(None) if article_date.tzinfo is not None else article_date
                 if start_dt <= article_date <= end_dt:
                     filtered.append(article)
             
