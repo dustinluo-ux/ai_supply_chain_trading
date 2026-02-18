@@ -43,7 +43,7 @@ output.txt
 *.ipynb
 
 # --- Repo-specific generated / data-heavy (do not scan or commit) ---
-data/
+/data/
 outputs/
 backtests/
 artifacts/
