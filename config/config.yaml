@@ -9,7 +9,7 @@ data:
 
 # News Source Configuration
 news:
-  source: "alphavantage"  # Options: "newsapi", "alphavantage", "finnhub", "marketaux"
+  source: "marketaux"  # Options: "newsapi", "alphavantage", "finnhub", "marketaux"
   # Source-specific configurations
   newsapi:
     rate_limit_daily: 100  # Free tier limit

@@ -22,6 +22,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+import update_news_data
 import update_price_data
 from src.utils.audit_logger import log_audit_record
 
@@ -50,6 +51,15 @@ def main() -> int:
         sys.argv = _saved_argv
     if _update_code != 0:
         print("WARNING: Price data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
+
+    _saved_argv2 = sys.argv
+    try:
+        sys.argv = ["update_news_data.py"]
+        _news_code = update_news_data.main()
+    finally:
+        sys.argv = _saved_argv2
+    if _news_code != 0:
+        print("WARNING: News data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
 
     import datetime as _dt
     _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"
