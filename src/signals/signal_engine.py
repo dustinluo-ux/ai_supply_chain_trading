@@ -212,6 +212,7 @@ class SignalEngine:
                         )
 
                         sector_map_use = DEFAULT_SECTOR_MAP if universe else {}
+                        llm_enabled = data_context.get("llm_enabled", True)
                         r = compute_news_composite(
                             Path(news_dir),
                             t,
@@ -219,6 +220,7 @@ class SignalEngine:
                             sector_sentiments=sector_sentiments_this_week or None,
                             sector_map=sector_map_use,
                             signal_horizon_days=signal_horizon_days_this_week,
+                            llm_enabled=llm_enabled,
                         )
                         news_composite_val = r.get("news_composite", 0.5)
                         sentiment_current = r.get("sentiment_current", 0.5)

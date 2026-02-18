@@ -155,6 +155,7 @@ def run_backtest_master_score(
     weight_mode: str = "fixed",
     rolling_method: str = "max_sharpe",
     verbose: bool = True,
+    llm_enabled: bool = True,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -344,6 +345,7 @@ def run_backtest_master_score(
             "news_weight_used": news_weight_used,
             "ensure_ohlcv": ensure_ohlcv,
             "enable_propagation": bool(_propagation_enabled),
+            "llm_enabled": llm_enabled,
         }
         week_scores, aux = signal_engine.generate(monday, tickers, data_context)
         atr_norms = aux.get("atr_norms", {})
@@ -539,6 +541,7 @@ def main():
     parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
     parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
+    parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
     args = parser.parse_args()
 
@@ -611,6 +614,7 @@ def main():
         "end_date": args.end,
         "weight_mode": args.weight_mode,
         "news_weight_fixed": args.news_weight,
+        "llm_enabled": not args.no_llm,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days

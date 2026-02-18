@@ -487,6 +487,7 @@ def compute_news_composite(
     use_finbert: bool = True,
     use_events: bool = True,
     signal_horizon_days: int = 5,
+    llm_enabled: bool = True,
 ) -> dict[str, Any]:
     """
     Load ticker news, run FinBERT sentiment, EventDetector, then strategies A–D.
@@ -552,19 +553,19 @@ def compute_news_composite(
     llm_relationships: Any = None
     llm_reasoning: Any = None
     new_network_links: list[dict[str, Any]] = []
-    llm_enabled = bool(cfg.get_param("strategy_params.llm_analysis.enabled", False))
+    llm_enabled_config = bool(cfg.get_param("strategy_params.llm_analysis.enabled", False))
     trigger_threshold = float(cfg.get_param("strategy_params.llm_analysis.trigger_threshold", 0.2))
     surprise_abs = abs(sentiment_current - sentiment_baseline)
     aggregated_text = " ".join((a.get("title") or "") + " " + (a.get("description") or "") for a in articles[:20]).lower()
     supply_chain_keyword = any(
         phrase in aggregated_text for phrase in ("supply chain", "supplier", "shortage", "supply disruption")
     )
-    trigger_llm = llm_enabled and (supply_chain_keyword or surprise_abs > trigger_threshold)
+    trigger_llm = llm_enabled_config and (supply_chain_keyword or surprise_abs > trigger_threshold)
     # Optional testing: force LLM path to verify Gemini without waiting for gate (env FORCE_LLM_TRIGGER=1).
     force_trigger = os.environ.get("FORCE_LLM_TRIGGER") == "1" and bool(articles)
     if force_trigger:
         trigger_llm = True
-    if trigger_llm:
+    if llm_enabled and trigger_llm:
         reason = "FORCE_LLM_TRIGGER (test)" if force_trigger else ("supply_chain_keyword" if supply_chain_keyword else f"surprise_abs {surprise_abs:.3f} > threshold {trigger_threshold}")
         logger.info("LLM Triggered: %s (ticker=%s)", reason, ticker)
         # Select 1–2 articles: most recent or max |sentiment - baseline|
