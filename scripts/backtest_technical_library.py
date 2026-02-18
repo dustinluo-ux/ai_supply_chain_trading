@@ -531,7 +531,7 @@ def main():
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--weight-mode", type=str, default="fixed")
-    parser.add_argument("--news-dir", type=str, default=None)
+    parser.add_argument("--news-dir", type=str, default="data/news")
     parser.add_argument("--news-weight", type=float, default=None)
     parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")

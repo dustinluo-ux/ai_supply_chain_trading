@@ -95,6 +95,24 @@ def compute_target_weights(
                 if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
                     spy_below_sma200 = bool(spy_cl < sma_val)
 
+    # news_dir from config if enabled and directory exists
+    _news_dir = None
+    try:
+        import yaml
+        _root = Path(__file__).resolve().parent.parent.parent
+        _cfg_path = _root / "config" / "config.yaml"
+        if _cfg_path.exists():
+            with open(_cfg_path, "r", encoding="utf-8") as _f:
+                _cfg = yaml.safe_load(_f)
+            _news = _cfg.get("news", {})
+            if _news.get("enabled", False):
+                _path_str = _news.get("data_dir", "data/news")
+                _full = (_root / _path_str) if not Path(_path_str).is_absolute() else Path(_path_str)
+                if _full.is_dir():
+                    _news_dir = _path_str if not Path(_path_str).is_absolute() else str(_full)
+    except Exception:
+        pass
+
     data_context = {
         "prices_dict": prices_dict,
         "tickers": tickers,
@@ -102,7 +120,7 @@ def compute_target_weights(
         "regime_state": regime_state,
         "spy_above_sma200": spy_above_sma200 if weight_mode == "regime" and regime_state is None else None,
         "category_weights_override": None,
-        "news_dir": None,
+        "news_dir": _news_dir,
         "sector_sentiments_this_week": {},
         "signal_horizon_days_this_week": 5,
         "news_weight_used": 0.0,

@@ -9,6 +9,8 @@ data:
 
 # News Source Configuration
 news:
+  enabled: true          # Set false to disable news in pipeline (news_dir becomes None)
+  data_dir: "data/news"  # Directory read by target_weight_pipeline and signal_engine
   source: "marketaux"  # Options: "newsapi", "alphavantage", "finnhub", "marketaux"
   # Source-specific configurations
   newsapi:
