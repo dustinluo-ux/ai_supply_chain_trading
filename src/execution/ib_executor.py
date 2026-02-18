@@ -34,6 +34,8 @@ class IBExecutor(BaseExecutor):
         side: str,
         order_type: str = "MARKET",
         limit_price: Optional[float] = None,
+        order_comment: Optional[str] = None,
+        stop_price: Optional[float] = None,
         **kwargs
     ) -> Dict:
         """
@@ -45,10 +47,12 @@ class IBExecutor(BaseExecutor):
             side: 'BUY' or 'SELL'
             order_type: 'MARKET' or 'LIMIT'
             limit_price: Required for LIMIT orders
+            order_comment: Optional ref/tag (e.g. PROHIBITED_LLM_DISCOVERY_LINK, LIVE_SPINE); set on order.orderRef
+            stop_price: Optional; stored in return for bracket/stop; caller may place stop separately
             **kwargs: Additional parameters
             
         Returns:
-            Dict with order information
+            Dict with order information (includes stop_price, order_comment when provided)
         """
         from ib_insync import Stock
         
@@ -68,13 +72,34 @@ class IBExecutor(BaseExecutor):
                 raise ValueError(f"Unsupported order type: {order_type}")
             
             order.account = self.account
+            if order_comment is not None and isinstance(order_comment, str):
+                order.orderRef = order_comment[:128]  # IB typically allows limited ref length
             
             # Submit order
             trade = self.ib.placeOrder(contract, order)
             
-            logger.info(f"Order submitted: {side} {quantity} {ticker} ({order_type})")
+            # Optional: place stop order if stop_price provided (design: implementation detail)
+            stop_order_id = None
+            if stop_price is not None and quantity > 0:
+                try:
+                    from ib_insync import Order
+                    stop_side = "SELL" if side.upper() == "BUY" else "BUY"
+                    stop_order = Order()
+                    stop_order.orderType = "STP"
+                    stop_order.auxPrice = stop_price
+                    stop_order.action = stop_side
+                    stop_order.totalQuantity = quantity
+                    stop_order.account = self.account
+                    if order_comment:
+                        stop_order.orderRef = order_comment[:128]
+                    stop_trade = self.ib.placeOrder(contract, stop_order)
+                    stop_order_id = str(stop_trade.order.orderId)
+                except Exception as se:
+                    logger.warning("Stop order placement failed (main order still placed): %s", se)
             
-            return {
+            logger.info(f"Order submitted: {side} {quantity} {ticker} ({order_type}) ref={order_comment!r} stop={stop_price}")
+            
+            out = {
                 'order_id': str(trade.order.orderId),
                 'ticker': ticker,
                 'quantity': quantity,
@@ -84,6 +109,13 @@ class IBExecutor(BaseExecutor):
                 'filled_quantity': trade.orderStatus.filled,
                 'filled_price': trade.orderStatus.avgFillPrice if trade.orderStatus.avgFillPrice else 0.0
             }
+            if order_comment is not None:
+                out['order_comment'] = order_comment
+            if stop_price is not None:
+                out['stop_price'] = stop_price
+            if stop_order_id is not None:
+                out['stop_order_id'] = stop_order_id
+            return out
         
         except Exception as e:
             logger.error(f"Error submitting order for {ticker}: {e}")

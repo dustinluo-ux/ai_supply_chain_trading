@@ -2,7 +2,7 @@
 .env
 .env.local
 .env.*.local
-# Allow env templates to be committed
+# Allow env templates to be committed (do not ignore)
 !.env.example
 !.env.template
 
@@ -38,9 +38,6 @@ logs/
 *.whl
 output.txt
 
-.env.example
-.env.template
-
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
@@ -67,6 +64,8 @@ cache/
 
 # Model files (if using local models)
 models/
+
+# legacy/graveyard is tracked for Wave 3 reference (do not ignore)
 
 # OS
 .DS_Store

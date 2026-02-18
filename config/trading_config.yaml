@@ -31,3 +31,8 @@ trading:
     live_account: "U123456"     # Your live account (if applicable)
     min_order_size: 1
     max_position_size: 10000
+
+# Position sizing (Stage 4): ATR-based. Position $ = (Equity * risk_pct) / (ATR * atr_multiplier)
+position_sizing:
+  risk_pct: 0.02        # Fraction of equity risked per position (e.g. 2%)
+  atr_multiplier: 2.0  # Stop distance in ATRs; higher = larger position per dollar risk

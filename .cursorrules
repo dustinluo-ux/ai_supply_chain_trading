@@ -1,10 +1,317 @@
-# Documentation Rules
-- ALWAYS update the relevant documentation file in `/docs` whenever a core logic change is made.
-- Master Pillars (exactly three): `docs/ARCHITECTURE.md`, `docs/TECHNICAL_SPEC.md`, `docs/BACKTEST_JOURNAL.md`.
-- If you change an indicator's math, update `docs/TECHNICAL_SPEC.md`.
-- If you change backtest logic (friction, slippage, timing, execution), update `docs/BACKTEST_JOURNAL.md`.
-- If you change data flow, pillars, or key paths, update `docs/ARCHITECTURE.md`.
-- Before finishing any task, check if the "Areas to be Completed" in `README.md` needs to be checked off or updated.
-- Avoid creating new `.md` files unless explicitly asked; prefer appending to the Master Pillars.
-- At the end of every task, provide a "Doc Update Status" confirming which files in `/docs` were modified to reflect the changes.
-- Every time you finish a task, you must start your summary with the word 'EXCELSIOR'.
+Always start every response with the emoji 🐍.
+# Cursor Rules — AI Supply Chain Trading System
+
+**Status:** Mandatory global rules for AI-assisted development  
+**Enforcement:** Binding — violations require immediate stop  
+**Hierarchy:** If conflict exists between this file and AI_RULES.md → AI_RULES.md wins
+
+---
+
+## PYTHON ENVIRONMENT & TERMINAL DISCIPLINE (MANDATORY)
+
+- **The ONLY valid Python executable for this project is:** `C:\Users\dusro\anaconda3\envs\wealth\python.exe`
+- **DO NOT** attempt to use an environment named 'trading'.
+- **DO NOT** use `$env:USERPROFILE` variables; use the full literal path.
+- **MANDATORY EXECUTION:** Every time you run a command in the terminal, you must prefix it with the full path above. 
+  - Example: `C:\Users\dusro\anaconda3\envs\wealth\python.exe check_ib.py`
+- If a package is missing, you must install it using: `C:\Users\dusro\anaconda3\envs\wealth\python.exe -m pip install <package>`
+
+
+---
+
+## LOAD REQUIREMENT (MANDATORY)
+
+**Before any planning or coding:**
+- Read and comply with `AI_RULES.md` at project root
+- Load canonical documentation hierarchy from `docs/`
+- Verify current operating mode (P0 Fix Mode status)
+
+---
+
+## CANONICAL DOCUMENTATION (Order of Authority)
+
+AI must treat these as authoritative, in this order:
+
+1. **docs/ARCHITECTURE.md** — System design, data flow, module organization, key paths
+2. **docs/WORKFLOW.md** — Execution stages (what happens, in order)
+3. **docs/SYSTEM_MAP.md** — Code mapping (workflow → modules, canonical entry points)
+4. **docs/STRATEGY_LOGIC.md** — Capital decision spine (how decisions are made)
+5. **docs/DECISIONS.md** — Architectural decision records (why choices were made)
+6. **docs/TECHNICAL_SPEC.md** — Indicator math, Master Score, News Alpha strategies
+7. **docs/BACKTEST_JOURNAL.md** — Execution assumptions, safety audits, results
+8. **docs/PROJECT_STATUS.md** — Current state, readiness assessment, action items
+9. **docs/STRATEGY_MATH.md** — Signal formulas, combination, portfolio logic, metrics
+10. **docs/SUPPLY_CHAIN_DB.md** — Supply chain database schema, build, freshness
+11. **docs/INDEX.md** — Documentation index (entry point)
+
+**Location:** All canonical docs in **`docs/`** directory.
+
+**Non-authoritative sources:** All other documents unless explicitly referenced by canon.
+
+---
+
+## READ-ONLY EVIDENCE FOLDERS
+
+**Never import, edit, move, rename, or delete from:**
+- `graveyard/` — Archived legacy code
+- `wealth_signal_mvp_v1/` — Read-only reference implementation
+- `docs/internal/` — Internal forensic analysis
+- `docs/archive/` — Superseded documentation
+
+**Purpose:** Evidence for code reuse only
+
+---
+
+## PLAN-FIRST RULE (MANDATORY)
+
+**Before any coding, AI must:**
+
+1. **Identify canonical location:**
+   - Which module in SYSTEM_MAP.md?
+   - Which workflow stage in WORKFLOW.md?
+   - Which decision in DECISIONS.md justifies this change?
+
+2. **Search reuse folders:**
+   - `graveyard/`
+   - `wealth_signal_mvp_v1/`
+   - Report reusable candidates: file path + description
+   - If reuse justified: copy minimal logic, adapt to canonical interfaces
+
+3. **Produce implementation plan:**
+   - Files to touch
+   - Interface impact: **NONE** or **PROPOSED**
+   - Validation steps
+   - Documentation updates needed
+
+4. **STOP if interface impact = PROPOSED:**
+   - Wait for explicit approval
+   - Document proposed changes
+   - Justify necessity
+
+**Sequence (must follow):**
+```
+Plan → Approval (if needed) → Code → Validate → Document
+```
+
+Skipping steps = violation.
+
+---
+
+## EVIDENCE DISCIPLINE (MANDATORY)
+
+**All claims about current behavior must:**
+- Cite file path + symbol name
+- Example: `src/signals/technical_library.py::compute_signal_strength`
+
+**If uncertain:**
+- Say **UNKNOWN** (never guess)
+- Say **NOT FOUND** and stop (never invent)
+
+**Prohibited:**
+- Silent fallbacks
+- Invented behavior
+- Assumptions without evidence
+- Speculative implementation
+
+---
+
+## INTERFACE FREEZE (CRITICAL)
+
+**Public interfaces are contracts:**
+- Engine method signatures (`SignalEngine`, `PolicyEngine`, `PortfolioEngine`)
+- Intent/data models (`PortfolioIntent`, `RegimeState`)
+- Config schemas (all YAML files)
+
+**Rules:**
+- No silent interface changes
+- Any interface change requires:
+  1. Explicit proposal in plan
+  2. Documentation update
+  3. Migration note (if breaking)
+  4. Approval before implementation
+
+**Execution parity requirement:**
+- Backtest and execution paths must call identical scoring/regime/sizing logic
+- No alternate execution scoring paths allowed
+- Any divergence requires explicit justification in DECISIONS.md
+
+---
+
+## CANONICAL ENTRY POINTS ONLY
+
+**Production-ready (canonical):**
+- `scripts/backtest_technical_library.py` — Master Score backtest
+- `scripts/research_grid_search.py` — Parameter sweep
+- `run_weekly_rebalance.py` — Weekly execution (planned)
+
+**Non-canonical (experimental/legacy):**
+- `run_phase1_test.py`
+- `run_phase2_pipeline.py`
+- `run_phase3_backtest.py`
+- `run_strategy.py`
+- `run_technical_backtest.py`
+- `test_signals.py`
+
+**Rule:** AI must not fix, extend, or refactor non-canonical scripts unless explicitly requested.
+
+---
+
+## P0 FIX MODE (CURRENT OPERATING MODE)
+
+**Status:** LOCKED (see DECISIONS.md::D-P0-FIX-MODE)
+
+**Allowed:**
+- Fix documented but broken features
+- Wire existing modules to actually execute
+- Create declared but missing outputs
+- Add logging, manifests, observability
+- Reuse logic from graveyard/ or wealth_signal_mvp_v1/
+
+**Forbidden:**
+- New models, signals, strategies, metrics
+- Public interface changes
+- Behavior not described in canonical docs
+- Scope expansion beyond declared workflow
+- Touching non-canonical modules
+
+**Kill-switch rule:**
+Any run must terminate if:
+- Declared output is missing
+- Module invariant fails
+- Research spine cannot complete end-to-end
+
+---
+
+## NEWS AS FIRST-CLASS INPUT (MANDATORY)
+
+**Every run must have explicit news_state:**
+- `PRESENT` — News files exist and readable → compute news_score
+- `EMPTY` — News files exist but no signal → news_score = 0 (valid)
+- `ERROR` — News files missing/unreadable → **STOP execution**
+
+**Prohibited:**
+- Silent fallback to "technical-only"
+- Implicit defaults when news missing
+- Degradation without explicit configuration
+
+**Rationale:** See DECISIONS.md::D006
+
+---
+
+## REUSE RULE (GRAVEYARD + WEALTH_SIGNAL_MVP_V1)
+
+**Before implementing ANY new feature:**
+
+1. Search both folders for candidates
+2. Report: file path + what's reusable
+3. If justified:
+   - Copy minimal required logic into `src/`
+   - Adapt to canonical interfaces
+   - Do NOT preserve conflicting legacy interfaces
+4. Attribute origin in commit message or comment
+
+**Prohibited:**
+- Runtime imports from read-only folders
+- Wholesale module resurrection
+- Editing/moving/renaming read-only content
+
+**If full resurrection seems required:**
+- Write justification in DECISIONS.md
+- Wait for approval
+- Then proceed with adaptation
+
+---
+
+## DOCUMENTATION DISCIPLINE
+
+**When to update docs:**
+- Behavior changed
+- Structure changed
+- New decision made
+- Interface modified
+
+**When NOT to update docs:**
+- Implementation details unchanged
+- Refactoring without functional impact
+- Bug fixes that restore documented behavior
+
+**Rule:** Docs updated before or alongside code, never after.
+
+---
+
+## VALIDATION REQUIREMENTS
+
+**Every code change must include:**
+- Unit tests for new functions (when applicable)
+- Integration test if touching canonical entry points
+- Determinism check if modifying backtest logic
+- Safety report verification if changing execution timing
+
+**Pre-commit gate:**
+```bash
+./scripts/check_spine_integrity.sh
+# Exit 0 = PASS, 1 = FAIL (do not merge)
+```
+
+---
+
+## FAILURE MODE (HARD STOP PROTOCOL)
+
+**If any rule is violated:**
+1. **Stop immediately**
+2. **State which rule is violated**
+3. **Explain why progress is blocked**
+4. **Ask for clarification or override**
+
+**Prohibited:**
+- Silent rule violations
+- Proceeding with uncertainty
+- Guessing at intent
+- Workarounds without approval
+
+---
+
+## ENFORCEMENT HIERARCHY
+
+**If conflict exists between:**
+1. AI_RULES.md (highest authority)
+2. This file (.cursorrules)
+3. Cursor agent instruction
+4. Ad hoc user prompt
+
+**AI_RULES.md wins** unless user provides explicit override.
+
+**Overrides must be:**
+- Explicit (not implied)
+- Narrow in scope (specific to task)
+- Documented (reason stated)
+
+---
+
+## QUICK REFERENCE CHECKLIST
+
+**Before starting any task:**
+
+- [ ] Read AI_RULES.md
+- [ ] Load canonical docs from docs/ (INDEX → ARCHITECTURE → WORKFLOW → SYSTEM_MAP → DECISIONS)
+- [ ] Identify spine node and workflow stage
+- [ ] Search graveyard/ and wealth_signal_mvp_v1/ for reuse
+- [ ] Verify P0 Fix Mode constraints
+- [ ] Check news_state requirement
+- [ ] Plan with interface impact assessment
+- [ ] Get approval if interface changes
+- [ ] Cite evidence for all behavioral claims
+- [ ] Update docs if behavior/structure changed
+- [ ] Run validation checks
+
+**After completing any task:**
+
+- [ ] Verify no interface mutations
+- [ ] Confirm execution parity (backtest ↔ weekly)
+- [ ] Check determinism (if backtest modified)
+- [ ] Update PROJECT_STATUS.md if readiness changed
+- [ ] Document new decisions in DECISIONS.md
+
+---
+
+This file enforces guardrails to prevent architectural drift, hallucination, silent interface mutation, and legacy resurrection while preserving the single structural spine.

@@ -1,0 +1,63 @@
+# config/strategy_params.yaml
+# Assumptions for AI-driven Supply Chain Sentiment and System Warm-up
+
+sentiment:
+  baseline_days: 30
+  event_priority_hours: 48
+  min_baseline_obs: 1
+  sector_top_pct: 0.10
+
+deduplication:
+  similarity_threshold: 0.85
+
+# Gated LLM deep analysis (Gemini); see docs/GEMINI_BRIDGE_DESIGN.md
+llm_analysis:
+  enabled: true   # Phase B: enable for next weekly rebalance (GEMINI_ACTIVATION_PLAN.md)
+  provider: "google"
+  model: "gemini-2.0-flash"
+  # Absolute sentiment delta in [0, 1]; trigger when |current - baseline| > this (GEMINI_BRIDGE_DESIGN.md §2.2)
+  trigger_threshold: 0.2
+  # Optional: map LLM entity names to ticker symbols (e.g. "NVIDIA" -> "NVDA"); used by sentiment_propagator (BLUEPRINT_DYNAMIC_UNIVERSE_EXPANSION.md)
+  entity_ticker_map:
+      "NVIDIA": "NVDA"
+      "TAIWAN SEMICONDUCTOR": "TSM"
+      "TSMC": "TSM"
+      "ASML HOLDING": "ASML"
+      "MICRON": "MU"
+      "APPLIED MATERIALS": "AMAT"
+      "ADVANCED MICRO DEVICES": "AMD"
+      "SAMSUNG ELECTRONICS": "SSNLF"
+
+propagation:
+  tier_1_weight: 0.50
+  tier_2_weight: 0.20
+  decay_factor: 0.85
+  blend_factor: 0.30   # 70% direct news + 30% propagated network effect
+  enabled: true
+
+warmup:
+  # The barrier causing "Not enough weeks" error
+  # System needs this many days of data BEFORE the start date to compute indicators
+  min_required_days: 60 
+  
+  # Default window for normalization if not specified in technical_master_score.yaml
+  rolling_normalization: 252 
+
+# NEW: Asset Allocation & Rebalancing Logic
+rebalancing:
+  enabled: true
+  schedule: "monday_open"      # Check logic for spine.py
+  drift_threshold_pct: 0.05    # Rebalance only if weight deviates by > 5%
+  min_trade_dollar_value: 500  # Do not trade if delta is less than $500
+  rebalance_buffer: 0.01       # 1% stabilization buffer
+  cash_reserve_pct: 0.05       # Maintain 5% cash reserve for liquidity
+
+execution:
+  default_timeframe: "1d"
+  rebalance_frequency: "weekly"
+  rebalance_day: "Monday"
+
+# Live safety: pause trading if 1-day NAV drawdown exceeds threshold (docs/LIVE_EXECUTION_BRIDGE_DESIGN.md)
+circuit_breaker:
+  enabled: true
+  max_1d_drawdown_pct: 0.05   # 5%: pause if 1-day NAV drop >= 5%

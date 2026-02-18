@@ -2,6 +2,15 @@
 
 This directory contains utility scripts for downloading and processing data.
 
+## P0 Determinism Gate
+
+Run the canonical backtest twice with identical config and inputs; compares SHA256 of result files and regime ledger row to ensure deterministic outputs. Use for spine stabilization.
+
+```bash
+python scripts/verify_determinism.py --start 2022-01-01 --end 2022-12-31
+```
+Exit 0 = PASS, 1 = FAIL. Both `--start` and `--end` (YYYY-MM-DD) are required.
+
 ## FNSPID Dataset Pipeline
 
 ### 1. Download FNSPID Dataset

@@ -7,7 +7,8 @@ Propagates news sentiment from a primary ticker to related companies
 Uses a directed graph approach with decay factors based on relationship strength.
 """
 
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
 from collections import deque
 import logging
@@ -124,37 +125,50 @@ class SentimentPropagator:
     
     def propagate(
         self,
-        news_item: NewsItem
+        news_item: NewsItem,
+        discovered_links: Optional[List[Dict]] = None,
+        valid_tickers: Optional[Set[str]] = None,
     ) -> List[PropagatedSignal]:
         """
         Propagate sentiment from primary ticker to related companies.
-        
+
         Args:
             news_item: NewsItem with ticker and sentiment scores
-            
+            discovered_links: Optional list from LLM (e.g. [{"direction": "upstream", "target_entity": "X"}, ...]).
+                Used only for the primary ticker; treated as Tier 1 (suppliers/customers).
+            valid_tickers: Optional set of ticker symbols (e.g. from prices_dict) for resolving
+                entity names to tickers; used in _get_relationships when processing discovered_links.
+
         Returns:
             List of PropagatedSignal objects for related tickers
         """
         primary_ticker = news_item.ticker.upper()
         propagated_signals = []
-        
+        links_for_primary = discovered_links if discovered_links else None
+        valid_set: Optional[Set[str]] = None
+        if valid_tickers is not None:
+            valid_set = {t.upper() for t in valid_tickers}
+
         # Track visited tickers to avoid cycles
         visited = {primary_ticker: 0}  # ticker -> tier
-        
+
         # BFS queue: (ticker, tier, source_ticker, path_weight)
         queue = deque([(primary_ticker, 0, primary_ticker, 1.0)])
-        
-        logger.debug(f"Propagating sentiment from {primary_ticker} (sentiment={news_item.sentiment_score:.3f})")
-        
+
+        logger.debug("Propagating sentiment from %s (sentiment=%.3f)", primary_ticker, news_item.sentiment_score)
+
         while queue:
             current_ticker, current_tier, source_ticker, cumulative_weight = queue.popleft()
-            
+
             # Skip if we've exceeded max degrees
             if current_tier >= self.max_degrees:
                 continue
-            
-            # Get relationships for current ticker
-            relationships = self._get_relationships(current_ticker)
+
+            # Get relationships for current ticker (merge discovered_links for primary only)
+            use_discovered = links_for_primary if (current_ticker == primary_ticker) else None
+            relationships = self._get_relationships(
+                current_ticker, discovered_links=use_discovered, valid_tickers=valid_set
+            )
             
             if not relationships:
                 continue
@@ -235,27 +249,94 @@ class SentimentPropagator:
         logger.info(f"Generated {len(propagated_signals)} propagated signals from {primary_ticker}")
         return propagated_signals
     
-    def _get_relationships(self, ticker: str) -> Dict:
+    @staticmethod
+    def _normalize_entity_name(entity: str) -> str:
+        """Remove common suffixes and punctuation for fuzzy ticker matching."""
+        s = (entity or "").strip().upper()
+        for suffix in (" INC.", " INC", ", INC.", ", INC", " CORP.", " CORP", ", CORP.", ", CORP", " CO.", " CO", ", LLC", " LLC", "."):
+            if s.endswith(suffix):
+                s = s[: -len(suffix)].strip()
+        s = re.sub(r"[,.\-]+$", "", s).strip()
+        return s
+
+    @staticmethod
+    def _resolve_entity_to_ticker(
+        entity: str,
+        valid_tickers: Optional[Set[str]] = None,
+    ) -> str:
         """
-        Get all relationships for a ticker.
-        
-        Args:
-            ticker: Stock ticker
-            
-        Returns:
-            Dict with 'suppliers', 'customers', 'competitors' lists
+        Resolve an entity name to a ticker symbol. Uses config map then valid_tickers.
+        Returns uppercase ticker; if no match, returns normalized entity (caller may filter by CSV).
+        """
+        try:
+            from src.utils.config_manager import get_config
+            cfg = get_config()
+            entity_map = cfg.get_param("strategy_params.llm_analysis.entity_ticker_map", None) or {}
+        except Exception:
+            entity_map = {}
+        normalized = SentimentPropagator._normalize_entity_name(entity)
+        if not normalized:
+            return ""
+        # Config map: key can be normalized name or original-style
+        resolved = entity_map.get(normalized) or entity_map.get(normalized.title()) or entity_map.get(entity.strip())
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved.strip().upper()
+        if valid_tickers and normalized.upper() in valid_tickers:
+            return normalized.upper()
+        # Leave as normalized so caller can filter by CSV; often same as ticker (e.g. TSM)
+        return normalized.upper()
+
+    def _get_relationships(
+        self,
+        ticker: str,
+        discovered_links: Optional[List[Dict]] = None,
+        valid_tickers: Optional[Set[str]] = None,
+    ) -> Dict:
+        """
+        Get all relationships for a ticker. Optionally merge discovered_links (LLM)
+        as Tier 1: upstream -> suppliers, downstream -> customers. Entity names are
+        normalized and resolved to tickers when possible (config map + valid_tickers).
         """
         ticker = ticker.upper()
-        
-        if not self.manager.is_covered(ticker):
-            return {}
-        
-        rel_data = self.manager.db['relationships'][ticker]
-        
+
+        suppliers: List[Dict] = []
+        customers: List[Dict] = []
+        competitors: List[Dict] = []
+
+        if self.manager.is_covered(ticker):
+            rel_data = self.manager.db["relationships"][ticker]
+            suppliers = list(rel_data.get("suppliers", []))
+            customers = list(rel_data.get("customers", []))
+            competitors = list(rel_data.get("competitors", []))
+
+        if discovered_links:
+            logger.debug(
+                "Propagator received %d discovered links for %s",
+                len(discovered_links), ticker,
+            )
+            for link in discovered_links:
+                if not isinstance(link, dict):
+                    continue
+                direction = (link.get("direction") or "").lower()
+                entity = link.get("entity") or link.get("target_entity") or ""
+                if not entity or not isinstance(entity, str):
+                    continue
+
+                resolved_ticker = self._resolve_entity_to_ticker(entity, valid_tickers)
+                if not resolved_ticker:
+                    continue
+                logger.debug("Mapped '%s' to '%s'", entity.strip(), resolved_ticker)
+                rec = {"ticker": resolved_ticker, "confidence": "medium"}
+                if direction == "upstream":
+                    suppliers.append(rec)
+                elif direction == "downstream":
+                    customers.append(rec)
+            logger.info("Merged %d discovered links for %s", len(discovered_links), ticker)
+
         return {
-            'suppliers': rel_data.get('suppliers', []),
-            'customers': rel_data.get('customers', []),
-            'competitors': rel_data.get('competitors', [])
+            "suppliers": suppliers,
+            "customers": customers,
+            "competitors": competitors,
         }
     
     def propagate_from_news_result(

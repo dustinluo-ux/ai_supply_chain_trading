@@ -156,7 +156,7 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df[OHLCV_COLS].copy()
 
-    # ---- Trend ----
+    # ---- Trend ---- (P0: RSI, ADX, MACD active; others commented)
     try:
         macd = ta.macd(c, fast=12, slow=26, signal=9)
         if macd is not None and not macd.empty:
@@ -174,175 +174,169 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
                 out["adx"] = _safe_series(adx, idx)
     except Exception as e:
         logger.debug("ADX: %s", e)
-    try:
-        psar = ta.psar(h, l, c)
-        if psar is not None and not psar.empty:
-            for col in psar.columns:
-                out[f"psar_{col}"] = _safe_series(psar[col], idx)
-    except Exception as e:
-        logger.debug("PSAR: %s", e)
-    try:
-        aroon = ta.aroon(h, l, length=14)
-        if aroon is not None and not aroon.empty:
-            for col in aroon.columns:
-                out[f"aroon_{col}"] = _safe_series(aroon[col], idx)
-    except Exception as e:
-        logger.debug("Aroon: %s", e)
+    # PSAR disabled for deterministic backtest (P0 stabilization)
+    # try:
+    #     psar = ta.psar(h, l, c)
+    #     if psar is not None and not psar.empty:
+    #         for col in psar.columns:
+    #             out[f"psar_{col}"] = _safe_series(psar[col], idx)
+    # except Exception as e:
+    #     logger.debug("PSAR: %s", e)
+    # try:
+    #     aroon = ta.aroon(h, l, length=14)
+    #     if aroon is not None and not aroon.empty:
+    #         for col in aroon.columns:
+    #             out[f"aroon_{col}"] = _safe_series(aroon[col], idx)
+    # except Exception as e:
+    #     logger.debug("Aroon: %s", e)
 
-    # ---- Volatility ----
-    try:
-        bb = ta.bbands(c, length=20, std=2.0)
-        if bb is not None and not bb.empty:
-            for col in bb.columns:
-                out[f"bb_{col}"] = _safe_series(bb[col], idx)
-            # BB position (0 = lower, 1 = upper)
-            bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get("bb_BBL_20_2.0", pd.Series(0.0, index=idx))
-            out["bb_position"] = ((c - bl) / (bu - bl + 1e-8)).clip(0, 1).fillna(0.5)
-    except Exception as e:
-        logger.debug("Bollinger: %s", e)
-    try:
-        atr = ta.atr(h, l, c, length=14)
-        if atr is not None:
-            out["atr"] = _safe_series(atr, idx)
-    except Exception as e:
-        logger.debug("ATR: %s", e)
-    try:
-        kc = ta.kc(h, l, c, length=20)
-        if kc is not None and not kc.empty:
-            for col in kc.columns:
-                out[f"kc_{col}"] = _safe_series(kc[col], idx)
-    except Exception as e:
-        logger.debug("Keltner: %s", e)
+    # ---- Volatility ---- (P0: commented)
+    # try:
+    #     bb = ta.bbands(c, length=20, std=2.0)
+    #     if bb is not None and not bb.empty:
+    #         for col in bb.columns:
+    #             out[f"bb_{col}"] = _safe_series(bb[col], idx)
+    #         bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get("bb_BBL_20_2.0", pd.Series(0.0, index=idx))
+    #         out["bb_position"] = ((c - bl) / (bu - bl + 1e-8)).clip(0, 1).fillna(0.5)
+    # except Exception as e:
+    #     logger.debug("Bollinger: %s", e)
+    # try:
+    #     atr = ta.atr(h, l, c, length=14)
+    #     if atr is not None:
+    #         out["atr"] = _safe_series(atr, idx)
+    # except Exception as e:
+    #     logger.debug("ATR: %s", e)
+    # try:
+    #     kc = ta.kc(h, l, c, length=20)
+    #     if kc is not None and not kc.empty:
+    #         for col in kc.columns:
+    #             out[f"kc_{col}"] = _safe_series(kc[col], idx)
+    # except Exception as e:
+    #     logger.debug("Keltner: %s", e)
 
-    # ---- Momentum ----
-    try:
-        stoch = ta.stoch(h, l, c, k=14, d=3)
-        if stoch is not None and not stoch.empty:
-            for col in stoch.columns:
-                out[f"stoch_{col}"] = _safe_series(stoch[col], idx)
-    except Exception as e:
-        logger.debug("Stochastic: %s", e)
-    try:
-        cci = ta.cci(h, l, c, length=20)
-        if cci is not None:
-            out["cci"] = _safe_series(cci, idx)
-    except Exception as e:
-        logger.debug("CCI: %s", e)
-    try:
-        willr = ta.willr(h, l, c, length=14)
-        if willr is not None:
-            out["willr"] = _safe_series(willr, idx)
-    except Exception as e:
-        logger.debug("Williams %%R: %s", e)
-    try:
-        roc = ta.roc(c, length=10)
-        if roc is not None:
-            out["roc"] = _safe_series(roc, idx)
-    except Exception as e:
-        logger.debug("ROC: %s", e)
+    # ---- Momentum ---- (P0: only RSI active)
+    # try:
+    #     stoch = ta.stoch(h, l, c, k=14, d=3)
+    #     if stoch is not None and not stoch.empty:
+    #         for col in stoch.columns:
+    #             out[f"stoch_{col}"] = _safe_series(stoch[col], idx)
+    # except Exception as e:
+    #     logger.debug("Stochastic: %s", e)
+    # try:
+    #     cci = ta.cci(h, l, c, length=20)
+    #     if cci is not None:
+    #         out["cci"] = _safe_series(cci, idx)
+    # except Exception as e:
+    #     logger.debug("CCI: %s", e)
+    # try:
+    #     willr = ta.willr(h, l, c, length=14)
+    #     if willr is not None:
+    #         out["willr"] = _safe_series(willr, idx)
+    # except Exception as e:
+    #     logger.debug("Williams %%R: %s", e)
+    # try:
+    #     roc = ta.roc(c, length=10)
+    #     if roc is not None:
+    #         out["roc"] = _safe_series(roc, idx)
+    # except Exception as e:
+    #     logger.debug("ROC: %s", e)
     try:
         rsi = ta.rsi(c, length=14)
         if rsi is not None:
             out["rsi"] = _safe_series(rsi, idx)
     except Exception as e:
         logger.debug("RSI: %s", e)
-    # Momentum 5d/20d (using pandas_ta: close relative to past)
-    try:
-        mom5 = ta.roc(c, length=5)
-        mom20 = ta.roc(c, length=20)
-        if mom5 is not None:
-            out["momentum_5d"] = _safe_series(mom5, idx)
-        if mom20 is not None:
-            out["momentum_20d"] = _safe_series(mom20, idx)
-    except Exception as e:
-        logger.debug("Momentum ROC: %s", e)
+    # # Momentum 5d/20d (P0: commented)
+    # try:
+    #     mom5 = ta.roc(c, length=5)
+    #     mom20 = ta.roc(c, length=20)
+    #     if mom5 is not None:
+    #         out["momentum_5d"] = _safe_series(mom5, idx)
+    #     if mom20 is not None:
+    #         out["momentum_20d"] = _safe_series(mom20, idx)
+    # except Exception as e:
+    #     logger.debug("Momentum ROC: %s", e)
 
-    # ---- Volume ----
-    try:
-        obv = ta.obv(c, v)
-        if obv is not None:
-            out["obv"] = _safe_series(obv, idx)
-    except Exception as e:
-        logger.debug("OBV: %s", e)
-    try:
-        cmf = ta.cmf(h, l, c, v, length=20)
-        if cmf is not None:
-            out["cmf"] = _safe_series(cmf, idx)
-    except Exception as e:
-        logger.debug("CMF: %s", e)
-    try:
-        vwap_ = ta.vwap(h, l, c, v)
-        if vwap_ is not None:
-            out["vwap"] = _safe_series(vwap_, idx)
-        else:
-            # Fallback: typical VWAP = (h+l+c)/3 * v, cumsum / cumsum(v)
-            typical = (h + l + c) / 3.0
-            out["vwap"] = (typical * v).cumsum() / (v.cumsum().replace(0, np.nan)).bfill().fillna(c)
-    except Exception as e:
-        typical = (h + l + c) / 3.0
-        out["vwap"] = (typical * v).cumsum() / (v.cumsum().replace(0, np.nan)).bfill().fillna(c)
-    # Volume ratio: current / rolling mean
-    try:
-        vol_ma = v.rolling(30, min_periods=1).mean()
-        out["volume_ratio"] = (v / (vol_ma + 1e-8)).fillna(1.0)
-    except Exception as e:
-        logger.debug("Volume ratio: %s", e)
-        out["volume_ratio"] = 1.0
+    # ---- Volume ---- (P0: commented)
+    # try:
+    #     obv = ta.obv(c, v)
+    #     if obv is not None:
+    #         out["obv"] = _safe_series(obv, idx)
+    # except Exception as e:
+    #     logger.debug("OBV: %s", e)
+    # try:
+    #     cmf = ta.cmf(h, l, c, v, length=20)
+    #     if cmf is not None:
+    #         out["cmf"] = _safe_series(cmf, idx)
+    # except Exception as e:
+    #     logger.debug("CMF: %s", e)
+    # try:
+    #     vwap_ = ta.vwap(h, l, c, v)
+    #     if vwap_ is not None:
+    #         out["vwap"] = _safe_series(vwap_, idx)
+    #     else:
+    #         typical = (h + l + c) / 3.0
+    #         out["vwap"] = (typical * v).cumsum() / (v.cumsum().replace(0, np.nan)).bfill().fillna(c)
+    # except Exception as e:
+    #     typical = (h + l + c) / 3.0
+    #     out["vwap"] = (typical * v).cumsum() / (v.cumsum().replace(0, np.nan)).bfill().fillna(c)
+    # try:
+    #     vol_ma = v.rolling(30, min_periods=1).mean()
+    #     out["volume_ratio"] = (v / (vol_ma + 1e-8)).fillna(1.0)
+    # except Exception as e:
+    #     logger.debug("Volume ratio: %s", e)
+    #     out["volume_ratio"] = 1.0
 
-    # ---- Moving Averages ----
-    for period in [8, 12, 26, 50]:
-        try:
-            ema = ta.ema(c, length=period)
-            if ema is not None:
-                out[f"ema_{period}"] = _safe_series(ema, idx)
-        except Exception as e:
-            logger.debug("EMA %s: %s", period, e)
-    try:
-        sma50 = ta.sma(c, length=50)
-        sma200 = ta.sma(c, length=200)
-        if sma50 is not None and sma200 is not None:
-            out["sma50"] = _safe_series(sma50, idx)
-            out["sma200"] = _safe_series(sma200, idx)
-            out["sma_golden_cross"] = (sma50.reindex(idx).fillna(0) > sma200.reindex(idx).fillna(0)).astype(float)
-    except Exception as e:
-        logger.debug("SMA golden cross: %s", e)
+    # ---- Moving Averages ---- (P0: commented)
+    # for period in [8, 12, 26, 50]:
+    #     try:
+    #         ema = ta.ema(c, length=period)
+    #         if ema is not None:
+    #             out[f"ema_{period}"] = _safe_series(ema, idx)
+    #     except Exception as e:
+    #         logger.debug("EMA %s: %s", period, e)
+    # try:
+    #     sma50 = ta.sma(c, length=50)
+    #     sma200 = ta.sma(c, length=200)
+    #     if sma50 is not None and sma200 is not None:
+    #         out["sma50"] = _safe_series(sma50, idx)
+    #         out["sma200"] = _safe_series(sma200, idx)
+    #         out["sma_golden_cross"] = (sma50.reindex(idx).fillna(0) > sma200.reindex(idx).fillna(0)).astype(float)
+    # except Exception as e:
+    #     logger.debug("SMA golden cross: %s", e)
 
     # ---- Normalize for Master Score ----
     # Config: rolling window for unbounded indicators (prevents look-ahead bias)
     _config = load_master_score_config()
     _rolling_window = _config.get("rolling_window", 252)
 
-    # Static scaling for bounded indicators (no MinMaxScaler; fixed formula so e.g. RSI 70 is always 0.7)
+    # Static scaling for bounded indicators (P0: only RSI active)
     if "rsi" in out.columns:
         out["rsi_norm"] = (out["rsi"].clip(0, 100).fillna(50) / 100.0)
-    if "willr" in out.columns:
-        # Williams %R is -100 to 0; (value + 100) / 100 gives 0-1
-        out["willr_norm"] = (out["willr"].clip(-100, 0).fillna(-50) + 100.0) / 100.0
-    for col in ["stoch_STOCHk_14_3_3", "stoch_STOCHd_14_3_3"]:
-        if col in out.columns:
-            out[f"{col}_norm"] = (out[col].clip(0, 100).fillna(50) / 100.0)
-    for c in list(out.columns):
-        if c.startswith("stoch_") and not c.endswith("_norm") and f"{c}_norm" not in out.columns:
-            out[f"{c}_norm"] = (out[c].clip(0, 100).fillna(50) / 100.0)
+    # if "willr" in out.columns:
+    #     out["willr_norm"] = (out["willr"].clip(-100, 0).fillna(-50) + 100.0) / 100.0
+    # for col in ["stoch_STOCHk_14_3_3", "stoch_STOCHd_14_3_3"]:
+    #     if col in out.columns:
+    #         out[f"{col}_norm"] = (out[col].clip(0, 100).fillna(50) / 100.0)
+    # for c in list(out.columns):
+    #     if c.startswith("stoch_") and not c.endswith("_norm") and f"{c}_norm" not in out.columns:
+    #         out[f"{c}_norm"] = (out[c].clip(0, 100).fillna(50) / 100.0)
 
-    # Rolling min-max for unbounded indicators (252-day window = no look-ahead)
-    _unbounded = [
-        "atr", "cci", "roc", "momentum_5d", "momentum_20d",
-        "cmf", "volume_ratio", "bb_position", "obv",
-    ]
-    for col in _unbounded:
-        if col in out.columns and f"{col}_norm" not in out.columns:
-            s = out[col].replace([np.inf, -np.inf], np.nan)
-            out[f"{col}_norm"] = _rolling_minmax(s, window=_rolling_window)
-    # ADX
+    # Rolling min-max for unbounded (P0: commented; only RSI norm above)
+    # _unbounded = [
+    #     "atr", "cci", "roc", "momentum_5d", "momentum_20d",
+    #     "cmf", "volume_ratio", "bb_position", "obv",
+    # ]
+    # for col in _unbounded:
+    #     if col in out.columns and f"{col}_norm" not in out.columns:
+    #         s = out[col].replace([np.inf, -np.inf], np.nan)
+    #         out[f"{col}_norm"] = _rolling_minmax(s, window=_rolling_window)
     adx_cols = [c for c in out.columns if c.startswith("adx_") and not c.endswith("_norm")]
     if adx_cols and "adx_norm" not in out.columns:
         s = out[adx_cols[0]].replace([np.inf, -np.inf], np.nan)
         out["adx_norm"] = _rolling_minmax(s, window=_rolling_window)
-    # MACD: use first MACD line column (e.g. MACD_12_26_9) for macd_norm
     macd_cols = [c for c in out.columns if c.startswith("macd_") and not c.endswith("_norm")]
     if macd_cols and "macd_norm" not in out.columns:
-        # Prefer column that looks like the line (not histogram/signal)
         line_col = next((c for c in macd_cols if "MACD_" in c or "macd_" in c), macd_cols[0])
         s = out[line_col].replace([np.inf, -np.inf], np.nan)
         out["macd_norm"] = _rolling_minmax(s, window=_rolling_window)

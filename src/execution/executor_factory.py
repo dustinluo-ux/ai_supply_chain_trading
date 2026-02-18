@@ -6,8 +6,6 @@ import os
 from typing import Optional
 from src.execution.base_executor import BaseExecutor
 from src.execution.mock_executor import MockExecutor
-from src.execution.ib_executor import IBExecutor
-from src.data.provider_factory import DataProviderFactory
 from src.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -34,6 +32,7 @@ class ExecutorFactory:
             return MockExecutor(initial_capital=initial_capital)
         
         elif executor_type.lower() in ['ib_paper', 'ib_live']:
+            from src.execution.ib_executor import IBExecutor
             if data_provider is None:
                 # Create IB provider if not provided
                 host = kwargs.get('host', '127.0.0.1')
@@ -82,6 +81,8 @@ class ExecutorFactory:
             initial_capital = trading_config.get('initial_capital', 100000.0)
             
             if executor_type in ['ib_paper', 'ib_live']:
+                from src.data.provider_factory import DataProviderFactory
+                from src.execution.ib_executor import IBExecutor
                 # Create IB data provider
                 ib_config = trading_config.get('ib', {})
                 data_provider = DataProviderFactory.create('ib', **ib_config)

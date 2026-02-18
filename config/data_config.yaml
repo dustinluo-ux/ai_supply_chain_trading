@@ -27,14 +27,16 @@ universe_selection:
   
   # Minimum data points required (252 = 1 year of trading days)
   # Reduced to 100 to allow stocks with partial data
-  min_data_points: 100
-  
+  min_data_points: 60
+
+  # Watchlist: The central list of symbols to track
+  watchlist: ["NVDA", "AMD", "TSM", "AAPL", "MSFT", "GOOGL"]
   # Date range filter
   # Note: If your data is older, adjust these dates
   # The backtest will use whatever date range is available in the data
   date_range:
     start: "2020-01-01"  # Start earlier to catch more data
-    end: "2024-12-31"
+    end: "2024-12-31"    # Extended for 2023-2024 calibration window
 
 # Filtering Criteria
 filtering:
@@ -61,10 +63,10 @@ news_data:
   # News data source
   source: "FNSPID"  # Options: FNSPID, Polygon, MarketAux, custom
   
-  # Date range of news data
+  # Date range of news data (actual content verified 2026-02-16)
   date_range:
-    start: "2023-01-01"
-    end: "2024-12-31"
+    start: "2022-04-01"
+    end: "2022-12-31"
   
   # Lookback window for news analysis (days)
   lookback_days: 7

@@ -1,105 +1,334 @@
-# Target Architecture — Multi-Source Quant Pipeline
+# ARCHITECTURE — System Design & Data Flow
 
-**Last Updated:** 2026-01-29
+**Last Updated:** 2026-02-14
 
-Single source of truth for system architecture, data flow, and key paths. Technical indicator and backtest details live in `TECHNICAL_SPEC.md` and `BACKTEST_JOURNAL.md`.
-
----
-
-## Principles
-
-1. **Historical data:** Keep FNSPID and Polygon-based analysis. Expand with Tiingo, yfinance, Marketaux. Support **seamless alternation** between legacy (FNSPID + Polygon) and new (Tiingo + yfinance + Marketaux) via config.
-2. **wealth_signal_mvp_v1:** Read-only; source of code to port. All implementation in **ai_supply_chain_trading**.
-3. **ai_supply_chain_trading:** Expand only; no removal of existing modules.
-4. **Overlay strategy:** Regime (3-state HMM) and News Alpha (Buzz, Surprise, Sector, Event) are **multipliers/filters on top of** the base Master Score. Do not delete existing technical logic; add Regime and News as overlays.
+Single source of truth for system architecture, data flow, and key paths. Technical indicator math lives in `TECHNICAL_SPEC.md`. Backtest execution details live in `BACKTEST_JOURNAL.md`.
 
 ---
 
-## Four Pillars
+## Design Principles
+
+1. **Multi-source data strategy:** Support seamless alternation between legacy (FNSPID + Polygon) and new (Tiingo + yfinance + Marketaux) via configuration.
+2. **wealth_signal_mvp_v1:** Read-only reference for code porting. All active implementation in **ai_supply_chain_trading**.
+3. **Expansion-only architecture:** Expand capabilities without removing existing modules.
+4. **Overlay strategy:** Regime (3-state HMM) and News Alpha (Buzz, Surprise, Sector, Event) are multipliers/filters on top of base Master Score. No deletion of existing technical logic.
+
+---
+
+## Four System Pillars
 
 | Pillar | Summary |
-|--------|--------|
-| **1. Data & environment** | Keys in .env (TIINGO, MARKETAUX, GOOGLE_API). Warm-Up: last 30 days to bridge historical ↔ real-time. Self-healing: every live fetch appends to historical store. |
-| **2. Execution & market data (IBKR)** | IBKR TWS via ib_insync. Volume: reqMktData Tick 8 with x100 for US equities. Client ID rotation @ 99; yfinance cache init. |
-| **3. Sentiment & inference** | Dual-stream news: Marketaux + Tiingo. Gemini → strict JSON `{ticker, score, relevance, impact}`; sentiment -1 to 1; live matches FNSPID scale. |
-| **4. Operational cadence** | Weekly rebalance: Composite Score (Master Score / Price Momentum + Weighted Sentiment) → rank → BUY/SELL/HOLD. |
+|--------|---------|
+| **1. Data & Environment** | API keys in .env (TIINGO, MARKETAUX, GOOGLE_API). Warm-up: last 30 days to bridge historical ↔ real-time. Self-healing: every live fetch appends to historical store. |
+| **2. Market Data (IBKR)** | IBKR TWS via ib_insync. Volume: reqMktData Tick 8 with ×100 for US equities. Client ID rotation @ 99; yfinance cache initialization. |
+| **3. Sentiment & Inference** | Dual-stream news: Marketaux + Tiingo. Gemini → strict JSON `{ticker, score, relevance, impact}`; sentiment -1 to 1; live matches FNSPID scale. |
+| **4. Operational Cadence** | Weekly rebalance: Composite Score (Master Score / Price Momentum + Weighted Sentiment) → rank → BUY/SELL/HOLD. |
 
 ---
 
-## Data Flow (Verified Against Code)
+## Core Architecture: Single Spine Design
 
-End-to-end path from ingest to execution, as implemented.
+### Three Core Engines (Canonical Contract)
 
-### 1. Config → Data Dir
+1. **SignalEngine** (`src/core/signal_engine.py`)
+   - Produces technical signals and master scores
+   - Backtest mode: uses `technical_library` + optional `news_engine`
+   - Weekly mode: uses precomputed outputs from `SignalCombiner`
+   - Same interface, different backends
 
-- **File:** `config/data_config.yaml`
-- **Key:** `data_sources.data_dir` (e.g. `data/stock_market_data` or absolute path)
-- **Code:** `scripts/backtest_technical_library.py` → `load_config()` reads `data_sources.data_dir`; default `ROOT / "data" / "stock_market_data"`
+2. **PolicyEngine** (`src/core/policy_engine.py`)
+   - Applies regime detection and policy gates
+   - Backtest mode: full gates (CASH_OUT, sideways scaling, daily exit)
+   - Weekly mode: passthrough (no regime or gates applied)
 
-### 2. Price Ingest (CSV)
+3. **PortfolioEngine** (`src/core/portfolio_engine.py`)
+   - Constructs portfolio intent (ranking, top-N selection, position sizing)
+   - Execution via `src/portfolio/position_manager`
 
-- **Paths:** Under `data_dir`, subdirs `nasdaq/csv`, `sp500/csv`, `nyse/csv`, `forbes2000/csv`
-- **Lookup:** `find_csv_path(data_dir, ticker)` → first existing `{data_dir}/{sub}/{TICKER}.csv`
-- **Load:** `load_prices(data_dir, tickers)` → `pd.read_csv`, index col 0, parse_dates; columns lowercased; required: `close`; optional `open`/`high`/`low`/`volume` defaulted from `close` if missing
-- **Output:** `prices_dict[ticker]` = DataFrame with `open`, `high`, `low`, `close`, `volume`, tz-naive datetime index
+### Module Organization
 
-### 3. Signals (Master Score)
-
-- **Input:** Per-ticker slice `df[df.index <= monday]` (no future data)
-- **Module:** `src.signals.technical_library` → `calculate_all_indicators(slice_df)`, `compute_signal_strength(row)`
-- **Config:** `config/technical_master_score.yaml` (category weights, rolling window, indicator→category mapping)
-- **Output:** Master Score per ticker; ATR_norm from **Signal Day − 1** for inverse-volatility sizing
-
-### 3b. News Alpha → Master Score Overlay
-
-- **Flow:** Raw JSON (`data/news/{ticker}_news.json`) → **NewsEngine** (FinBERT + spacy EventDetector) → **NewsComposite** (strategies A–D: Buzz, Surprise, Sector-relative, Event-driven) → **MasterScore**.
-- **Module:** `src.signals.news_engine` — `compute_news_composite(news_dir, ticker, as_of, ...)` returns `news_composite` in [0, 1]. Deduplication via Levenshtein on headlines before processing.
-- **Blend:** When `news_weight` &gt; 0 in config, `compute_signal_strength(row, news_composite=...)` produces `final_master = (1 - news_weight) * technical_master + news_weight * news_composite`.
-- **FinBERT vs Gemini:** FinBERT used for bulk backtesting (fast, local); Gemini reserved for deep dives on top tickers.
-
-### 3a. Weight Optimization & 3-State Regime (Overlay)
-
-- **Step:** Between signal generation and portfolio sizing. Optional, driven by `--weight-mode` (fixed / regime / rolling / ml). **Overlay:** Regime and News are **multipliers/filters on top of** base Master Score; no removal of existing technical logic.
-- **3-State Regime (hmmlearn):** `get_regime_hmm(..., n_components=3)` → BULL / BEAR / SIDEWAYS. **BULL** → BULL_WEIGHTS; **BEAR** → DEFENSIVE_WEIGHTS, and **CASH_OUT** if SPY &lt; 200-SMA; **SIDEWAYS** → SIDEWAYS_WEIGHTS, position size × 0.5. Fallback: SPY vs 200-SMA binary.
-- **Rolling:** `get_optimized_weights(..., method="hrp"|"max_sharpe")` — PyPortfolioOpt; weight_bounds=(0.10, 0.50). When mode is rolling, HRPOpt can adjust category weights by regime performance.
-- **ML:** `get_ml_weights(history)` — Random Forest + TimeSeriesSplit; fallback to fixed weights if CV R² &lt; 0.
-- **Safety:** All weight inputs use only T−1 or earlier data.
-
-### 4. Portfolio & Backtest
-
-- **Positions:** Weekly rebalance (Mondays); entry at **Next-Day Open**; inverse-volatility weights; **3-State Regime overlay:** BEAR + SPY &lt; 200-SMA → CASH_OUT; SIDEWAYS → position × 0.5.
-- **Returns:** First day of each block = (close − open) / open; rest = close-to-close; friction 0.15% per trade; daily risk exit (e.g. −5%) without reallocating exited weight.
-- **Backtest logs:** When `--weight-mode regime`, prints `[STATE] {Date} | Regime: B/E/S | News Buzz: T/F/- | Action: Trade/Cash` and `[REGIME] Date, HMM State, Mean Return, Volatility`.
-- **Code:** `run_backtest_master_score(prices_dict, data_dir, ...)` → positions_df, returns, portfolio_returns, Sharpe, total return, max drawdown.
-
-### 5. Execution (Live / Paper)
-
-- **Entry:** `run_weekly_rebalance.py` (dry-run or live); composite score → rank → BUY/SELL/HOLD
-- **IB:** Code in `src/execution/` exists; not wired in default path (see SYSTEM_SPEC in archive if needed)
-
----
-
-## Legacy vs New Paths
-
-- **Legacy:** FNSPID (`data/raw/`, `data/news/`), Polygon → Marketaux-compatible JSON. Same downstream signal/backtest.
-- **New:** Tiingo + yfinance + Marketaux; Warm-Up merges last 30d with historical; self-healing appends to `data/prices/` (or configured dir).
-- **Alternation:** Config/data-source selector; unified schema into signals and backtest.
+```
+src/
+├── core/               # Single spine engines
+│   ├── signal_engine.py
+│   ├── policy_engine.py
+│   ├── portfolio_engine.py
+│   ├── intent.py
+│   └── types.py
+├── signals/            # Signal generation
+│   ├── technical_library.py      # Master Score computation
+│   ├── news_engine.py             # News Alpha strategies
+│   ├── signal_combiner.py         # Legacy combined signals
+│   ├── weight_model.py            # Dynamic weighting
+│   ├── regime.py                  # Regime detection
+│   └── performance_logger.py      # Metrics & memory
+├── portfolio/          # Position management
+│   ├── sizing.py
+│   └── position_manager.py
+├── execution/          # Order execution
+│   ├── executors.py   # Mock / IB
+│   └── factory.py
+├── data/              # Data providers (opaque boundary)
+│   ├── price_fetcher.py
+│   ├── news_fetcher.py
+│   └── ib_provider.py
+└── utils/             # Logging, guards, helpers
+    ├── logger.py
+    ├── defensive.py
+    └── ticker_utils.py
+```
 
 ---
 
-## Key Paths
+## Data Flow (End-to-End)
+
+### 1. Configuration → Data Directories
+
+- **Config file:** `config/data_config.yaml`
+- **Key parameter:** `data_sources.data_dir` (e.g. `data/stock_market_data` or absolute path)
+- **Default:** `{PROJECT_ROOT}/data/stock_market_data`
+- **Code reference:** `scripts/backtest_technical_library.py` → `load_config()` reads `data_sources.data_dir`
+
+### 2. Price Data Ingestion (CSV Format)
+
+**Directory structure:**
+```
+{data_dir}/
+├── nasdaq/csv/
+├── sp500/csv/
+├── nyse/csv/
+└── forbes2000/csv/
+```
+
+**Lookup logic:**
+- `find_csv_path(data_dir, ticker)` → searches subdirectories for `{TICKER}.csv`
+- First match wins
+
+**Loading:**
+- `load_prices(data_dir, tickers)` → `pd.read_csv`
+- Index: column 0, parsed as dates
+- Columns: lowercased, required `close`; optional `open/high/low/volume` default from `close` if missing
+- Output: `prices_dict[ticker]` = DataFrame with OHLCV, tz-naive datetime index
+
+### 3. Signal Generation (Master Score)
+
+**Input preparation:**
+- Per-ticker slice: `df[df.index <= monday]` (strict no-look-ahead)
+
+**Processing:**
+- Module: `src.signals.technical_library`
+- Functions:
+  - `calculate_all_indicators(slice_df)` → raw + normalized indicators
+  - `compute_signal_strength(row)` → Master Score
+
+**Configuration:**
+- File: `config/technical_master_score.yaml`
+- Contents: category weights, rolling windows, indicator→category mapping
+
+**Output:**
+- Master Score per ticker (0-1 scale)
+- ATR_norm from **Signal Day − 1** for inverse-volatility sizing
+
+### 4. News Alpha Overlay → Master Score
+
+**Pipeline:**
+```
+Raw JSON                    NewsEngine              NewsComposite         MasterScore
+(data/news/{ticker}_news.json) → (FinBERT + spacy) → (Strategies A-D) → (Technical + News)
+```
+
+**Module:** `src.signals.news_engine`
+
+**Key function:**
+```python
+compute_news_composite(news_dir, ticker, as_of, ...) 
+→ news_composite ∈ [0, 1]
+```
+
+**Strategies:**
+- **A (Buzz):** Z-score of article volume
+- **B (Surprise):** Sentiment delta vs baseline
+- **C (Sector Relative):** Cross-sectional ranking
+- **D (Event-Driven):** Catalyst detection via spacy EventDetector
+
+**Deduplication:**
+- Levenshtein fuzzy matching on headlines (ratio > 0.85 = duplicate)
+- Prevents double-counting from DualStream (Marketaux + Tiingo)
+
+**Blending formula:**
+```python
+when news_weight > 0:
+    final_master = (1 - news_weight) × technical_master + news_weight × news_composite
+```
+Default: `news_weight = 0.20` (80% technical, 20% news)
+
+**Model selection:**
+- **FinBERT:** Bulk backtesting (fast, local)
+- **Gemini:** Deep dives on top tickers only
+
+### 5. Dynamic Weighting & 3-State Regime (Overlay)
+
+**Execution point:** Between signal generation and portfolio sizing
+
+**Modes (via `--weight-mode`):**
+
+| Mode | Engine | Description |
+|------|--------|-------------|
+| `fixed` | Config | Static category weights from YAML |
+| `regime` | hmmlearn | 3-State HMM (BULL/BEAR/SIDEWAYS) → adaptive weights |
+| `rolling` | PyPortfolioOpt | EfficientFrontier (max_sharpe) or HRPOpt |
+| `ml` | Scikit-Learn | Random Forest + TimeSeriesSplit CV |
+
+**3-State Regime Logic (hmmlearn):**
+```python
+get_regime_hmm(..., n_components=3) → BULL / BEAR / SIDEWAYS
+```
+
+**State mapping:**
+- **BULL** (highest mean return, low volatility) → BULL_WEIGHTS
+- **BEAR** (lowest mean return, high volatility) → DEFENSIVE_WEIGHTS
+  - **CASH_OUT trigger:** BEAR + SPY < 200-SMA (dual confirmation)
+- **SIDEWAYS** (mean ≈ 0, moderate volatility) → SIDEWAYS_WEIGHTS
+  - Position size × 0.5
+
+**Fallback:** SPY vs 200-SMA binary rule if HMM fails
+
+**Safety constraint:**
+- All weight inputs use only T−1 or earlier data (no look-ahead)
+
+### 6. Portfolio Construction & Backtesting
+
+**Rebalance frequency:** Weekly (Mondays)
+
+**Entry timing:** Next-Day Open (no look-ahead)
+
+**Position sizing:** Inverse-volatility weights
+
+**Regime overlay:**
+- BEAR + SPY < 200-SMA → CASH_OUT (100% cash)
+- SIDEWAYS → position × 0.5
+
+**Return calculation:**
+- First day of block: `(close − open) / open`
+- Subsequent days: close-to-close percent change
+
+**Transaction costs:** 0.15% (15 bps) per trade
+
+**Risk management:**
+- Daily risk exit: e.g. ≤ −5% → exit without reallocating to other positions
+
+**Logging (when `--weight-mode regime`):**
+```
+[STATE] {Date} | Regime: B/E/S | News Buzz: T/F/- | Action: Trade/Cash
+[REGIME] Date, HMM State, Mean Return, Volatility
+```
+
+**Backtest function:**
+```python
+run_backtest_master_score(prices_dict, data_dir, ...) 
+→ positions_df, returns, portfolio_returns, Sharpe, total_return, max_drawdown
+```
+
+### 7. Execution (Live / Paper)
+
+**Entry point:** `run_weekly_rebalance.py` (dry-run or live)
+
+**Pipeline:**
+1. Composite score calculation
+2. Ranking
+3. BUY/SELL/HOLD decision generation
+
+**IBKR integration:**
+- Code location: `src/execution/`
+- Status: Exists but not wired in default path
+- Reference: SYSTEM_SPEC in archive if needed
+
+---
+
+## Data Source Paths (Legacy vs New)
+
+### Legacy Path
+- **FNSPID:** `data/raw/`, `data/news/`
+- **Polygon** → Marketaux-compatible JSON
+- Same downstream signal/backtest processing
+
+### New Path
+- **Sources:** Tiingo + yfinance + Marketaux
+- **Warm-up:** Merges last 30 days with historical data
+- **Self-healing:** Appends to `data/prices/` (or configured directory)
+
+### Configuration Toggle
+- Unified schema into signals and backtest
+- Config/data-source selector for seamless alternation
+
+---
+
+## Key File Paths Reference
 
 | Purpose | Path |
-|--------|------|
-| Price (backtest) | `config/data_config.yaml` → `data_sources.data_dir` → `{data_dir}/{nasdaq,sp500,nyse,forbes2000}/csv/{TICKER}.csv` |
-| Price (parquet) | `data/prices/` (warm-up/self-healing target when used) |
-| News | `data/news/` (JSON per ticker), `data/raw/` (FNSPID CSV) |
-| Config | `config/data_config.yaml`, `config/technical_master_score.yaml`, `config/signal_weights.yaml`, `config/trading_config.yaml` |
-| Logs | `logs/` (`src.utils.logger.setup_logger()`); backtest logs `outputs/backtest_master_score_*.txt` |
+|---------|------|
+| **Price data (backtest)** | `config/data_config.yaml` → `data_sources.data_dir` → `{data_dir}/{nasdaq,sp500,nyse,forbes2000}/csv/{TICKER}.csv` |
+| **Price data (parquet)** | `data/prices/` (warm-up/self-healing target) |
+| **News data** | `data/news/` (JSON per ticker)<br>`data/raw/` (FNSPID CSV) |
+| **Configuration** | `config/data_config.yaml`<br>`config/technical_master_score.yaml`<br>`config/signal_weights.yaml`<br>`config/trading_config.yaml` |
+| **Logs** | `logs/` (via `src.utils.logger.setup_logger()`)<br>`outputs/backtest_master_score_*.txt` |
+| **SPY benchmark** | `data/stock_market_data/sp500/csv/SPY.csv` |
 
 ---
 
-## Warm-Up and Self-Healing (When Used)
+## Warm-Up and Self-Healing (When Active)
 
-- **Warm-Up:** `src/data/warmup.py` — historical from `data/prices/`, optional last 30d from yfinance, merged with no gap.
-- **Self-Healing:** After live fetch, `heal_append(ticker, new_bars_df, data_dir)` appends new bars; duplicate dates dropped.
+**Module:** `src/data/warmup.py`
+
+**Warm-up process:**
+1. Load historical from `data/prices/`
+2. Optional: fetch last 30 days from yfinance
+3. Merge with no gaps
+
+**Self-healing process:**
+1. After live fetch: `heal_append(ticker, new_bars_df, data_dir)`
+2. Append new bars to existing data
+3. Drop duplicate dates
+
+---
+
+## Canonical Entry Points
+
+**Research/Backtest:**
+- `scripts/backtest_technical_library.py` (authoritative)
+- `scripts/research_grid_search.py`
+
+**Non-canonical (experimental/legacy):**
+- `run_phase1_test.py`
+- `run_phase2_pipeline.py`
+- `run_phase3_backtest.py`
+- `run_strategy.py`
+- `run_technical_backtest.py`
+- `simple_backtest_v2.py`
+- `test_signals.py`
+
+These scripts may run but are not part of the canonical workflow.
+
+---
+
+## Dependencies & External Engines
+
+**Core libraries:**
+- `pandas_ta` — all technical indicator math
+- `PyYAML` — configuration parsing
+
+**Dynamic weighting & regime:**
+- **PyPortfolioOpt** — EfficientFrontier (max_sharpe) or HRPOpt for category weights
+- **hmmlearn** — Gaussian HMM (3 states) for BULL/BEAR/SIDEWAYS regime detection
+- **Scikit-Learn** — Random Forest Regressor + TimeSeriesSplit CV for ML mode
+
+**News Alpha:**
+- **transformers + ProsusAI/finbert** — sentiment analysis on headlines/bodies
+- **spacy (en_core_web_md)** — EventDetector (NER + phrase matching)
+  - Run: `python -m spacy download en_core_web_md`
+- **Levenshtein** — headline fuzzy matching for deduplication
+
+**Execution:**
+- **ib_insync** — IBKR TWS integration
+
+**Note:** No custom optimization or ML math from scratch. Normalization uses static formulas for bounded indicators, rolling min-max for unbounded (no sklearn for normalization).
