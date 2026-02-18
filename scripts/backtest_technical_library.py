@@ -37,6 +37,7 @@ from src.data.csv_provider import (
     load_prices,
     ensure_ohlcv,
 )
+from src.utils.audit_logger import log_audit_record
 
 
 def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
@@ -561,7 +562,42 @@ def main():
         weight_mode=args.weight_mode,
         news_weight_fixed=args.news_weight,
     )
-    
+
+    _audit_metrics = {
+        k: result[k]
+        for k in ("sharpe", "total_return", "max_drawdown",
+                  "n_rebalances", "period_start", "period_end", "tickers")
+        if k in result
+    }
+    _audit_config = {
+        "data_dir": str(data_dir),
+        "tickers": tickers,
+        "top_n": args.top_n,
+        "start": args.start,
+        "end": args.end,
+        "weight_mode": args.weight_mode,
+        "news_dir": args.news_dir,
+        "news_weight": args.news_weight,
+    }
+    _audit_output_paths = {
+        k: v for k, v in {"out": args.out,
+                           "out_dir": getattr(args, "out_dir", None)}.items()
+        if v is not None
+    }
+    _audit_trade_summary = {
+        k: result[k]
+        for k in ("n_rebalances", "period_start", "period_end", "tickers")
+        if k in result
+    }
+    _run_id = f"backtest_{run_start_ts.replace(':', '-').replace(' ', '_')}"
+    log_audit_record(
+        run_id=_run_id,
+        model_metrics=_audit_metrics,
+        config=_audit_config,
+        output_paths=_audit_output_paths,
+        trade_summary=_audit_trade_summary,
+    )
+
     _print_safety_report()
     print("\n--- RESULTS ---")
     print(f"  Sharpe:        {result['sharpe']:.4f}")

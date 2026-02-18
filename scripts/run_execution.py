@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -354,13 +355,13 @@ def main() -> int:
     elif args.mode == "paper":
         if args.confirm_paper:
             # Live Execution Bridge: circuit breaker + AccountMonitor + OrderDispatcher
-            import time
             from src.execution.ibkr_bridge import (
                 AccountMonitor,
                 CircuitBreaker,
                 LiveSignal,
                 OrderDispatcher,
                 RiskManager,
+                check_fill,
             )
             if hasattr(executor, "ib_provider"):
                 monitor = AccountMonitor(executor.ib_provider)
@@ -401,6 +402,7 @@ def main() -> int:
                         else:
                             atr_per_share[sym] = 0.0
                 exec_config = {}
+                tc = None
                 if trading_config_path.exists():
                     with open(trading_config_path, "r", encoding="utf-8") as f:
                         tc = yaml.safe_load(f)
@@ -409,7 +411,17 @@ def main() -> int:
                 max_sz = int(exec_config.get("max_position_size", 10000))
                 if monitor is not None:
                     risk_mgr = RiskManager()
-                    dispatcher = OrderDispatcher(executor, risk_mgr, monitor)
+                    _tcfg = tc.get("trading", {}) if tc else {}
+                    dispatcher = OrderDispatcher(executor, risk_mgr, monitor, trading_cfg=_tcfg)
+                    _fill_positions_before = {}
+                    _submitted_orders = []
+                    if args.confirm_paper:
+                        try:
+                            for _rec in (monitor.get_existing_positions() or []):
+                                _sym = str(_rec.get("symbol", "")).upper()
+                                _fill_positions_before[_sym] = int(_rec.get("position", 0))
+                        except Exception:
+                            _fill_positions_before = {}
                     for _, row in executable.iterrows():
                         if row["quantity"] <= 0:
                             continue
@@ -423,11 +435,44 @@ def main() -> int:
                             is_propagated=False,
                             order_type="MARKET",
                         )
+                        if args.confirm_paper and result.get("status") != "error":
+                            _submitted_orders.append({
+                                "ticker": sym,
+                                "side": result.get("side", row["side"]),
+                                "quantity": result.get("quantity", int(row["quantity"])),
+                            })
                         if result.get("status") == "error":
                             print(f"  [ORDER ERROR] {sym}: {result.get('error', 'unknown')}", flush=True)
                     if monitor is not None:
                         monitor.refresh()
                         monitor.log_nav_snapshot("Post-Rebalance NAV", monitor.get_net_liquidation())
+                    if args.confirm_paper and _submitted_orders:
+                        _FILL_CHECK_DELAY_SECS = 3  # allow broker time to process fills
+                        time.sleep(_FILL_CHECK_DELAY_SECS)
+                        monitor.refresh()
+                        _fill_positions_after = {}
+                        try:
+                            for _rec in (monitor.get_existing_positions() or []):
+                                _sym = str(_rec.get("symbol", "")).upper()
+                                _fill_positions_after[_sym] = int(_rec.get("position", 0))
+                        except Exception:
+                            _fill_positions_after = {}
+
+                        print("\n--- Fill Check ---")
+                        for _order in _submitted_orders:
+                            _t = _order["ticker"].upper()
+                            _before = _fill_positions_before.get(_t, 0)
+                            _after = _fill_positions_after.get(_t, 0)
+                            _chk = check_fill(
+                                ticker=_t,
+                                side=_order["side"],
+                                quantity_submitted=_order["quantity"],
+                                position_before=_before,
+                                position_after=_after,
+                            )
+                            _level = "OK   " if _chk["passed"] else "WARN "
+                            print(f"[{_level}] {_t}: {_chk['reason']} "
+                                  f"(before={_before}, after={_after})")
                     cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
                 else:
                     for _, row in executable.iterrows():

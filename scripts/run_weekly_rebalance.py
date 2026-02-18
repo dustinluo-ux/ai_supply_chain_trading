@@ -22,6 +22,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
+from src.utils.audit_logger import log_audit_record
 
 
 def _get_watchlist() -> list[str]:
@@ -39,6 +40,8 @@ def _get_watchlist() -> list[str]:
 
 
 def main() -> int:
+    import datetime as _dt
+    _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"
     parser = argparse.ArgumentParser(
         description="Weekly rebalance: canonical spine -> delta trades -> optional execution (delegates to run_execution)."
     )
@@ -83,7 +86,22 @@ def main() -> int:
     old_argv = sys.argv
     try:
         sys.argv = argv
-        return run_execution.main()
+        _exit_code = run_execution.main()
+        _rebalance_config = {
+            "tickers": tickers,
+            "top_n": args.top_n,
+            "date": args.date,
+            "dry_run": not args.live,
+            "mode": "paper" if args.live else "mock",
+        }
+        log_audit_record(
+            run_id=_run_id,
+            model_metrics={},
+            config=_rebalance_config,
+            output_paths={},
+            trade_summary={},
+        )
+        return _exit_code
     finally:
         sys.argv = old_argv
 

@@ -366,10 +366,12 @@ class OrderDispatcher:
         ib_executor: Any,
         risk_manager: RiskManager,
         account_monitor: AccountMonitor,
+        trading_cfg: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._executor = ib_executor
         self._risk = risk_manager
         self._account = account_monitor
+        self._trading_cfg = trading_cfg or {}
 
     def _quantity_from_weight(
         self,
@@ -509,6 +511,54 @@ class OrderDispatcher:
                 "status": "skipped",
                 "reason": "quantity <= 0",
             }
+
+        # Load execution limits
+        try:
+            _exec_cfg = self._trading_cfg.get("execution", {})
+        except AttributeError:
+            _exec_cfg = {}
+        _min_order_size = int(_exec_cfg.get("min_order_size", 1))
+        _max_position_size = int(_exec_cfg.get("max_position_size", 10000))
+
+        # Derive current position for ticker
+        _current_pos = 0
+        try:
+            _positions = self._account.get_existing_positions()
+            for _rec in (_positions or []):
+                if str(_rec.get("symbol", "")).upper() == ticker.upper():
+                    _current_pos = int(_rec.get("position", 0))
+                    break
+        except Exception:
+            _current_pos = 0
+
+        # Enforce min_order_size
+        if quantity < _min_order_size:
+            return {
+                "order_id": None,
+                "ticker": ticker,
+                "quantity": 0,
+                "side": side,
+                "stop_price": None,
+                "comment": None,
+                "status": "skipped",
+                "reason": f"quantity {quantity} below min_order_size {_min_order_size}",
+            }
+
+        # Enforce max_position_size (BUY only)
+        if side.upper() == "BUY":
+            quantity = min(quantity, max(0, _max_position_size - _current_pos))
+            if quantity <= 0:
+                return {
+                    "order_id": None,
+                    "ticker": ticker,
+                    "quantity": 0,
+                    "side": side,
+                    "stop_price": None,
+                    "comment": None,
+                    "status": "skipped",
+                    "reason": f"would exceed max_position_size {_max_position_size}",
+                }
+
         stop_price = self._risk.compute_smart_stop(side, entry_price, atr_per_share)
         comment = PROHIBITED_LLM_DISCOVERY_LINK if is_propagated else LIVE_SPINE_TAG
         try:
@@ -536,3 +586,41 @@ class OrderDispatcher:
                 "status": "error",
                 "error": str(e),
             }
+
+
+def check_fill(
+    ticker: str,
+    side: str,
+    quantity_submitted: int,
+    position_before: int,
+    position_after: int,
+) -> dict:
+    """Compare expected vs actual position delta for one submitted order.
+
+    Returns a dict with keys:
+      ticker, side, quantity_expected, delta_actual, passed (bool), reason (str)
+    """
+    expected_delta = quantity_submitted if side.upper() == "BUY" else -quantity_submitted
+    actual_delta = position_after - position_before
+
+    if expected_delta > 0 and actual_delta <= 0:
+        passed = False
+        reason = f"BUY expected delta +{expected_delta}, got {actual_delta} (wrong direction)"
+    elif expected_delta < 0 and actual_delta >= 0:
+        passed = False
+        reason = f"SELL expected delta {expected_delta}, got {actual_delta} (wrong direction)"
+    elif actual_delta == expected_delta:
+        passed = True
+        reason = "full fill confirmed"
+    else:
+        passed = True  # right direction, partial fill
+        reason = f"partial fill: expected {expected_delta}, got {actual_delta}"
+
+    return {
+        "ticker": ticker,
+        "side": side,
+        "quantity_expected": quantity_submitted,
+        "delta_actual": actual_delta,
+        "passed": passed,
+        "reason": reason,
+    }
