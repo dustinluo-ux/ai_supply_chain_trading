@@ -233,6 +233,8 @@ def run_backtest_master_score(
         if dynamic_selector:
             print(f"  DynamicSelector: ON (regime_ledger) | override news_weight + sideways_risk_scale from winning profile", flush=True)
     signals_df = pd.DataFrame(0.0, index=mondays, columns=tickers)
+    if not llm_enabled and verbose:
+        print("  [CONFIG] Backtest running with LLM disabled (--no-llm); Gemini will not be called.", flush=True)
     transmat_printed = False
     prev_regime: str | None = None
     for idx, monday in enumerate(mondays):
@@ -324,7 +326,12 @@ def run_backtest_master_score(
         if news_dir is not None:
             for t in tickers:
                 try:
-                    r = compute_news_composite(Path(news_dir), t, monday, sector_sentiments=None, sector_map=None, signal_horizon_days=signal_horizon_days_this_week)
+                    r = compute_news_composite(
+                        Path(news_dir), t, monday,
+                        sector_sentiments=None, sector_map=None,
+                        signal_horizon_days=signal_horizon_days_this_week,
+                        llm_enabled=llm_enabled,
+                    )
                     sector_sentiments_this_week[t] = r.get("sentiment_current", 0.5)
                 except Exception:
                     sector_sentiments_this_week[t] = 0.5
@@ -396,13 +403,22 @@ def run_backtest_master_score(
         if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
             for t in tickers:
                 signals_df.loc[monday, t] *= 1.0 / _ws
+        elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - 0.5) > 1e-5:
+            # Dynamic propagated tickers (not in `tickers`) may absorb part of the BEAR-halved
+            # weight; renormalize the tracked subset to the intended 0.5 exposure target.
+            for t in tickers:
+                signals_df.loc[monday, t] *= 0.5 / _ws
         weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
         if action == "Cash":
             assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
         elif effective_regime_state == "BEAR":
-            assert abs(weight_sum - 0.5) < 1e-5, f"Expected sum(weights)≈0.5 when BEAR (fractional), got {weight_sum}"
+            # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
+            assert abs(weight_sum - 0.5) < 1e-5 or abs(weight_sum) < 1e-6, \
+                f"Expected sum(weights)≈0.5 (or 0) when BEAR (fractional), got {weight_sum}"
         else:
-            assert abs(weight_sum - 1.0) < 1e-5, f"Expected sum(weights)≈1.0 when trading, got {weight_sum}"
+            # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
+            assert abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6, \
+                f"Expected sum(weights)≈1.0 (or 0) when trading, got {weight_sum}"
 
         if verbose and intent.tickers and weight_sum > 0:
             parts = [f"{t}={intent.weights.get(t, 0):.3f}" for t in intent.tickers if intent.weights.get(t, 0) > 0]
