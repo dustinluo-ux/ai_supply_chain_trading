@@ -1,6 +1,6 @@
 # DECISIONS — Architectural Decision Records
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-02-19
 
 This file records architectural decisions and their rationale. Implementation details live in other documents. This is the "why" documentation.
 
@@ -24,7 +24,7 @@ These principles are non-negotiable and take precedence over convenience or shor
 
 ### P0 Fix Mode (LOCKED DECISION)
 
-**Status:** ACTIVE
+**Status:** CLOSED (2026-02-19)
 
 **Definition:** P0 Fix Mode means fixing only what is already documented but broken, missing, unused, or non-observable.
 
@@ -48,9 +48,63 @@ Any run must terminate immediately if:
 - A module invariant fails
 - The research spine cannot complete end-to-end
 
-**Binding status:** This decision is binding until P0 is explicitly closed through formal review.
+**Binding status:** CLOSED 2026-02-19. All P0 gaps resolved or explicitly deferred. Phase 3 now active.
 
 ---
+
+### D020 — Phase 2 Closure (2026-02-19)
+
+**Decision:** Phase 2 (Intelligence Expansion + Automated Rebalancing) is formally closed as of 2026-02-19.
+
+**P0 gaps resolved:**
+- News pipeline gap: `news_dir` hardcoded None → reads from config
+- News loader format-agnostic: flat file + monthly chunk both supported
+- News cache tz-aware bug fixed (was burning Marketaux API quota)
+- `find_csv_path` returns latest-end-date copy when ticker exists in multiple datasets
+- Stale pre-propagated tickers dropped before backtest run
+- BEAR weight renorm + non-BEAR assertion relaxed to accept 0.0 (all-propagated top-N edge case)
+- Gemini bridge: load_dotenv wired; `--no-llm` flag added for backtests
+- `llm_enabled` threaded from config through execution spine
+- Fill ledger: persistent JSON-Lines append at `outputs/fills/fills.jsonl`; `--check-fills` CLI flag
+- Config limits enforced: `min_order_size` and `max_position_size` now read from config in all execution paths; SELL guard added to prevent accidental shorts
+
+**P0 gaps explicitly deferred (not blocking):**
+- News 2025 coverage gap (needs paid source)
+- Scheduling automation (no server yet)
+- ML pipeline wiring (see D021)
+
+**Backtest baselines at close:**
+- 2022: Sharpe -0.2759 | return -17.95% | MDD -20.65%
+- 2023: Sharpe +0.3399 | return +78.10% | MDD -19.93%
+
+**Status:** Complete
+
+---
+
+### D021 — ML Pipeline Integration Architecture (Phase 3)
+
+**Decision:** Wire `src/models/` into the signal spine as a third blended signal. Deferred to Phase 3.
+
+**Background:** `src/models/` contains Linear/Ridge/Lasso/XGBoost return predictors with a full training pipeline (`train_pipeline.py`). The `use_ml: false` flag in `config/model_config.yaml` is never read. No trained model artifacts exist.
+
+**Rationale for deferral:**
+- The models output predicted forward returns (%), not a normalized 0–1 score — unit mismatch with existing Master Score prevents drop-in integration
+- No saved artifacts exist; model must be trained and IC-validated before production use
+- Introducing an untrained model into a working system violates "Determinism > Cleverness" (D-principle #2)
+
+**Approved architecture for Phase 3 (from expert review 2026-02-19):**
+
+1. **Pooled training:** Train one model on all tickers combined (not separate per-ticker). ~150 rows × 8 tickers ≈ 1200 samples — sufficient for regularized regression.
+2. **Normalization:** Convert ML predicted return to 0–1 score using rolling Z-score (3–6 month window) passed through a min-max clipper. Preserves relative magnitude unlike percentile ranking.
+3. **Blend:** `Final Score = 0.7 × Baseline + 0.3 × ML_Score` as starting point. Baseline = current Technical + News blend.
+4. **Sanity check:** If ML predicts negative return but Baseline is bullish, reduce position size by 50% rather than ignoring the disagreement.
+5. **Gate before wiring:** Measure IC (Spearman rank correlation of predictions vs actual returns) on anchored walk-forward. Require IC ≥ 0.02 before integrating into live system. If IC < 0.02, discard.
+6. **Validation:** Run two backtests — (1) Technical + News only, (2) Technical + News + ML — and require ≥10% Sharpe improvement before promoting to production.
+7. **Pitfall mitigations:** Use purged cross-validation to prevent look-ahead leakage; use sector-neutral features (e.g. stock RSI minus SOXX RSI) to reduce high-correlation noise in concentrated semiconductor universe.
+
+**Features (unchanged from existing train_pipeline.py):** momentum_20d, volume_ratio_30d, rsi_14d, news_supply_chain, news_sentiment.
+
+**Status:** Deferred — architecture approved, implementation blocked on IC validation gate.
 
 ## Core Architectural Decisions
 
