@@ -76,6 +76,7 @@ Any run must terminate immediately if:
 **Backtest baselines at close:**
 - 2022: Sharpe -0.2759 | return -17.95% | MDD -20.65%
 - 2023: Sharpe +0.3399 | return +78.10% | MDD -19.93%
+- 2024: Sharpe +0.2034 | return +35.53% | MDD -11.14% (vs S&P 500 ~25%, NASDAQ ~29%)
 
 **Status:** Complete
 
