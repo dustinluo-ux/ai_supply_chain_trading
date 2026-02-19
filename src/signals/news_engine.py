@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import functools
 from pathlib import Path
 from typing import Any, Optional
 
@@ -96,6 +97,7 @@ def _get_finbert_pipeline():
     return _FINBERT_PIPELINE
 
 
+@functools.lru_cache(maxsize=2048)
 def sentiment_finbert(text: str) -> float:
     """
     Run FinBERT on a single text (headline or body). Returns sentiment in [0, 1]
@@ -503,6 +505,12 @@ def compute_news_composite(
     articles = load_ticker_news(news_dir, ticker, dedupe=True)
     if not articles:
         return _empty_news_result()
+    cfg = get_config()
+    baseline_days = int(cfg.get_param("strategy_params.sentiment.baseline_days", 30))
+    cutoff = as_of - pd.Timedelta(days=baseline_days)
+    articles = [a for a in articles if (d := _parse_date(a.get("publishedAt"))) is not None and cutoff <= d <= as_of]
+    if not articles:
+        return _empty_news_result()
     # FinBERT on title + description (or content)
     articles_with_sentiment: list[tuple[dict, float]] = []
     articles_with_events: list[tuple[dict, dict]] = []
@@ -520,8 +528,6 @@ def compute_news_composite(
         if use_events:
             ev = detector.detect(text)
             articles_with_events.append((a, ev))
-    cfg = get_config()
-    baseline_days = int(cfg.get_param("strategy_params.sentiment.baseline_days", 30))
     event_priority_hours = int(cfg.get_param("strategy_params.sentiment.event_priority_hours", 48))
     sector_top_pct = float(cfg.get_param("strategy_params.sentiment.sector_top_pct", 0.10))
     # Strategy A

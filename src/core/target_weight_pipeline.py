@@ -44,6 +44,7 @@ def compute_target_weights(
     sideways_risk_scale: float = 0.5,
     weight_mode: str = "fixed",
     path: Optional[str] = None,
+    llm_enabled: bool = True,
 ) -> pd.Series:
     """
     Canonical spine:
@@ -125,6 +126,7 @@ def compute_target_weights(
         "signal_horizon_days_this_week": 5,
         "news_weight_used": 0.0,
         "ensure_ohlcv": ensure_ohlcv,
+        "llm_enabled": llm_enabled,
     }
     week_scores, aux = signal_engine.generate(as_of, tickers, data_context)
     atr_norms = aux.get("atr_norms", {})

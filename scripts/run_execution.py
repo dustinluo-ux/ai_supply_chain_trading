@@ -121,6 +121,8 @@ def compute_target_weights(
     Used by parity harness and by main(); returns intent.weights before delta computation.
     """
     from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
+    from src.utils.config_manager import get_config as _get_config
+    _llm_enabled = bool(_get_config().get_param("llm_analysis.enabled", True))
 
     return _compute_target_weights(
         as_of,
@@ -131,6 +133,7 @@ def compute_target_weights(
         sideways_risk_scale=sideways_risk_scale,
         weight_mode="fixed",
         path="weekly",
+        llm_enabled=_llm_enabled,
     )
 
 
