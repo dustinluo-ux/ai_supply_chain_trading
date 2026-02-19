@@ -621,6 +621,19 @@ def main():
         print("ERROR: Could not load price data into dictionary.")
         return 1
 
+    # Stale-ticker filter: when --start is set, drop tickers whose price data ends before start
+    if args.start is not None:
+        start_dt = pd.to_datetime(args.start)
+        to_drop = [t for t in prices_dict if prices_dict[t].index.max() < start_dt]
+        for t in to_drop:
+            max_date = prices_dict[t].index.max()
+            print(f"  [WARN] Dropping {t}: price data ends {max_date:%Y-%m-%d}, before window start {args.start}")
+            del prices_dict[t]
+            tickers.remove(t)
+        if not prices_dict:
+            print("ERROR: No tickers with price data on or after window start.")
+            return 1
+
     run_kw: dict = {
         "prices_dict": prices_dict,
         "data_dir": data_dir,

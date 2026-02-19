@@ -43,19 +43,35 @@ def load_data_config() -> dict:
 def find_csv_path(base_dir, ticker):
     """
     Searches recursively for ticker.csv within the stock_market_data subdirectories.
-    Based on file_tree.txt, targets: forbes2000/csv, nasdaq/csv, nyse/csv, sp500/csv.
+    When multiple copies exist (e.g. different datasets), returns the path whose
+    CSV has the latest end date (last index value), so backtests get the longest
+    coverage. Uses same read as load_prices: index_col=0, parse_dates=True, dayfirst=True.
     """
-    # Normalize ticker name (handle potential .csv suffix in argument)
     ticker_clean = ticker.replace('.csv', '').upper()
     target_file = f"{ticker_clean}.csv"
-
-    # Walk through the directory structure identified in the file tree
-    for root, dirs, files in os.walk(str(base_dir)):  # str() ensures Windows compatibility
+    candidates: list[str] = []
+    for root, dirs, files in os.walk(str(base_dir)):
         for f in files:
-            if f.upper() == target_file.upper():  # case-insensitive match
-                return os.path.join(root, f)       # use actual filename from disk, not synthetic one
-            
-    return None
+            if f.upper() == target_file.upper():
+                candidates.append(os.path.join(root, f))
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    best_path: str | None = None
+    best_max: pd.Timestamp | None = None
+    for path in candidates:
+        try:
+            df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=True)
+            if df.empty or df.index is None:
+                continue
+            last = df.index.max()
+            if best_max is None or last > best_max:
+                best_max = last
+                best_path = path
+        except Exception:
+            continue
+    return best_path
 
 
 def load_prices(data_dir: Path, tickers: list[str]) -> dict[str, pd.DataFrame]:
