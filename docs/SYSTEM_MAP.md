@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
 **Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (63 files in `src/`, 10 canonical scripts)
+**Parity Status:** 1:1 with disk (63 files in `src/`, 11 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -26,6 +26,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 **Data Management:**
 - `scripts/build_supply_chain_db.py` — Supply chain DB builder (per SUPPLY_CHAIN_DB.md)
 - `scripts/expand_database_core_stocks.py` — Supply chain DB expansion (per SUPPLY_CHAIN_DB.md)
+- `scripts/merge_news_chunks.py` — One-shot: merge flat + {ticker}_20*.json chunks into data/news/{ticker}_news.json (dedupe on title, sort by publishedAt; chunks left in place)
 
 ---
 
@@ -343,7 +344,7 @@ src/execution/ (mock or IB)
 | `src/utils/` | 8 |
 | `src/__init__.py` | 1 |
 | **Total `src/`** | **63** |
-| `scripts/` (canonical) | 10 |
+| `scripts/` (canonical) | 11 |
 
 ---
 
