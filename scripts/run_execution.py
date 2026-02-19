@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -156,7 +157,7 @@ def _create_paper_executor():
     return IBExecutor(ib_provider=data_provider, account=paper_account)
 
 
-def main() -> int:
+def main() -> tuple[int, list]:
     parser = argparse.ArgumentParser(
         description="Canonical execution: spine -> Intent -> delta trades (mock or IB paper)."
     )
@@ -167,24 +168,63 @@ def main() -> int:
     parser.add_argument("--mode", type=str, default="mock", choices=["mock", "paper"], help="mock (print only) or paper (IB paper account)")
     parser.add_argument("--confirm-paper", action="store_true", help="With --mode paper: actually submit orders; without: dry-run print only")
     parser.add_argument("--rebalance", action="store_true", help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)")
+    parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
     args = parser.parse_args()
+
+    run_start_ts = datetime.now(timezone.utc).isoformat()
+    current_run_fills: list = []
+
+    if args.check_fills:
+        from src.execution.fill_ledger import read_fill_ledger
+        path = ROOT / "outputs" / "fills" / "fills.jsonl"
+        records = read_fill_ledger(path)
+        outstanding = [r for r in records if r.get("status") in ("partial", "unknown")]
+        if not outstanding:
+            print("No partial or unknown fills in ledger.", flush=True)
+            return (0, [])
+        print(f"--- Outstanding fills (partial/unknown): {len(outstanding)} ---", flush=True)
+        for r in outstanding:
+            print(f"  {r.get('timestamp', '')} | {r.get('ticker', '')} | {r.get('side', '')} | "
+                  f"qty_req={r.get('qty_requested')} filled={r.get('qty_filled')} | "
+                  f"order_id={r.get('order_id')} | {r.get('status')} | {r.get('fill_check_reason', '')}", flush=True)
+        if args.mode == "paper":
+            from src.execution.executor_factory import ExecutorFactory
+            try:
+                executor = _create_paper_executor()
+                if hasattr(executor, "ib"):
+                    _req = getattr(executor.ib, "reqOpenOrders", None) or getattr(executor.ib, "requestOpenOrders", None)
+                    if callable(_req):
+                        _req()
+                    open_trades = list(executor.ib.openTrades())
+                    print("--- IB open orders / trades ---", flush=True)
+                    order_ids_ledger = {str(r.get("order_id")) for r in outstanding if r.get("order_id")}
+                    for t in open_trades:
+                        oid = str(t.order.orderId) if t.order else None
+                        if oid in order_ids_ledger or not order_ids_ledger:
+                            status = t.orderStatus.status if t.orderStatus else "?"
+                            filled = getattr(t.orderStatus, "filled", 0) or 0
+                            avg = getattr(t.orderStatus, "avgFillPrice", None) or None
+                            print(f"  order_id={oid} status={status} filled={filled} avgFillPrice={avg}", flush=True)
+            except Exception as e:
+                print(f"  [WARN] Could not query IB: {e}", flush=True)
+        return (0, [])
 
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     if not tickers:
         print("ERROR: No tickers provided.", flush=True)
-        return 1
+        return (1, [])
 
     config = load_config()
     data_dir = config["data_dir"]
     prices_dict = load_prices(data_dir, tickers)
     if not prices_dict:
         print("ERROR: No price data loaded.", flush=True)
-        return 1
+        return (1, [])
 
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
     if not all_dates:
         print("ERROR: No dates in price data.", flush=True)
-        return 1
+        return (1, [])
 
     if args.date:
         as_of = pd.to_datetime(args.date).normalize()
@@ -200,13 +240,13 @@ def main() -> int:
         # Rebalance mode: pull last valid weights from cache (no fresh signal generation)
         if not LAST_VALID_WEIGHTS_PATH.exists():
             print("ERROR: --rebalance requires last valid weights. Run without --rebalance once to populate outputs/last_valid_weights.json", flush=True)
-            return 1
+            return (1, [])
         with open(LAST_VALID_WEIGHTS_PATH, "r", encoding="utf-8") as f:
             cache = json.load(f)
         target_weights_dict = cache.get("weights") or {}
         if not target_weights_dict:
             print("No weights in cache. Run without --rebalance first.", flush=True)
-            return 1
+            return (1, [])
         optimal_weights_series = pd.Series(target_weights_dict).reindex(tickers, fill_value=0.0).fillna(0.0)
         intent_tickers = [t for t, w in target_weights_dict.items() if float(w) > 0]
         intent = SimpleNamespace(tickers=intent_tickers, weights=dict(optimal_weights_series))
@@ -221,7 +261,7 @@ def main() -> int:
         )
         if optimal_weights_series.sum() == 0:
             print("No target tickers from portfolio engine.", flush=True)
-            return 0
+            return (0, [])
         intent_tickers = list(optimal_weights_series[optimal_weights_series > 0].index)
         intent = SimpleNamespace(tickers=intent_tickers, weights=optimal_weights_series.to_dict())
         # Persist for next --rebalance
@@ -354,6 +394,25 @@ def main() -> int:
         )
 
     if args.mode == "mock":
+        from src.execution.fill_ledger import append_fill_record
+        for _, row in executable.iterrows():
+            if row["quantity"] <= 0:
+                continue
+            _rec = append_fill_record(
+                run_id=run_start_ts,
+                ticker=row["symbol"],
+                side=row["side"],
+                qty_requested=int(row["quantity"]),
+                qty_filled=int(row["quantity"]),
+                avg_fill_price=None,
+                order_id=None,
+                stop_order_id=None,
+                status="mock",
+                fill_check_passed=True,
+                fill_check_reason="mock",
+                order_comment=None,
+            )
+            current_run_fills.append(_rec)
         print("  (Mock: no orders submitted.)", flush=True)
     elif args.mode == "paper":
         if args.confirm_paper:
@@ -443,6 +502,11 @@ def main() -> int:
                                 "ticker": sym,
                                 "side": result.get("side", row["side"]),
                                 "quantity": result.get("quantity", int(row["quantity"])),
+                                "order_id": result.get("order_id"),
+                                "stop_order_id": result.get("stop_order_id"),
+                                "filled_quantity": result.get("filled_quantity", 0),
+                                "filled_price": result.get("filled_price"),
+                                "order_comment": result.get("comment"),
                             })
                         if result.get("status") == "error":
                             print(f"  [ORDER ERROR] {sym}: {result.get('error', 'unknown')}", flush=True)
@@ -462,6 +526,7 @@ def main() -> int:
                             _fill_positions_after = {}
 
                         print("\n--- Fill Check ---")
+                        from src.execution.fill_ledger import append_fill_record
                         for _order in _submitted_orders:
                             _t = _order["ticker"].upper()
                             _before = _fill_positions_before.get(_t, 0)
@@ -476,7 +541,31 @@ def main() -> int:
                             _level = "OK   " if _chk["passed"] else "WARN "
                             print(f"[{_level}] {_t}: {_chk['reason']} "
                                   f"(before={_before}, after={_after})")
-                    cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
+                            if _chk["passed"] and "full fill" in (_chk.get("reason") or ""):
+                                _status = "full"
+                            elif _chk["passed"] and "partial" in (_chk.get("reason") or ""):
+                                _status = "partial"
+                            elif not _chk["passed"]:
+                                _status = "failed"
+                            else:
+                                _status = "unknown"
+                            _qty_filled = abs(_chk.get("delta_actual", 0))
+                            _rec = append_fill_record(
+                                run_id=run_start_ts,
+                                ticker=_t,
+                                side=_order["side"],
+                                qty_requested=_order["quantity"],
+                                qty_filled=_qty_filled,
+                                avg_fill_price=_order.get("filled_price"),
+                                order_id=_order.get("order_id"),
+                                stop_order_id=_order.get("stop_order_id"),
+                                status=_status,
+                                fill_check_passed=_chk["passed"],
+                                fill_check_reason=_chk.get("reason", ""),
+                                order_comment=_order.get("order_comment"),
+                            )
+                            current_run_fills.append(_rec)
+                        cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
                 else:
                     for _, row in executable.iterrows():
                         if row["quantity"] > 0:
@@ -489,8 +578,14 @@ def main() -> int:
                 print("  (Paper: orders submitted to IB paper account.)", flush=True)
         else:
             print("  (Paper: DRY-RUN. Use --confirm-paper to submit orders.)", flush=True)
-    return 0
+    return (0, current_run_fills)
+
+
+def _main_entry() -> int:
+    """Entry point: returns exit code for sys.exit. main() returns (exit_code, fill_records)."""
+    res = main()
+    return res[0] if isinstance(res, tuple) else res
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_entry())

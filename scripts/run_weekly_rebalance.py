@@ -107,7 +107,9 @@ def main() -> int:
     old_argv = sys.argv
     try:
         sys.argv = argv
-        _exit_code = run_execution.main()
+        result = run_execution.main()
+        _exit_code = result[0] if isinstance(result, tuple) else result
+        _fill_records = result[1] if isinstance(result, tuple) and len(result) > 1 else []
         _rebalance_config = {
             "tickers": tickers,
             "top_n": args.top_n,
@@ -120,7 +122,7 @@ def main() -> int:
             model_metrics={},
             config=_rebalance_config,
             output_paths={},
-            trade_summary={},
+            trade_summary=_fill_records,
         )
         return _exit_code
     finally:

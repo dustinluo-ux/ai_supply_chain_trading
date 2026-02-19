@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
 **Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (63 files in `src/`, 11 canonical scripts)
+**Parity Status:** 1:1 with disk (64 files in `src/`, 11 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -99,7 +99,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `position_manager.py` | Position tracking, delta trade calculation, rebalancing |
 | `position_sizer.py` | **Stage 4** ATR-based position sizing: $Position = (Equity × Risk) / (ATR × Multiplier)$; config: `trading_config.position_sizing` |
 
-### Execution: `src/execution/` (6 files)
+### Execution: `src/execution/` (7 files)
 
 | Module | Purpose |
 |--------|---------|
@@ -108,6 +108,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `mock_executor.py` | Mock executor for backtesting (no real orders) |
 | `ib_executor.py` | IBKR executor (paper + live) |
 | `executor_factory.py` | `ExecutorFactory` — creates mock/IB executors |
+| `fill_ledger.py` | Persistent fill ledger: append_fill_record(), read_fill_ledger(); outputs/fills/fills.jsonl |
 | `ibkr_bridge.py` | LiveExecutionBridge: AccountMonitor, RiskManager, OrderDispatcher, CircuitBreaker, RebalanceLogic (per LIVE_EXECUTION_BRIDGE_DESIGN.md) |
 
 **Spine integration:** `scripts/run_execution.py` builds a last-close price Series from `prices_dict` and passes it as `prices` into `PositionManager.calculate_delta_trades` so dry-run/mock produces correct share quantities (execution parity; see DECISIONS.md D018).
@@ -338,7 +339,7 @@ src/execution/ (mock or IB)
 | `src/data/` | 18 |
 | `src/data/news_sources/` | 6 |
 | `src/portfolio/` | 2 |
-| `src/execution/` | 5 |
+| `src/execution/` | 7 |
 | `src/models/` | 6 |
 | `src/backtest/` | 2 |
 | `src/utils/` | 8 |
