@@ -154,7 +154,10 @@ def main() -> int:
         if csv_path.exists():
             try:
                 existing_df = pd.read_csv(
-                    csv_path, index_col=0, parse_dates=True, dayfirst=False,
+                    csv_path, index_col=0, parse_dates=False,
+                )
+                existing_df.index = pd.to_datetime(
+                    existing_df.index, format="mixed", dayfirst=True,
                 )
                 existing_df.index = pd.to_datetime(
                     existing_df.index, utc=True,

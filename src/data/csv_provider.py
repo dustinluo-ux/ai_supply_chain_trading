@@ -45,7 +45,7 @@ def find_csv_path(base_dir, ticker):
     Searches recursively for ticker.csv within the stock_market_data subdirectories.
     When multiple copies exist (e.g. different datasets), returns the path whose
     CSV has the latest end date (last index value), so backtests get the longest
-    coverage. Uses same read as load_prices: index_col=0, parse_dates=True, dayfirst=False.
+    coverage. Uses same read as load_prices: index_col=0, parse_dates=False then index via pd.to_datetime(..., format='mixed', dayfirst=True).
     """
     ticker_clean = ticker.replace('.csv', '').upper()
     target_file = f"{ticker_clean}.csv"
@@ -62,7 +62,8 @@ def find_csv_path(base_dir, ticker):
     best_max: pd.Timestamp | None = None
     for path in candidates:
         try:
-            df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=False)
+            df = pd.read_csv(path, index_col=0, parse_dates=False)
+            df.index = pd.to_datetime(df.index, format="mixed", dayfirst=True)
             if df.empty or df.index is None:
                 continue
             last = df.index.max()
@@ -86,7 +87,8 @@ def load_prices(data_dir: Path, tickers: list[str]) -> dict[str, pd.DataFrame]:
             print(f"  [WARN] No CSV for {t}", flush=True)
             continue
         try:
-            df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=False)
+            df = pd.read_csv(path, index_col=0, parse_dates=False)
+            df.index = pd.to_datetime(df.index, format="mixed", dayfirst=True)
             df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
             df.columns = [c.lower() for c in df.columns]
             if "close" not in df.columns:

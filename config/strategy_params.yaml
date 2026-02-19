@@ -34,7 +34,7 @@ propagation:
   decay_factor: 0.85
   blend_factor: 0.30   # 70% direct news + 30% propagated network effect
   enabled: true
-  min_rsi_norm_for_entry: 0.35   # minimum normalized RSI (0-1) for propagated ticker to enter extended universe
+  min_rsi_norm_for_entry: 0.50   # minimum normalized RSI (0-1); 0.50 = RSI~50 neutral — only above-neutral momentum
 
 warmup:
   # The barrier causing "Not enough weeks" error

@@ -47,7 +47,8 @@ def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
     if not path:
         return None
     try:
-        df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=False)
+        df = pd.read_csv(path, index_col=0, parse_dates=False)
+        df.index = pd.to_datetime(df.index, format="mixed", dayfirst=True)
         df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
         df.columns = [c.lower() for c in df.columns]
         if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:
