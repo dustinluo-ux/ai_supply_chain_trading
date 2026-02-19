@@ -62,8 +62,8 @@ cache/
 *.pth
 *.pt
 
-# Model files (if using local models)
-models/
+# Model artifacts (saved weights/pickles) — source code in src/models/ is tracked
+/models/
 
 # legacy/graveyard is tracked for Wave 3 reference (do not ignore)
 

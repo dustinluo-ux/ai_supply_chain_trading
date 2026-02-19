@@ -5,7 +5,7 @@
 use_ml: false  # Set to true to enable ML predictions
 
 # Which model to use for predictions
-active_model: 'linear'  # Options: linear, ridge, lasso, xgboost
+active_model: 'ridge'  # Options: linear, ridge, lasso, xgboost (ridge more robust on small samples)
 
 # Model-specific hyperparameters
 models:
@@ -55,10 +55,10 @@ features:
 
 # Training configuration
 training:
-  train_start: '2022-09-01'  # Training period start
-  train_end: '2022-10-31'     # Training period end
-  test_start: '2022-11-01'    # Test period start
-  test_end: '2022-11-30'      # Test period end
+  train_start: '2022-01-01'  # Training period start
+  train_end: '2023-12-31'     # Training period end
+  test_start: '2024-01-01'    # Test period start
+  test_end: '2024-12-31'      # Test period end
   
   validation_split: 0.2  # Use 20% of training data for validation
   
