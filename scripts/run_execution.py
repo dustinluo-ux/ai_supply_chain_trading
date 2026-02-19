@@ -61,7 +61,7 @@ def load_prices(data_dir: Path, tickers: list[str]) -> dict[str, pd.DataFrame]:
         if not path:
             continue
         try:
-            df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=True)
+            df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=False)
             df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
             df.columns = [c.lower() for c in df.columns]
             if "close" not in df.columns:
@@ -95,7 +95,7 @@ def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
     if not path:
         return None
     try:
-        df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=True)
+        df = pd.read_csv(path, index_col=0, parse_dates=True, dayfirst=False)
         df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
         df.columns = [c.lower() for c in df.columns]
         if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:

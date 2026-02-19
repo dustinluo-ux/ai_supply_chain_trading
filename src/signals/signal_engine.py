@@ -268,33 +268,47 @@ class SignalEngine:
                     ticker_upper = target.upper()
                     if ticker_upper in added_new:
                         continue
+                    if ticker_upper in cached:
+                        extended_universe.append(ticker_upper)
+                        added_new.add(ticker_upper)
+                        continue
                     if find_csv_path(data_dir, ticker_upper) is None:
+                        continue
+                    loaded = load_prices(data_dir, [ticker_upper])
+                    if ticker_upper not in loaded:
+                        continue
+                    df = loaded[ticker_upper]
+                    slice_df = df[df.index <= as_of_date]
+                    if slice_df.empty or len(slice_df) < min_required_days:
+                        continue
+                    if ensure_ohlcv_fn:
+                        slice_df = ensure_ohlcv_fn(slice_df)
+                    if not all(c in slice_df.columns for c in OHLCV_COLS):
+                        continue
+                    ind = calculate_all_indicators(slice_df)
+                    row = ind.iloc[-1]
+                    min_rsi = float(get_config().get_param("strategy_params.propagation.min_rsi_norm_for_entry", 0.35))
+                    rsi_val = float(row.get("rsi_norm", 0.5))
+                    if rsi_val < min_rsi:
+                        logger.info(
+                            "[PROPAGATION SKIP] %s: rsi_norm=%.3f below min_rsi_norm_for_entry=%.2f",
+                            ticker_upper, rsi_val, min_rsi,
+                        )
                         continue
                     extended_universe.append(ticker_upper)
                     added_new.add(ticker_upper)
-                    if ticker_upper not in cached:
-                        loaded = load_prices(data_dir, [ticker_upper])
-                        if ticker_upper in loaded:
-                            df = loaded[ticker_upper]
-                            slice_df = df[df.index <= as_of_date]
-                            if not slice_df.empty and len(slice_df) >= min_required_days:
-                                if ensure_ohlcv_fn:
-                                    slice_df = ensure_ohlcv_fn(slice_df)
-                                if all(c in slice_df.columns for c in OHLCV_COLS):
-                                    ind = calculate_all_indicators(slice_df)
-                                    row = ind.iloc[-1]
-                                    atr_norms[ticker_upper] = float(
-                                        ind.iloc[-2].get("atr_norm", 0.5)
-                                        if len(ind) >= 2 else row.get("atr_norm", 0.5)
-                                    )
-                                    cached[ticker_upper] = {
-                                        "row": row,
-                                        "news_composite": enriched_composites.get(ticker_upper, 0.5),
-                                        "sentiment_current": 0.5,
-                                        "new_network_links": [],
-                                    }
-                                    prices_dict[ticker_upper] = df
-                                    logger.info("Added price-verified propagated ticker %s to scoring", ticker_upper)
+                    atr_norms[ticker_upper] = float(
+                        ind.iloc[-2].get("atr_norm", 0.5)
+                        if len(ind) >= 2 else row.get("atr_norm", 0.5)
+                    )
+                    cached[ticker_upper] = {
+                        "row": row,
+                        "news_composite": enriched_composites.get(ticker_upper, 0.5),
+                        "sentiment_current": 0.5,
+                        "new_network_links": [],
+                    }
+                    prices_dict[ticker_upper] = df
+                    logger.info("Added price-verified propagated ticker %s to scoring", ticker_upper)
             except Exception as exc:
                 logger.debug("Extended-universe load skipped: %s", exc)
 
