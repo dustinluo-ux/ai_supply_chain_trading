@@ -567,14 +567,20 @@ def main() -> tuple[int, list]:
                             current_run_fills.append(_rec)
                         cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
                 else:
+                    from src.utils.config_manager import get_config as _get_config
+                    _min_sz = int(_get_config().get_param("trading_config.trading.execution.min_order_size", 1))
                     for _, row in executable.iterrows():
-                        if row["quantity"] > 0:
-                            executor.submit_order(
-                                ticker=row["symbol"],
-                                quantity=int(row["quantity"]),
-                                side=row["side"],
-                                order_type="MARKET",
-                            )
+                        if row["quantity"] <= 0:
+                            continue
+                        if int(row["quantity"]) < _min_sz:
+                            print(f"  [SKIP] {row['symbol']}: quantity {int(row['quantity'])} below min_order_size {_min_sz}", flush=True)
+                            continue
+                        executor.submit_order(
+                            ticker=row["symbol"],
+                            quantity=int(row["quantity"]),
+                            side=row["side"],
+                            order_type="MARKET",
+                        )
                 print("  (Paper: orders submitted to IB paper account.)", flush=True)
         else:
             print("  (Paper: DRY-RUN. Use --confirm-paper to submit orders.)", flush=True)

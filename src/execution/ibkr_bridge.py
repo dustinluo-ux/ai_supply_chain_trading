@@ -373,17 +373,16 @@ class OrderDispatcher:
         self._account = account_monitor
         self._trading_cfg = trading_cfg or {}
 
-    def _quantity_from_weight(
-        self,
-        weight: float,
-        nav: float,
-        price: float,
-        min_order_size: int = 1,
-        max_position_size: int = 10000,
-    ) -> int:
-        """Round to shares; cap by liquidity and max position size."""
+    def _quantity_from_weight(self, weight: float, nav: float, price: float) -> int:
+        """Round to shares; cap by liquidity and max position size. Limits from self._trading_cfg.execution."""
         if price <= 0 or nav <= 0 or weight <= 0:
             return 0
+        try:
+            _exec_cfg = self._trading_cfg.get("execution", {})
+        except AttributeError:
+            _exec_cfg = {}
+        min_order_size = int(_exec_cfg.get("min_order_size", 1))
+        max_position_size = int(_exec_cfg.get("max_position_size", 10000))
         dollar = nav * weight
         shares = int(round(dollar / price))
         available = self._account.get_available_funds()
@@ -425,23 +424,16 @@ class OrderDispatcher:
         signal: LiveSignal,
         order_type: str = "MARKET",
         limit_price: Optional[float] = None,
-        min_order_size: int = 1,
-        max_position_size: int = 10000,
     ) -> Dict[str, Any]:
         """
         Convert LiveSignal to order: compute quantity, Smart Stop, set comment to
         PROHIBITED_LLM_DISCOVERY_LINK if signal.is_propagated else LIVE_SPINE_TAG.
+        min_order_size and max_position_size read from self._trading_cfg.execution.
         """
         nav = self._account.get_net_liquidation()
         if nav <= 0:
             nav = 1.0  # fallback to avoid zero
-        quantity = self._quantity_from_weight(
-            signal.weight,
-            nav,
-            signal.entry_price,
-            min_order_size=min_order_size,
-            max_position_size=max_position_size,
-        )
+        quantity = self._quantity_from_weight(signal.weight, nav, signal.entry_price)
         if quantity <= 0:
             return {
                 "order_id": None,
@@ -558,6 +550,20 @@ class OrderDispatcher:
                     "status": "skipped",
                     "reason": f"would exceed max_position_size {_max_position_size}",
                 }
+        # Enforce SELL: cannot sell more than current long position
+        elif side.upper() == "SELL":
+            if _current_pos <= 0:
+                return {
+                    "order_id": None,
+                    "ticker": ticker,
+                    "quantity": 0,
+                    "side": side,
+                    "stop_price": None,
+                    "comment": None,
+                    "status": "skipped",
+                    "reason": "no long position to sell",
+                }
+            quantity = min(quantity, _current_pos)
 
         stop_price = self._risk.compute_smart_stop(side, entry_price, atr_per_share)
         comment = PROHIBITED_LLM_DISCOVERY_LINK if is_propagated else LIVE_SPINE_TAG
