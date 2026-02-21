@@ -118,10 +118,11 @@ class ModelTrainingPipeline:
         
         return X, y, metadata
     
-    def _extract_features(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, news_signals: Optional[Dict] = None) -> Optional[list]:
+    def extract_features_for_date(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, news_signals: Optional[Dict] = None) -> Optional[list]:
         """
         Extract feature vector for one ticker/date from prices_dict using calculate_all_indicators.
         Requires at least 60 rows of price history before date. News from news_signals (default 0.5 = neutral).
+        Public API for Phase 3 ML blend (target_weight_pipeline).
         """
         if ticker not in prices_dict:
             return None
@@ -158,7 +159,10 @@ class ModelTrainingPipeline:
             return [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment]
         except Exception:
             return None
-    
+
+    # Backward compatibility: private alias for use inside the class (prepare_training_data, etc.)
+    _extract_features = extract_features_for_date
+
     def _calculate_forward_return(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, horizon_days: int = 7) -> Optional[float]:
         """Calculate forward return using asof to handle non-trading days. Returns None if NaN."""
         try:

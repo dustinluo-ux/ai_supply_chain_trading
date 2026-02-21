@@ -2,7 +2,7 @@
 # Change 'active_model' to switch between models - NO CODE CHANGES NEEDED
 
 # Enable ML model (set to true to use regression, false to use weighted signals)
-use_ml: false  # Set to true to enable ML predictions
+use_ml: true  # Phase 3 wiring: blend 0.7 * baseline + 0.3 * ML score
 
 # Which model to use for predictions
 active_model: 'ridge'  # Options: linear, ridge, lasso, xgboost (ridge more robust on small samples)
@@ -60,6 +60,7 @@ training:
   # Model persistence
   save_models: true
   model_save_dir: 'models/saved/'
+  model_path: 'models/saved/ridge_20260221_131840.pkl'  # Phase 3 inference (use_ml: true)
   
 # Logging
 logging:

@@ -1,15 +1,22 @@
 """
 Canonical target-weight pipeline: regime + spine (SignalEngine -> PolicyEngine -> PortfolioEngine).
 Single place for building target weights; used by backtest and execution entrypoints.
+Phase 3 (DECISIONS.md D021): optional ML blend when use_ml true — load model once, blend 0.7*base + 0.3*ML.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from src.data.csv_provider import find_csv_path, ensure_ohlcv
+
+# Phase 3 ML: load once per process (fail-open if load fails)
+_ML_MODEL_CACHE = None
+_ML_PIPELINE_CACHE = None
 
 BENCHMARK_TICKER = "SPY"
 SMA_KILL_SWITCH_DAYS = 200
@@ -132,6 +139,57 @@ def compute_target_weights(
     week_scores, aux = signal_engine.generate(as_of, tickers, data_context)
     atr_norms = aux.get("atr_norms", {})
 
+    # Phase 3 wiring (docs/ml_ic_diagnosis.md § Phase 3 Wiring Plan): ML blend when use_ml true
+    scores_to_use = week_scores
+    _root = Path(__file__).resolve().parent.parent.parent
+    _model_cfg_path = _root / "config" / "model_config.yaml"
+    if _model_cfg_path.exists():
+        import yaml as _yaml
+        with open(_model_cfg_path, "r", encoding="utf-8") as _f:
+            _model_cfg = _yaml.safe_load(_f)
+        if _model_cfg.get("use_ml", False):
+            global _ML_MODEL_CACHE, _ML_PIPELINE_CACHE
+            if _ML_MODEL_CACHE is None:
+                _path = _model_cfg.get("training", {}).get("model_path")
+                if _path:
+                    _path = (_root / _path) if not Path(_path).is_absolute() else Path(_path)
+                    try:
+                        from src.models.model_factory import MODEL_REGISTRY
+                        from src.models.train_pipeline import ModelTrainingPipeline as _MLPipeline
+                        _active = _model_cfg.get("active_model", "ridge")
+                        _ML_MODEL_CACHE = MODEL_REGISTRY[_active].load_model(str(_path))
+                        _ML_PIPELINE_CACHE = _MLPipeline(str(_root / "config" / "model_config.yaml"))
+                    except Exception as _e:
+                        logging.warning("ML model load failed (fail-open): %s", _e)
+                        _ML_MODEL_CACHE = None
+                        _ML_PIPELINE_CACHE = None
+            if _ML_MODEL_CACHE is not None and _ML_PIPELINE_CACHE is not None:
+                _news_signals = data_context.get("news_signals") or {}
+                _X_list, _ticker_list = [], []
+                for _t in week_scores:
+                    _feats = _ML_PIPELINE_CACHE.extract_features_for_date(_t, as_of, prices_dict, _news_signals)
+                    if _feats is not None:
+                        _X_list.append(_feats)
+                        _ticker_list.append(_t)
+                if _X_list:
+                    _X = np.array(_X_list)
+                    _ml_raw = _ML_MODEL_CACHE.predict(_X)
+                    _mn, _mx = float(_ml_raw.min()), float(_ml_raw.max())
+                    if _mx - _mn > 0:
+                        _ml_scaled = (_ml_raw - _mn) / (_mx - _mn)
+                    else:
+                        _ml_scaled = np.full_like(_ml_raw, 0.5)
+                    _ml_score = {_ticker_list[_i]: float(_ml_scaled[_i]) for _i in range(len(_ticker_list))}
+                    for _t in week_scores:
+                        if _t not in _ml_score:
+                            _ml_score[_t] = 0.5
+                    _blended = {}
+                    for _t in week_scores:
+                        _blended[_t] = 0.7 * week_scores[_t] + 0.3 * _ml_score[_t]
+                        if _ml_score[_t] < 0.4 and week_scores[_t] > 0.6:
+                            _blended[_t] *= 0.5
+                    scores_to_use = _blended
+
     policy_context = {
         "regime_state": regime_state,
         "spy_below_sma200": spy_below_sma200,
@@ -139,7 +197,7 @@ def compute_target_weights(
         "kill_switch_mode": KILL_SWITCH_MODE,
         "kill_switch_active": kill_switch_active,
     }
-    gated_scores, _ = policy_engine.apply(as_of, week_scores, aux, policy_context)
+    gated_scores, _ = policy_engine.apply(as_of, scores_to_use, aux, policy_context)
 
     portfolio_context = {"top_n": top_n, "atr_norms": atr_norms, "tickers": tickers}
     if path is not None:
