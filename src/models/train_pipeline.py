@@ -91,9 +91,25 @@ class ModelTrainingPipeline:
         if len(X_list) == 0:
             raise ValueError("No training samples found. Check date ranges and data availability.")
         
-        X = np.array(X_list)
-        y = np.array(y_list)
+        # Iteration 2 (docs/ml_ic_diagnosis.md): cross-sectional z-score label — group by date,
+        # replace each raw return with (return − date_mean) / date_std; if std=0 keep raw return.
+        # Applied identically for train and test (evaluate_ic uses prepare_training_data).
         metadata = pd.DataFrame(meta_list)
+        y_arr = np.array(y_list, dtype=float)
+        for date in metadata['date'].unique():
+            mask = (metadata['date'] == date).values
+            indices = np.where(mask)[0]
+            returns = y_arr[indices]
+            date_mean = float(np.mean(returns))
+            date_std = float(np.std(returns))
+            if date_std > 0:
+                z = (returns - date_mean) / date_std
+                y_arr[indices] = z
+                for k, idx in enumerate(indices):
+                    meta_list[idx]['forward_return'] = float(z[k])
+        y = y_arr
+        metadata = pd.DataFrame(meta_list)
+        X = np.array(X_list)
         
         print(f"[Pipeline] Prepared {len(X)} training samples")
         print(f"  Features: {X.shape[1]}")

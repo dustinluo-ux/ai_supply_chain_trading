@@ -13,7 +13,7 @@ models:
     # No hyperparameters for basic linear regression
     
   ridge:
-    alpha: 1.0  # Regularization strength
+    alpha: 0.01  # Regularization strength (Iteration 2: was 1.0, reduced to allow non-zero coefficients)
     
   lasso:
     alpha: 0.1  # Regularization strength (higher = more feature selection)
@@ -37,20 +37,15 @@ models:
 
 # Feature configuration
 features:
-  # Technical features
-  momentum_window: 20      # Days for momentum calculation
-  volume_window: 30        # Days for volume average
-  rsi_window: 14          # Days for RSI
-
   # News features  
   news_lookback_days: 7   # Days of news to analyze
   
   # Feature list (order matters!)
   feature_names:
-    - momentum_20d
-    - volume_ratio_30d
-    - rsi_14d
-    - news_supply_chain
+    - momentum_avg
+    - volume_ratio_norm
+    - rsi_norm
+    - news_supply
     - news_sentiment
 
 # Training configuration
