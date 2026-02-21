@@ -100,15 +100,31 @@ def main() -> int:
         for _r in rows:
             _writer.writerow(_r)
 
+    # UI: today's snapshot for health table (overwrite each run)
+    _scores = aux.get("scores") or {}
+    _vol_20d = aux.get("vol_20d") or {}
+    _vol_triggered = aux.get("vol_triggered") or {}
+    _last_signal = {}
+    for _r in rows:
+        _date_str, _ticker, _w, _lc, _nu = _r
+        _last_signal[_ticker] = {
+            "weight": float(_w),
+            "latest_close": float(_lc) if not pd.isna(_lc) else None,
+            "notional_units": int(_nu),
+            "score": _scores.get(_ticker) if _scores.get(_ticker) is not None else None,
+            "vol_20d": _vol_20d.get(_ticker) if _ticker in _vol_20d else None,
+            "vol_triggered": bool(_vol_triggered.get(_ticker, False)),
+        }
+    import json
+    with open(_out_dir / "last_signal.json", "w", encoding="utf-8") as _jf:
+        json.dump(_last_signal, _jf, indent=2)
+
     writer = csv.writer(sys.stdout)
     writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units"])
     for r in rows:
         writer.writerow(r)
 
     # Task 7: daily signal summary table (scores, vol_20d, vol_triggered from aux)
-    _scores = aux.get("scores") or {}
-    _vol_20d = aux.get("vol_20d") or {}
-    _vol_triggered = aux.get("vol_triggered") or {}
     _order = list(weights_series.index)
     print(f"\n=== Daily Signal Summary: {date_str} ===", flush=True)
     print(f"{'Ticker':<8} {'Score':>8}   {'Vol_20d':>8}   {'VolFilter':<9}", flush=True)
