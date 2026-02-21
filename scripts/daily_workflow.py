@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _render_health_table(last_signal_path: Path, data_dir: Path, today_str: str) -> None:
+def _render_health_table(last_signal_path: Path, news_dir: Path, today_str: str) -> None:
     """Load last_signal.json and news files; render health table (rich or plain)."""
     if not last_signal_path.exists():
         print("last_signal.json not found, skipping health table", flush=True)
@@ -38,7 +38,6 @@ def _render_health_table(last_signal_path: Path, data_dir: Path, today_str: str)
         return
     if not last_signal:
         return
-    news_dir = data_dir / "news"
     today = datetime.now().date()
     stale_cutoff = today - timedelta(days=7)
     tickers = list(last_signal.keys())
@@ -185,14 +184,15 @@ def main() -> int:
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
 
-    # UI: system health table from last_signal.json + news files
+    # UI: system health table from last_signal.json + news files (news path from config)
     try:
-        data_dir = Path(cfg.get_param("data_config.data_sources.data_dir"))
+        news_dir_cfg = cfg.get_param("data_config.news_data.directory", "data/news")
     except Exception:
-        data_dir = ROOT / "data"
+        news_dir_cfg = "data/news"
+    news_dir = ROOT / news_dir_cfg
     last_signal_path = ROOT / "outputs" / "last_signal.json"
     today_str = datetime.now().strftime("%Y-%m-%d")
-    _render_health_table(last_signal_path, data_dir, today_str)
+    _render_health_table(last_signal_path, news_dir, today_str)
 
     print("Daily workflow complete.", flush=True)
     return 0

@@ -1,0 +1,50 @@
+# Canonical 40-ticker universe. Edit here, then run
+# scripts/sync_universe.py to propagate to data_config.yaml.
+
+pillars:
+  compute:
+    - NVDA
+    - AMD
+    - AVGO
+    - TSM
+    - ASML
+    - ARM
+    - MRVL
+    - INTC
+    - SNPS
+    - CDNS
+  energy:
+    - CEG
+    - VST
+    - GEV
+    - CCJ
+    - OKLO
+    - UUUU
+    - LEU
+    - BEP
+    - SMR
+    - NEP
+  infra:
+    - VRT
+    - MOD
+    - ANET
+    - ALAB
+    - CRDO
+    - CLS
+    - LITE
+    - NVT
+    - FIX
+    - EME
+  adoption:
+    - PLTR
+    - PATH
+    - MSFT
+    - GOOGL
+    - META
+    - AMZN
+    - ISRG
+    - TER
+    - TEAM
+    - ORCL
+
+benchmark: SPY
