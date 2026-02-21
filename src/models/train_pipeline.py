@@ -149,14 +149,46 @@ class ModelTrainingPipeline:
             momentum_avg = (m5 + m20) / 2.0
             news_signals = news_signals or {}
             date_str = date.strftime("%Y-%m-%d") if isinstance(date, pd.Timestamp) else str(date)
-            news = news_signals.get(ticker, {}).get(date_str) or news_signals.get(ticker, {}).get(date) or {}
+            ticker_news = (news_signals or {}).get(ticker, {})
+            news = ticker_news.get(date_str) or ticker_news.get(date) or {}
             if news is None:
                 news = {}
             # Fix 2 (docs/ml_ic_result.md): NEWS NEUTRAL DEFAULT — pre-2025 rows have no news;
             # use 0.5 (neutral) not 0.0 (bearish) per Phase 3 technical-first ML policy.
             news_supply = float(news.get('supply_chain_score', news.get('supply_chain', 0.5)))
             news_sentiment = float(news.get('sentiment_score', news.get('sentiment', 0.5)))
-            return [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment]
+
+            # sentiment_velocity: change in sentiment vs a recent past day (first match in [5,6,7,4,3] days back)
+            past_sentiment = None
+            for offset in [5, 6, 7, 4, 3]:
+                past_date = date - pd.Timedelta(days=offset)
+                past_str = past_date.strftime("%Y-%m-%d")
+                if past_str in ticker_news:
+                    past_news = ticker_news.get(past_str) or {}
+                    if past_news is None:
+                        past_news = {}
+                    past_sentiment = float(past_news.get('sentiment_score', past_news.get('sentiment', 0.5)))
+                    break
+            sentiment_velocity = (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+
+            # news_spike: current news_supply relative to mean of prior 20 calendar days (need >= 5 entries)
+            supply_values = []
+            for d in range(1, 21):
+                back_date = date - pd.Timedelta(days=d)
+                back_str = back_date.strftime("%Y-%m-%d")
+                if back_str not in ticker_news:
+                    continue
+                back_news = ticker_news.get(back_str) or {}
+                if back_news is None:
+                    back_news = {}
+                supply_values.append(float(back_news.get('supply_chain_score', back_news.get('supply_chain', 0.5))))
+            if len(supply_values) >= 5:
+                mean_supply = float(np.mean(supply_values))
+                news_spike = (news_supply / mean_supply) if mean_supply > 0 else 1.0
+            else:
+                news_spike = 1.0
+
+            return [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment, sentiment_velocity, news_spike]
         except Exception:
             return None
 

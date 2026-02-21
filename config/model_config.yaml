@@ -13,7 +13,7 @@ models:
     # No hyperparameters for basic linear regression
     
   ridge:
-    alpha: 0.01  # Regularization strength (Iteration 2: was 1.0, reduced to allow non-zero coefficients)
+    alpha: 0.001  # Regularization strength (reduced from 0.01 to give momentum/volume more signal surface)
     
   lasso:
     alpha: 0.1  # Regularization strength (higher = more feature selection)
@@ -47,6 +47,8 @@ features:
     - rsi_norm
     - news_supply
     - news_sentiment
+    - sentiment_velocity
+    - news_spike
 
 # Training configuration
 training:

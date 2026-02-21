@@ -25,6 +25,8 @@ from src.models.train_pipeline import ModelTrainingPipeline
 
 # Fix 1 (docs/ml_ic_result.md): TICKER MISMATCH — use canonical watchlist from config
 # instead of hardcoded list so training/IC align with data_config.yaml.
+# Note: models/saved/ridge_20260221_131840.pkl is stale (5 features); current config uses 7 features.
+# Do not delete the old file; re-run training to produce a new saved model.
 CONFIG_PATH = "config/model_config.yaml"
 TEST_START = "2024-01-01"
 TEST_END = "2024-12-31"
