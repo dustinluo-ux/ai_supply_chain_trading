@@ -134,7 +134,7 @@ class PerformanceTracker:
             "n_days": n_days,
         }
         print("=== Performance Summary ===")
-        print(f"Period:        {first_str} → {last_str}  ({n_days} trading days)")
+        print(f"Period:        {first_str} -> {last_str}  ({n_days} trading days)")
         print(f"Total Return:  {total_return:.2%}")
         print(f"SPY Return:    {spy_return:.2%}")
         print(f"Alpha vs SPY:  {alpha_vs_spy:+.2%}")
