@@ -1,4 +1,4 @@
-# Canonical 40-ticker universe. Edit here, then run
+# Canonical 47-ticker global universe. Edit here, then run
 # scripts/sync_universe.py to propagate to data_config.yaml.
 
 pillars:
@@ -46,5 +46,22 @@ pillars:
     - TER
     - TEAM
     - ORCL
+  global:
+    - 9988.HK   # Alibaba
+    - 0700.HK   # Tencent
+    - 1810.HK   # Xiaomi
+    - SAP.DE    # SAP
+    - ORSTED.CO # Orsted
+    - 6861.T    # Keyence
+    - 6758.T    # Sony
 
 benchmark: SPY
+
+ibkr_symbols:
+  "9988.HK": "9988 STK SEHK"
+  "0700.HK": "700 STK SEHK"
+  "1810.HK": "1810 STK SEHK"
+  "SAP.DE": "SAP STK IBIS"
+  "ORSTED.CO": "ORSTED STK CSE"
+  "6861.T": "6861 STK TSE"
+  "6758.T": "6758 STK TSE"

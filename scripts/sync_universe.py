@@ -1,8 +1,9 @@
 """
-Sync canonical 40-ticker universe from config/universe.yaml to config/data_config.yaml.
+Sync canonical 47-ticker global universe from config/universe.yaml to config/data_config.yaml.
 
-Flattens pillar lists (excludes benchmark), updates watchlist and max_tickers,
-ensures trading_data/news/raw_bulk exists. No CLI args.
+Flattens pillar lists (compute, energy, infra, adoption, global; excludes benchmark),
+updates watchlist and max_tickers, ensures trading_data/news/raw_bulk, historical_archives,
+global_equities. No CLI args.
 
 Usage:
   python scripts/sync_universe.py
@@ -68,7 +69,7 @@ def main() -> int:
     if "universe_selection" not in data_cfg:
         data_cfg["universe_selection"] = {}
     data_cfg["universe_selection"]["watchlist"] = tickers
-    data_cfg["universe_selection"]["max_tickers"] = 40
+    data_cfg["universe_selection"]["max_tickers"] = 47
 
     try:
         if use_ruamel:
@@ -90,6 +91,9 @@ def main() -> int:
     historical_archives = raw_bulk.parent / "historical_archives"
     historical_archives.mkdir(parents=True, exist_ok=True)
     print(f"Directory ensured: {historical_archives}", flush=True)
+    global_equities = raw_bulk.parent / "global_equities"
+    global_equities.mkdir(parents=True, exist_ok=True)
+    print(f"Directory ensured: {global_equities}", flush=True)
 
     print(f"Synced {len(tickers)} tickers to data_config.yaml", flush=True)
     print(", ".join(tickers), flush=True)
