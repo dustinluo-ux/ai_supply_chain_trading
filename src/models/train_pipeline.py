@@ -105,7 +105,7 @@ class ModelTrainingPipeline:
     def _extract_features(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, news_signals: Optional[Dict] = None) -> Optional[list]:
         """
         Extract feature vector for one ticker/date from prices_dict using calculate_all_indicators.
-        Requires at least 60 rows of price history before date. News from news_signals (default 0.0).
+        Requires at least 60 rows of price history before date. News from news_signals (default 0.5 = neutral).
         """
         if ticker not in prices_dict:
             return None
@@ -135,8 +135,10 @@ class ModelTrainingPipeline:
             news = news_signals.get(ticker, {}).get(date_str) or news_signals.get(ticker, {}).get(date) or {}
             if news is None:
                 news = {}
-            news_supply = float(news.get('supply_chain_score', news.get('supply_chain', 0.0)))
-            news_sentiment = float(news.get('sentiment_score', news.get('sentiment', 0.0)))
+            # Fix 2 (docs/ml_ic_result.md): NEWS NEUTRAL DEFAULT — pre-2025 rows have no news;
+            # use 0.5 (neutral) not 0.0 (bearish) per Phase 3 technical-first ML policy.
+            news_supply = float(news.get('supply_chain_score', news.get('supply_chain', 0.5)))
+            news_sentiment = float(news.get('sentiment_score', news.get('sentiment', 0.5)))
             return [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment]
         except Exception:
             return None
@@ -204,28 +206,70 @@ class ModelTrainingPipeline:
                     test_start: str, test_end: str,
                     news_signals: Optional[Dict] = None) -> float:
         """
-        Build test dataset, predict, compute Spearman IC between predictions and actual forward returns.
-        Prints [IC] Spearman IC = {value:.4f} (n={n}). Returns IC as float.
+        Anchored walk-forward IC per DECISIONS.md D021: anchor fixed at config train_start,
+        step through test period in 13-week folds. Fold k: train anchor→fold_k_start,
+        test next 13 weeks. Refit model each fold; gate metric = mean IC >= 0.02.
         """
+        from scipy.stats import spearmanr
+
+        # DECISIONS.md D021: anchored walk-forward — anchor fixed at train_start;
+        # Fold 1: train anchor→test_start, test next 13 weeks; Fold 2: train anchor→fold1_end, test next 13 weeks; etc.
+        anchor = pd.to_datetime(self.config['training']['train_start'])
         test_start_dt = pd.to_datetime(test_start)
         test_end_dt = pd.to_datetime(test_end)
-        X_test, y_test, meta = self.prepare_training_data(
-            prices_dict,
-            technical_signals=None,
-            news_signals=news_signals or {},
-            train_start=test_start_dt,
-            train_end=test_end_dt,
-        )
-        if len(X_test) == 0:
-            print("[IC] No test samples; IC = 0.0000 (n=0)")
+        news_signals = news_signals or {}
+        fold_weeks = 13
+        week_days = 7 * fold_weeks
+        ic_list = []
+        val_split = self.config['training']['validation_split']
+        fold_start = test_start_dt
+
+        while fold_start + pd.Timedelta(days=week_days) <= test_end_dt:
+            train_end_fold = fold_start
+            test_end_fold = fold_start + pd.Timedelta(days=week_days)
+            # Train: [anchor, train_end_fold]
+            X_train, y_train, _ = self.prepare_training_data(
+                prices_dict,
+                technical_signals=None,
+                news_signals=news_signals,
+                train_start=anchor,
+                train_end=train_end_fold,
+            )
+            if len(X_train) < 10:
+                fold_start = test_end_fold
+                continue
+            split_idx = int(len(X_train) * (1 - val_split))
+            X_t, X_v = X_train[:split_idx], X_train[split_idx:]
+            y_t, y_v = y_train[:split_idx], y_train[split_idx:]
+            model_fold = create_model(
+                {**{'type': self.active_model_type}, **self.model_config},
+                self.feature_names
+            )
+            model_fold.fit(X_t, y_t, X_v, y_v)
+            # Test: [fold_start, test_end_fold]
+            X_test, y_test, _ = self.prepare_training_data(
+                prices_dict,
+                technical_signals=None,
+                news_signals=news_signals,
+                train_start=fold_start,
+                train_end=test_end_fold,
+            )
+            if len(X_test) == 0:
+                fold_start = test_end_fold
+                continue
+            pred = model_fold.predict(X_test)
+            ic, _ = spearmanr(pred, y_test)
+            ic_f = float(ic) if not np.isnan(ic) else 0.0
+            ic_list.append(ic_f)
+            print(f"[IC] fold {len(ic_list)} (test {fold_start.date()}–{test_end_fold.date()}) Spearman IC = {ic_f:.4f} (n={len(y_test)})")
+            fold_start = test_end_fold
+
+        if not ic_list:
+            print("[IC] No walk-forward folds; mean IC = 0.0000")
             return 0.0
-        pred = model.predict(X_test)
-        from scipy.stats import spearmanr
-        ic, _ = spearmanr(pred, y_test)
-        ic = float(ic) if not np.isnan(ic) else 0.0
-        n = len(y_test)
-        print(f"[IC] Spearman IC = {ic:.4f} (n={n})")
-        return ic
+        mean_ic = float(np.mean(ic_list))
+        print(f"[IC] Walk-forward mean Spearman IC = {mean_ic:.4f} (folds={len(ic_list)})")
+        return mean_ic
     
     def _log_feature_importance(self, model):
         """Log feature importance to console and file."""
