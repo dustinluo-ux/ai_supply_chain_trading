@@ -250,7 +250,8 @@ def main() -> tuple[int, list]:
             print("No weights in cache. Run without --rebalance first.", flush=True)
             return (1, [])
         optimal_weights_series = pd.Series(target_weights_dict).reindex(tickers, fill_value=0.0).fillna(0.0)
-        intent_tickers = [t for t, w in target_weights_dict.items() if float(w) > 0]
+        intent_tickers = [t for t, w in target_weights_dict.items()
+                          if float(w) > 0 and t in set(tickers)]
         intent = SimpleNamespace(tickers=intent_tickers, weights=dict(optimal_weights_series))
     else:
         optimal_weights_series = compute_target_weights(
