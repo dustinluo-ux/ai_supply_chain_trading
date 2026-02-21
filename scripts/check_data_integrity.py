@@ -35,10 +35,11 @@ def main() -> int:
     with open(universe_path, "r", encoding="utf-8") as f:
         universe = yaml.safe_load(f)
     pillars = universe.get("pillars") or {}
-    pillar_order = ["compute", "energy", "infra", "adoption"]
     ticker_to_pillar = {}
-    for pname in pillar_order:
-        for t in (pillars.get(pname) or []):
+    for pname, pillar_list in pillars.items():
+        if not isinstance(pillar_list, list):
+            continue
+        for t in pillar_list:
             if isinstance(t, str) and t.strip():
                 ticker_to_pillar[t.strip().upper()] = pname
 
@@ -46,8 +47,10 @@ def main() -> int:
     data_dir = data_cfg["data_dir"]
 
     rows = []
-    for pname in pillar_order:
-        for ticker in (pillars.get(pname) or []):
+    for pname, pillar_list in pillars.items():
+        if not isinstance(pillar_list, list):
+            continue
+        for ticker in pillar_list:
             if not isinstance(ticker, str) or not ticker.strip():
                 continue
             t = ticker.strip().upper()
