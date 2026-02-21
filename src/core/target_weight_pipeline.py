@@ -53,11 +53,13 @@ def compute_target_weights(
     weight_mode: str = "fixed",
     path: Optional[str] = None,
     llm_enabled: bool = True,
-) -> pd.Series:
+    return_aux: bool = False,
+) -> pd.Series | tuple[pd.Series, dict]:
     """
     Canonical spine:
     SignalEngine -> PolicyEngine -> PortfolioEngine
     Returns pd.Series(intent.weights) indexed by full universe.
+    If return_aux=True, returns (weights_series, aux) with aux: scores, vol_20d, vol_triggered.
     path: if "weekly" then intent mode is execution; else backtest (no path in context).
     """
     from src.signals.signal_engine import SignalEngine
@@ -68,7 +70,10 @@ def compute_target_weights(
     portfolio_engine = PortfolioEngine()
 
     if len(tickers) < top_n:
-        return pd.Series(0.0, index=tickers)
+        out = pd.Series(0.0, index=tickers)
+        if return_aux:
+            return (out, {"scores": {}, "vol_20d": {}, "vol_triggered": {}})
+        return out
 
     spy_bench = _spy_benchmark_series(data_dir) if data_dir else None
     kill_switch_active = spy_bench is not None
@@ -191,7 +196,9 @@ def compute_target_weights(
                     scores_to_use = _blended
 
     # Task 6 (docs/ml_ic_diagnosis.md): volatility filter — scale score when 20d realized vol
-    # exceeds percentile_threshold of 252d rolling vol history. Read config from technical_master_score.yaml.
+    # exceeds percentile_threshold of 252d rolling vol history. Task 7: collect vol_20d, vol_triggered for aux.
+    _vol_20d_dict: dict = {}
+    _vol_triggered_dict: dict = {}
     _vol_cfg_path = _root / "config" / "technical_master_score.yaml"
     if _vol_cfg_path.exists():
         import yaml as _yaml_vol
@@ -222,17 +229,25 @@ def compute_target_weights(
                 if len(_vol_20d) == 0:
                     continue
                 _today_vol = float(_vol_20d.iloc[-1])
+                _vol_20d_dict[_t] = _today_vol
                 _history = _vol_20d.tail(_lookback)
                 if len(_history) < 60:
+                    _vol_triggered_dict[_t] = False
                     continue
                 _threshold = float(np.percentile(_history, _pct))
                 if _today_vol > _threshold:
                     _scores_copy[_t] *= _scale
+                    _vol_triggered_dict[_t] = True
                     logging.warning(
                         "[VolFilter] %s vol=%.3f (p%.0f=%.3f) → score scaled by %.2f",
                         _t, _today_vol, _pct, _threshold, _scale,
                     )
+                else:
+                    _vol_triggered_dict[_t] = False
             scores_to_use = _scores_copy
+    for _t in scores_to_use:
+        _vol_20d_dict.setdefault(_t, None)
+        _vol_triggered_dict.setdefault(_t, False)
 
     policy_context = {
         "regime_state": regime_state,
@@ -252,7 +267,10 @@ def compute_target_weights(
     # may add tickers to scores/intent; only tickers in the input tickers param appear in output.
     requested_set = set(tickers)
     if not intent.tickers:
-        return pd.Series(0.0, index=list(tickers))
+        out = pd.Series(0.0, index=list(tickers))
+        if return_aux:
+            return (out, {"scores": dict(scores_to_use), "vol_20d": _vol_20d_dict, "vol_triggered": _vol_triggered_dict})
+        return out
     weights = {t: intent.weights.get(t, 0.0) for t in requested_set}
     for t in requested_set:
         if pd.isna(weights.get(t, 0.0)):
@@ -261,4 +279,7 @@ def compute_target_weights(
     if total > 0 and abs(total - 1.0) > 1e-9:
         for t in weights:
             weights[t] /= total
-    return pd.Series(weights).reindex(list(tickers), fill_value=0.0)
+    weights_series = pd.Series(weights).reindex(list(tickers), fill_value=0.0)
+    if return_aux:
+        return (weights_series, {"scores": dict(scores_to_use), "vol_20d": _vol_20d_dict, "vol_triggered": _vol_triggered_dict})
+    return weights_series

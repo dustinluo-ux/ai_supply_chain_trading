@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
 **Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (63 files in `src/`, 13 canonical scripts)
+**Parity Status:** 1:1 with disk (65 files in `src/`, 14 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -28,6 +28,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 - `scripts/expand_database_core_stocks.py` — Supply chain DB expansion (per SUPPLY_CHAIN_DB.md)
 - `scripts/merge_news_chunks.py` — One-shot: merge flat + {ticker}_20*.json chunks into data/news/{ticker}_news.json (dedupe on title, sort by publishedAt; chunks left in place)
 - `scripts/generate_daily_weights.py` — Task 6: daily target weights table (watchlist from data_config, compute_target_weights, CSV: date, ticker, target_weight, latest_close, notional_units)
+- `scripts/daily_workflow.py` — Task 7: run update_price_data (with SPY), update_news_data, generate_daily_weights via subprocess; watchlist from data_config
 
 **Research / ML:**
 - `scripts/train_ml_model.py` — Phase 3 ML training runner: train ridge model, evaluate Spearman IC on test period; save to models/saved/ only if IC ≥ 0.02 (no signal_engine wiring)
@@ -132,6 +133,13 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 |--------|---------|------|
 | `__init__.py` | Package marker | |
 | `backtest_engine.py` | vectorbt-based backtest engine | Non-canonical; canonical backtest is `scripts/backtest_technical_library.py` |
+
+### Evaluation: `src/evaluation/` (2 files)
+
+| Module | Purpose |
+|--------|---------|
+| `__init__.py` | Package marker |
+| `performance_tracker.py` | Task 7: PerformanceTracker.run(signals_csv, data_dir) — equity curves from daily signals, total_return, spy_return, alpha, max_drawdown, sharpe |
 
 ### Utilities: `src/utils/` (9 files)
 
@@ -345,10 +353,11 @@ src/execution/ (mock or IB)
 | `src/execution/` | 7 |
 | `src/models/` | 6 |
 | `src/backtest/` | 2 |
+| `src/evaluation/` | 2 |
 | `src/utils/` | 9 |
 | `src/__init__.py` | 1 |
-| **Total `src/`** | **63** |
-| `scripts/` (canonical) | 13 |
+| **Total `src/`** | **65** |
+| `scripts/` (canonical) | 14 |
 
 ---
 

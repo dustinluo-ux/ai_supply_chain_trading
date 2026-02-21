@@ -60,12 +60,14 @@ def main() -> int:
         return 1
 
     try:
-        weights_series = compute_target_weights(
+        result = compute_target_weights(
             as_of,
             tickers,
             prices_dict,
             data_dir=data_dir,
+            return_aux=True,
         )
+        weights_series, aux = result
     except Exception as e:
         print(f"ERROR: compute_target_weights failed: {e}", flush=True)
         return 1
@@ -86,10 +88,38 @@ def main() -> int:
                 notional_units = int(w * 100_000 / latest_close)
         rows.append((date_str, ticker, w, latest_close, notional_units))
 
+    # Task 7: append to outputs/daily_signals.csv (header on first run; mode 'a', newline='')
+    _out_dir = ROOT / "outputs"
+    _out_dir.mkdir(parents=True, exist_ok=True)
+    _signals_path = _out_dir / "daily_signals.csv"
+    _write_header = not _signals_path.exists() or _signals_path.stat().st_size == 0
+    with open(_signals_path, "a", newline="", encoding="utf-8") as _f:
+        _writer = csv.writer(_f)
+        if _write_header:
+            _writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units"])
+        for _r in rows:
+            _writer.writerow(_r)
+
     writer = csv.writer(sys.stdout)
     writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units"])
     for r in rows:
         writer.writerow(r)
+
+    # Task 7: daily signal summary table (scores, vol_20d, vol_triggered from aux)
+    _scores = aux.get("scores") or {}
+    _vol_20d = aux.get("vol_20d") or {}
+    _vol_triggered = aux.get("vol_triggered") or {}
+    _order = list(weights_series.index)
+    print(f"\n=== Daily Signal Summary: {date_str} ===", flush=True)
+    print(f"{'Ticker':<8} {'Score':>8}   {'Vol_20d':>8}   {'VolFilter':<9}", flush=True)
+    print("------  -----   -------   ---------", flush=True)
+    for _t in _order:
+        _sc = _scores.get(_t)
+        _sc_str = f"{_sc:.3f}" if _sc is not None else "N/A"
+        _vol = _vol_20d.get(_t)
+        _vol_str = "N/A" if _vol is None else f"{_vol:.3f}"
+        _trig = "YES" if _vol_triggered.get(_t) else "NO"
+        print(f"{_t:<8} {_sc_str:>8}   {_vol_str:>8}   {_trig:<9}", flush=True)
     return 0
 
 
