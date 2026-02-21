@@ -5,7 +5,7 @@ data_sources:
   # Path to historical stock market data directory
   # Can contain subdirectories for nasdaq, sp500, forbes2000, nyse, etc.
   # Updated: Now in OneDrive for cloud storage
-  data_dir: "C:/Users/dusro/OneDrive/Programming/ai_supply_chain_trading/data/stock_market_data"
+  data_dir: "C:/ai_supply_chain_trading/trading_data/stock_market_data"
   
   # File format to look for (auto-detect if not specified)
   file_format: "csv"  # Options: csv, parquet, auto
@@ -29,8 +29,9 @@ universe_selection:
   # Reduced to 100 to allow stocks with partial data
   min_data_points: 60
 
-  # Watchlist: The central list of symbols to track
-  watchlist: ["NVDA", "AMD", "TSM", "AAPL", "MSFT", "GOOGL"]
+  # Watchlist: The central list of symbols to track (Task 6 purge; D013: SPY benchmark-only, not in watchlist)
+  watchlist: ["NVDA", "AMD", "TSM", "ASML", "MU", "AMAT", "INTC"]
+  benchmark: "SPY"
   # Date range filter
   # Note: If your data is older, adjust these dates
   # The backtest will use whatever date range is available in the data
@@ -61,12 +62,12 @@ news_data:
   directory: "data/news"
   
   # News data source
-  source: "FNSPID"  # Options: FNSPID, Polygon, MarketAux, custom
+  source: "marketaux"  # Options: FNSPID, Polygon, MarketAux, custom
   
   # Date range of news data (actual content verified 2026-02-16)
   date_range:
-    start: "2022-04-01"
-    end: "2022-12-31"
+    start: "2020-01-01"
+    end: "2024-12-31"
   
   # Lookback window for news analysis (days)
   lookback_days: 7

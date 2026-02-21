@@ -87,3 +87,13 @@ categories:
   volatility:
     - atr_norm
     - bb_position_norm
+
+# ---------------------------------------------------------------------------
+# Volatility filter (Task 6): scale score when 20d realized vol > percentile of 252d history.
+# Applied after ML blend, before PolicyEngine. technical_master_score = score pipeline home.
+# ---------------------------------------------------------------------------
+volatility_filter:
+  enabled: true
+  lookback_days: 252       # trading days of rolling vol history
+  percentile_threshold: 95 # top-N% triggers scale
+  scale_factor: 0.5        # multiply blended score by this when triggered

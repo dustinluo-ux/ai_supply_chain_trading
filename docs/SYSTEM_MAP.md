@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
 **Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (64 files in `src/`, 12 canonical scripts)
+**Parity Status:** 1:1 with disk (63 files in `src/`, 13 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -27,6 +27,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 - `scripts/build_supply_chain_db.py` — Supply chain DB builder (per SUPPLY_CHAIN_DB.md)
 - `scripts/expand_database_core_stocks.py` — Supply chain DB expansion (per SUPPLY_CHAIN_DB.md)
 - `scripts/merge_news_chunks.py` — One-shot: merge flat + {ticker}_20*.json chunks into data/news/{ticker}_news.json (dedupe on title, sort by publishedAt; chunks left in place)
+- `scripts/generate_daily_weights.py` — Task 6: daily target weights table (watchlist from data_config, compute_target_weights, CSV: date, ticker, target_weight, latest_close, notional_units)
 
 **Research / ML:**
 - `scripts/train_ml_model.py` — Phase 3 ML training runner: train ridge model, evaluate Spearman IC on test period; save to models/saved/ only if IC ≥ 0.02 (no signal_engine wiring)
@@ -35,11 +36,12 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 
 ## Core Module Structure
 
-### Single Spine Architecture: `src/core/` (6 files)
+### Single Spine Architecture: `src/core/` (7 files)
 
 | Module | Responsibility |
 |--------|----------------|
 | `__init__.py` | Re-exports PolicyEngine, PortfolioEngine, Intent, types, compute_target_weights |
+| `config.py` | Environment-level config: load_dotenv, DATA_DIR, NEWS_DIR, TIINGO_API_KEY, MARKETAUX_API_KEY |
 | `policy_engine.py` | Regime detection and policy gate application (CASH_OUT, sideways scaling) |
 | `portfolio_engine.py` | Portfolio construction and intent generation (rank, top-N, inverse-vol) |
 | `target_weight_pipeline.py` | Canonical spine: SignalEngine → PolicyEngine → PortfolioEngine |
@@ -62,7 +64,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `performance_logger.py` | Weekly performance CSV logging, regime ledger management |
 | `metrics.py` | Regime-aware Sortino ratio calculation |
 
-### Data Layer: `src/data/` (18 files)
+### Data Layer: `src/data/` (15 files)
 
 | Module | Purpose |
 |--------|---------|
@@ -75,9 +77,6 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `news_fetcher.py` | News data ingestion |
 | `news_base.py` | Abstract base class for news sources |
 | `news_fetcher_factory.py` | News source factory |
-| `news_aggregator.py` | Multi-source news aggregation (Marketaux + Tiingo) |
-| `multi_source_factory.py` | Multi-source data factory (coordinates providers) |
-| `warmup.py` | Historical + recent data bridge (warm-up / self-healing) |
 | `universe_loader.py` | Ticker universe loading from config |
 | `base_loader.py` | Abstract `BaseDataLoader` class |
 | `supply_chain_manager.py` | Supply chain DB read/write/freshness tracking |
@@ -89,8 +88,8 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | Module | Purpose |
 |--------|---------|
 | `__init__.py` | Package marker |
+| `base_provider.py` | Abstract NewsProvider (fetch_history, fetch_live, standardize_data) — provider-agnostic interface |
 | `marketaux_source.py` | Marketaux news API |
-| `tiingo_source.py` | Tiingo news API |
 | `alphavantage_source.py` | AlphaVantage news API |
 | `finnhub_source.py` | Finnhub news API |
 | `newsapi_source.py` | NewsAPI source |
@@ -134,12 +133,13 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `__init__.py` | Package marker | |
 | `backtest_engine.py` | vectorbt-based backtest engine | Non-canonical; canonical backtest is `scripts/backtest_technical_library.py` |
 
-### Utilities: `src/utils/` (8 files)
+### Utilities: `src/utils/` (9 files)
 
 | Module | Purpose |
 |--------|---------|
 | `__init__.py` | Package marker |
 | `config_manager.py` | Centralized YAML config loading (AI_RULES §10 enforcement) |
+| `storage_handler.py` | Parquet I/O: save_to_parquet(), read_from_parquet() (pyarrow) |
 | `logger.py` | Logging configuration (`setup_logger()`) |
 | `defensive.py` | Invariant checks, guards, safe file operations, `safe_read_yaml` |
 | `ticker_utils.py` | Ticker manipulation helpers |
@@ -337,18 +337,18 @@ src/execution/ (mock or IB)
 
 | Location | Files |
 |----------|-------|
-| `src/core/` | 6 |
+| `src/core/` | 7 |
 | `src/signals/` | 9 |
-| `src/data/` | 18 |
+| `src/data/` | 15 |
 | `src/data/news_sources/` | 6 |
 | `src/portfolio/` | 2 |
 | `src/execution/` | 7 |
 | `src/models/` | 6 |
 | `src/backtest/` | 2 |
-| `src/utils/` | 8 |
+| `src/utils/` | 9 |
 | `src/__init__.py` | 1 |
 | **Total `src/`** | **63** |
-| `scripts/` (canonical) | 12 |
+| `scripts/` (canonical) | 13 |
 
 ---
 

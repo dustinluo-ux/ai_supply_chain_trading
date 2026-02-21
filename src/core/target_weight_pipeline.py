@@ -190,6 +190,50 @@ def compute_target_weights(
                             _blended[_t] *= 0.5
                     scores_to_use = _blended
 
+    # Task 6 (docs/ml_ic_diagnosis.md): volatility filter — scale score when 20d realized vol
+    # exceeds percentile_threshold of 252d rolling vol history. Read config from technical_master_score.yaml.
+    _vol_cfg_path = _root / "config" / "technical_master_score.yaml"
+    if _vol_cfg_path.exists():
+        import yaml as _yaml_vol
+        with open(_vol_cfg_path, "r", encoding="utf-8") as _f2:
+            _vol_cfg = _yaml_vol.safe_load(_f2)
+        _vf = _vol_cfg.get("volatility_filter") or {}
+        if _vf.get("enabled", False):
+            _lookback = int(_vf.get("lookback_days", 252))
+            _pct = float(_vf.get("percentile_threshold", 95))
+            _scale = float(_vf.get("scale_factor", 0.5))
+            _scores_copy = dict(scores_to_use)
+            for _t in list(_scores_copy.keys()):
+                if _t not in prices_dict:
+                    continue
+                _df = prices_dict[_t]
+                if _df.empty or "close" not in _df.columns:
+                    continue
+                _slice = _df[_df.index <= as_of]
+                if _slice is None or len(_slice) < 60:
+                    continue
+                _close = _slice["close"] if isinstance(_slice["close"], pd.Series) else _slice.loc[:, "close"]
+                _close = _close.sort_index()
+                _log_ret = np.log(_close / _close.shift(1)).dropna()
+                if len(_log_ret) < 20:
+                    continue
+                _vol_20d = _log_ret.rolling(20, min_periods=20).std() * np.sqrt(252)
+                _vol_20d = _vol_20d.dropna()
+                if len(_vol_20d) == 0:
+                    continue
+                _today_vol = float(_vol_20d.iloc[-1])
+                _history = _vol_20d.tail(_lookback)
+                if len(_history) < 60:
+                    continue
+                _threshold = float(np.percentile(_history, _pct))
+                if _today_vol > _threshold:
+                    _scores_copy[_t] *= _scale
+                    logging.warning(
+                        "[VolFilter] %s vol=%.3f (p%.0f=%.3f) → score scaled by %.2f",
+                        _t, _today_vol, _pct, _threshold, _scale,
+                    )
+            scores_to_use = _scores_copy
+
     policy_context = {
         "regime_state": regime_state,
         "spy_below_sma200": spy_below_sma200,
