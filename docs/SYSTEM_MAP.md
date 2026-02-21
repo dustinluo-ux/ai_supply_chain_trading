@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
 **Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (65 files in `src/`, 15 canonical scripts)
+**Parity Status:** 1:1 with disk (65 files in `src/`, 16 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -29,7 +29,8 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 - `scripts/merge_news_chunks.py` — One-shot: merge flat + {ticker}_20*.json chunks into data/news/{ticker}_news.json (dedupe on title, sort by publishedAt; chunks left in place)
 - `scripts/generate_daily_weights.py` — Task 6: daily target weights table (watchlist from data_config, compute_target_weights, CSV: date, ticker, target_weight, latest_close, notional_units)
 - `scripts/daily_workflow.py` — Task 7: run update_price_data (with SPY), update_news_data, generate_daily_weights via subprocess; watchlist from data_config
-- `scripts/sync_universe.py` — Sync 40-ticker universe from config/universe.yaml to data_config.yaml (watchlist, max_tickers); ensure trading_data/news/raw_bulk
+- `scripts/sync_universe.py` — Sync 40-ticker universe from config/universe.yaml to data_config.yaml (watchlist, max_tickers); ensure trading_data/news/raw_bulk, historical_archives
+- `scripts/check_data_integrity.py` — Read-only diagnostic: price CSV presence/start/gaps and news article counts from universe.yaml; table + summary
 
 **Research / ML:**
 - `scripts/train_ml_model.py` — Phase 3 ML training runner: train ridge model, evaluate Spearman IC on test period; save to models/saved/ only if IC ≥ 0.02 (no signal_engine wiring)
@@ -358,7 +359,7 @@ src/execution/ (mock or IB)
 | `src/utils/` | 9 |
 | `src/__init__.py` | 1 |
 | **Total `src/`** | **65** |
-| `scripts/` (canonical) | 15 |
+| `scripts/` (canonical) | 16 |
 
 ---
 

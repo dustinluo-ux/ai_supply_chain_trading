@@ -87,6 +87,9 @@ def main() -> int:
     raw_bulk = data_dir_path.parent / "news" / "raw_bulk"
     raw_bulk.mkdir(parents=True, exist_ok=True)
     print(f"Directory ensured: {raw_bulk}", flush=True)
+    historical_archives = raw_bulk.parent / "historical_archives"
+    historical_archives.mkdir(parents=True, exist_ok=True)
+    print(f"Directory ensured: {historical_archives}", flush=True)
 
     print(f"Synced {len(tickers)} tickers to data_config.yaml", flush=True)
     print(", ".join(tickers), flush=True)

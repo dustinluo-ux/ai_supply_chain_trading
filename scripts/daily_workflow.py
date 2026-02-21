@@ -18,6 +18,10 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.config import NEWS_DIR as _NEWS_DIR
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -184,12 +188,8 @@ def main() -> int:
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
 
-    # UI: system health table from last_signal.json + news files (news path from config)
-    try:
-        news_dir_cfg = cfg.get_param("data_config.news_data.directory", "data/news")
-    except Exception:
-        news_dir_cfg = "data/news"
-    news_dir = ROOT / news_dir_cfg
+    # UI: system health table from last_signal.json + news files (canonical NEWS_DIR from .env)
+    news_dir = Path(_NEWS_DIR)
     last_signal_path = ROOT / "outputs" / "last_signal.json"
     today_str = datetime.now().strftime("%Y-%m-%d")
     _render_health_table(last_signal_path, news_dir, today_str)
