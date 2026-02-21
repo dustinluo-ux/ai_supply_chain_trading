@@ -248,11 +248,17 @@ def compute_target_weights(
         portfolio_context["path"] = path
     intent = portfolio_engine.build(as_of, gated_scores, portfolio_context)
 
-    universe = list(prices_dict.keys())
+    # Task 6 (task6_validation.md BUG 2): restrict to requested universe only. Propagation
+    # may add tickers to scores/intent; only tickers in the input tickers param appear in output.
+    requested_set = set(tickers)
     if not intent.tickers:
-        return pd.Series(0.0, index=universe)
-    weights = {t: intent.weights.get(t, 0.0) for t in universe}
-    for t in universe:
-        if pd.isna(weights[t]):
+        return pd.Series(0.0, index=list(tickers))
+    weights = {t: intent.weights.get(t, 0.0) for t in requested_set}
+    for t in requested_set:
+        if pd.isna(weights.get(t, 0.0)):
             weights[t] = 0.0
-    return pd.Series(weights).reindex(universe, fill_value=0.0)
+    total = sum(weights.values())
+    if total > 0 and abs(total - 1.0) > 1e-9:
+        for t in weights:
+            weights[t] /= total
+    return pd.Series(weights).reindex(list(tickers), fill_value=0.0)
