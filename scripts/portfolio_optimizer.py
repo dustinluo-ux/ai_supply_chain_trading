@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Volatility-Adjusted Alpha Tilt optimizer.")
     parser.add_argument("--top-quantile", type=float, default=0.75, help="Quantile cutoff — e.g. 0.75 = top 25%% of scored tickers eligible")
-    parser.add_argument("--score-floor", type=float, default=0.50, help="Hard minimum score — no ticker with score <= floor is eligible")
+    parser.add_argument("--score-floor", type=float, default=0.50, help="Hard minimum score — no ticker with score <= floor is eligible (overridden by regime_status.json if present)")
     parser.add_argument("--bear-score-floor", type=float, default=0.65, help="Score floor override when SPY is in BEAR regime (close < 200-SMA)")
     parser.add_argument("--max-weight", type=float, default=0.25, help="Max weight per ticker (0-1)")
     parser.add_argument("--vol-window", type=int, default=30, help="Rolling window for volatility (days)")
@@ -68,34 +68,86 @@ def _main() -> int:
         print("ERROR: No price data loaded.", flush=True)
         return 1
 
-    # 5a. Regime detection — SPY 200-day SMA gate
+    # NAV fetch (update portfolio_state.json if present)
+    from pathlib import Path as _Path
+    import json as _json
+    from src.execution.ibkr_nav import fetch_nav
+
+    state_path = ROOT / "outputs" / "portfolio_state.json"
+    nav = fetch_nav()
+    if nav is not None:
+        print(f"[NAV] IBKR NAV: ${nav:,.2f}", flush=True)
+        if state_path.exists():
+            try:
+                ps = _json.loads(state_path.read_text())
+                ps["last_nav"] = nav
+                ps["last_nav_fetched_at"] = datetime.now(timezone.utc).isoformat()
+                state_path.write_text(_json.dumps(ps, indent=2))
+            except Exception:
+                pass
+    else:
+        nav = None
+        if state_path.exists():
+            try:
+                ps = _json.loads(state_path.read_text())
+                nav = ps.get("last_nav")
+                if nav:
+                    print(f"[NAV] IBKR unavailable -- using last known NAV ${nav:,.2f}", flush=True)
+            except Exception:
+                pass
+        if nav is None:
+            print("[NAV] IBKR unavailable and no last_nav cached -- share counts will be skipped", flush=True)
+
+    # 5a. Regime detection — prefer regime_status.json (written by regime_monitor.py),
+    # fall back to independent SPY 200-SMA check if not available or stale.
     import numpy as np
     regime = "UNKNOWN"
     score_floor = args.score_floor
-    try:
-        spy_dict = load_prices(data_dir, ["SPY"])
-        if spy_dict and "SPY" in spy_dict:
-            spy_df = spy_dict["SPY"]
-            if "close" in spy_df.columns and len(spy_df) >= 200:
-                close_series = spy_df["close"]
-                # Handle duplicate columns (EODHD global issue)
-                if isinstance(close_series, __import__("pandas").DataFrame):
-                    close_series = close_series.iloc[:, 0]
-                spy_close = float(close_series.iloc[-1])
-                spy_sma200 = float(close_series.iloc[-200:].mean())
-                if spy_close < spy_sma200:
-                    regime = "BEAR"
-                    score_floor = args.bear_score_floor
-                    print(f"[REGIME] BEAR -- SPY {spy_close:.2f} < 200-SMA {spy_sma200:.2f} -- score_floor raised to {score_floor}", flush=True)
+
+    # Try to read score_floor from regime_status.json (single source of truth)
+    _regime_status_path = ROOT / "outputs" / "regime_status.json"
+    _loaded_from_monitor = False
+    if _regime_status_path.exists():
+        try:
+            import json as _json_r
+            _rs = _json_r.loads(_regime_status_path.read_text(encoding="utf-8"))
+            _floor_from_monitor = _rs.get("score_floor")
+            _regime_from_monitor = _rs.get("regime", "UNKNOWN")
+            if _floor_from_monitor is not None:
+                score_floor = float(_floor_from_monitor)
+                regime = "BULL" if not _rs.get("spy_below_sma", False) else "BEAR"
+                if _regime_from_monitor == "EMERGENCY":
+                    regime = "EMERGENCY"
+                _loaded_from_monitor = True
+                print(f"[REGIME] Read from regime_status.json: {regime}, score_floor={score_floor}", flush=True)
+        except Exception:
+            pass
+
+    if not _loaded_from_monitor:
+        # Fallback: independent SPY 200-SMA check via price CSVs
+        try:
+            spy_dict = load_prices(data_dir, ["SPY"])
+            if spy_dict and "SPY" in spy_dict:
+                spy_df = spy_dict["SPY"]
+                if "close" in spy_df.columns and len(spy_df) >= 200:
+                    close_series = spy_df["close"]
+                    if isinstance(close_series, __import__("pandas").DataFrame):
+                        close_series = close_series.iloc[:, 0]
+                    spy_close = float(close_series.iloc[-1])
+                    spy_sma200 = float(close_series.iloc[-200:].mean())
+                    if spy_close < spy_sma200:
+                        regime = "BEAR"
+                        score_floor = args.bear_score_floor
+                        print(f"[REGIME] BEAR -- SPY {spy_close:.2f} < 200-SMA {spy_sma200:.2f} -- score_floor raised to {score_floor}", flush=True)
+                    else:
+                        regime = "BULL"
+                        print(f"[REGIME] BULL -- SPY {spy_close:.2f} >= 200-SMA {spy_sma200:.2f} -- score_floor={score_floor}", flush=True)
                 else:
-                    regime = "BULL"
-                    print(f"[REGIME] BULL -- SPY {spy_close:.2f} >= 200-SMA {spy_sma200:.2f} -- score_floor={score_floor}", flush=True)
+                    print(f"[REGIME] SPY data insufficient for 200-SMA (rows={len(spy_df)}); using default floor", flush=True)
             else:
-                print(f"[REGIME] SPY data insufficient for 200-SMA (rows={len(spy_df)}); using default floor", flush=True)
-        else:
-            print("[REGIME] SPY prices unavailable; using default floor", flush=True)
-    except Exception as e:
-        print(f"[REGIME] SPY regime check failed ({e}); using default floor", flush=True)
+                print("[REGIME] SPY prices unavailable; using default floor", flush=True)
+        except Exception as e:
+            print(f"[REGIME] SPY regime check failed ({e}); using default floor", flush=True)
 
     # 5. 30-day rolling vol per ticker
     vol_window = max(1, args.vol_window)
@@ -182,6 +234,36 @@ def _main() -> int:
     opt_path = out_dir / "last_optimized_weights.json"
     with open(opt_path, "w", encoding="utf-8") as f:
         json.dump(optimized, f, indent=2)
+
+    # Update portfolio_state.json if it exists
+    if state_path.exists():
+        try:
+            ps = _json.loads(state_path.read_text())
+            ps["target_weights"] = weights
+            ps["cash_weight"] = 1.0 - sum(weights.values())
+            ps["regime"] = "NORMAL" if regime == "BULL" else regime
+            today_d = datetime.now(timezone.utc).date()
+            ps["weekly_lock"] = {
+                "locked": True,
+                "rebalance_date": today_d.isoformat(),
+                "locked_until": (today_d + timedelta(days=7)).isoformat(),
+            }
+            ps["last_updated"] = datetime.now(timezone.utc).isoformat()
+            if nav is not None and nav > 0:
+                holdings = {}
+                for t, w in weights.items():
+                    close_val = last_signal.get(t, {}).get("latest_close")
+                    if close_val is None and t in prices_dict:
+                        close_ser = prices_dict[t]["close"]
+                        if hasattr(close_ser, "iloc"):
+                            close_val = float(close_ser.iloc[-1]) if getattr(close_ser, "ndim", 1) == 1 else float(close_ser.iloc[:, 0].iloc[-1])
+                    if close_val is not None and float(close_val) > 0:
+                        sh = int((nav * w) / float(close_val))
+                        holdings[t] = {"shares": sh, "avg_cost": 0.0}
+                ps["holdings"] = holdings
+            state_path.write_text(_json.dumps(ps, indent=2))
+        except Exception:
+            pass
 
     # 13. Print table
     print(f"=== Portfolio Optimizer -- {as_of} ===", flush=True)
