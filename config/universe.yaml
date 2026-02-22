@@ -23,7 +23,6 @@ pillars:
     - LEU
     - BEP
     - SMR
-    - NEP
   infra:
     - VRT
     - MOD
@@ -63,5 +62,5 @@ ibkr_symbols:
   "1810.HK": "1810 STK SEHK"
   "SAP.DE": "SAP STK IBIS"
   "ORSTED.CO": "ORSTED STK CSE"
-  "6861.T": "6861 STK TSE"
-  "6758.T": "6758 STK TSE"
+ # "6861.TSE": "6861.JP"  # Change the KEY to .TSE
+ # "6758.TSE": "6758.JP"  # Change the KEY to .TSE

@@ -21,7 +21,7 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _SYS_ROOT = Path(__file__).resolve().parent.parent
@@ -322,6 +322,26 @@ def _render_command_center(
         except Exception:
             pass
 
+    # Regime: from regime_status.json (Tue-Fri only)
+    regime_detail = "Not yet run (Tue-Fri only)"
+    regime_style = "dim"
+    regime_status_path = root / "outputs" / "regime_status.json"
+    if regime_status_path.exists():
+        try:
+            rs = json.loads(regime_status_path.read_text())
+            r_regime = rs.get("regime", "UNKNOWN")
+            r_vix = rs.get("vix")
+            r_smh = rs.get("smh_daily_return")
+            vix_s = f"{r_vix:.1f}" if r_vix is not None else "N/A"
+            smh_s = f"{r_smh:.1%}" if r_smh is not None else "N/A"
+            reasons = rs.get("reasons", [])
+            regime_detail = f"{r_regime}  VIX {vix_s}  SMH {smh_s}"
+            if reasons:
+                regime_detail += "  | " + "; ".join(reasons)
+            regime_style = "green" if r_regime == "NORMAL" else "bold red"
+        except Exception:
+            pass
+
     # Risk: from risk_report (Max Drawdown, Max Concentration, BREACH)
     risk_detail = "No data yet"
     risk_icon = "[dim]-[/]"
@@ -397,6 +417,7 @@ def _render_command_center(
         infra.add_row("Fills", fills_detail, fills_icon)
         infra.add_row("PnL", pnl_detail, pnl_icon)
         infra.add_row("Risk", risk_detail, risk_icon)
+        infra.add_row("Regime", f"[{regime_style}]{regime_detail}[/]", "")
 
         console.print(
             Panel(
@@ -500,6 +521,7 @@ def _render_command_center(
         print(f"  Fills    : {fills_detail}  {'✓' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}")
         print(f"  PnL      : {pnl_detail}  {'✓' if pnl_icon == '[green]✓[/]' else ('✗' if pnl_icon == '[red]✗[/]' else '-')}")
         print(f"  Risk     : {risk_detail}  {'✓' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}")
+        print(f"  Regime   : {regime_detail}")
         print()
         if last_signal:
             sep2 = "-" * 90
@@ -587,7 +609,20 @@ def main() -> int:
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
 
+    # Step 3.4: Refresh regime_status.json before optimizer runs (all days)
+    # Ensures score_floor and regime are current when portfolio_optimizer reads them.
+    r34 = subprocess.run(
+        [py, str(scripts_dir / "regime_monitor.py")],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    logger.info("regime_monitor (pre-optimizer) stdout: %s", r34.stdout.strip())
+
     # Step 3.5: Portfolio optimizer (volatility-adjusted alpha tilt)
+    execution_paused = False
     r35 = subprocess.run(
         [py, str(scripts_dir / "portfolio_optimizer.py")],
         cwd=str(ROOT),
@@ -596,9 +631,75 @@ def main() -> int:
     logger.info("portfolio_optimizer.py exit code: %s", r35.returncode)
     if r35.returncode != 0:
         logger.warning("portfolio_optimizer failed — last_valid_weights.json unchanged")
+    else:
+        print("[STATE] portfolio_state.json updated with new target weights and weekly lock.", flush=True)
+
+    # Step 3.5b: Intraweek regime check (Tue-Fri only)
+    is_monday = datetime.today().weekday() == 0
+    if not is_monday:
+        r_regime = subprocess.run(
+            [py, str(scripts_dir / "regime_monitor.py")],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        logger.info("regime_monitor stdout: %s", r_regime.stdout.strip())
+
+        regime_status_path = ROOT / "outputs" / "regime_status.json"
+        if regime_status_path.exists():
+            try:
+                rs = json.loads(regime_status_path.read_text())
+                current_regime = rs.get("regime", "UNKNOWN")
+                if current_regime == "EMERGENCY":
+                    reasons = rs.get("reasons", [])
+                    logger.warning("EMERGENCY BRAKE TRIGGERED: %s", reasons)
+                    print(f"[EMERGENCY] Mid-week brake triggered: {reasons}", flush=True)
+                    print("[EMERGENCY] Liquidating to cash -- skipping all execution this session", flush=True)
+                    execution_paused = True
+
+                    state_path = ROOT / "outputs" / "portfolio_state.json"
+                    if state_path.exists():
+                        try:
+                            ps = json.loads(state_path.read_text())
+                            ps["target_weights"] = {}
+                            ps["cash_weight"] = 1.0
+                            ps["regime"] = "EMERGENCY"
+                            ps["last_updated"] = datetime.now(timezone.utc).isoformat()
+                            state_path.write_text(json.dumps(ps, indent=2))
+                        except Exception as e:
+                            logger.warning("Could not update portfolio_state.json: %s", e)
+
+                    fills_path = ROOT / "outputs" / "fills" / "fills.jsonl"
+                    try:
+                        ps = json.loads(state_path.read_text()) if state_path.exists() else {}
+                        holdings = ps.get("holdings", {})
+                        if holdings:
+                            now_iso = datetime.now(timezone.utc).isoformat()
+                            with open(fills_path, "a", encoding="utf-8") as fh:
+                                for ticker, pos in holdings.items():
+                                    shares = pos.get("shares", 0)
+                                    if shares > 0:
+                                        record = {
+                                            "run_id": now_iso,
+                                            "timestamp": now_iso,
+                                            "ticker": ticker,
+                                            "side": "SELL",
+                                            "qty_requested": shares,
+                                            "qty_filled": 0,
+                                            "avg_fill_price": 0.0,
+                                            "status": "pending_emergency",
+                                            "order_comment": "EMERGENCY_LIQUIDATION",
+                                        }
+                                        fh.write(json.dumps(record) + "\n")
+                            print(f"[EMERGENCY] {len(holdings)} SELL orders written to fills ledger", flush=True)
+                    except Exception as e:
+                        logger.warning("Could not write emergency fills: %s", e)
+            except Exception as e:
+                logger.warning("Could not read regime_status.json: %s", e)
 
     # Risk guard (before step 3b): pause paper execution if drawdown or daily loss breach
-    execution_paused = False
     try:
         import yaml as _yaml
         with open(ROOT / "config" / "trading_config.yaml", "r", encoding="utf-8") as _f:
@@ -630,7 +731,7 @@ def main() -> int:
                     )
                     execution_paused = True
     except Exception:
-        execution_paused = False
+        pass
 
     # Step 3b: IBKR paper execution (Monday only, if auto_paper enabled and not paused)
     auto_paper = False

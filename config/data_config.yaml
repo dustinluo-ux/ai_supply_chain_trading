@@ -6,31 +6,75 @@ data_sources:
   # Can contain subdirectories for nasdaq, sp500, forbes2000, nyse, etc.
   # Updated: Now in OneDrive for cloud storage
   data_dir: "C:/ai_supply_chain_trading/trading_data/stock_market_data"
-  
+
   # File format to look for (auto-detect if not specified)
   file_format: "csv"  # Options: csv, parquet, auto
-  
   # Subdirectories to search (empty = search all)
   subdirectories:
-    - "nasdaq/csv"
-    - "sp500/csv"
-    - "forbes2000/csv"
-    - "nyse/csv"
+  - "nasdaq/csv"
+  - "sp500/csv"
+  - "forbes2000/csv"
+  - "nyse/csv"
 
 # Universe Selection
 universe_selection:
   # Which index/source to use (if metadata exists)
   source: "all"  # Options: nasdaq, sp500, forbes2000, nyse, all
-  
   # Maximum number of tickers to include
-  max_tickers: 15
-  
+  max_tickers: 47
+
   # Minimum data points required (252 = 1 year of trading days)
   # Reduced to 100 to allow stocks with partial data
   min_data_points: 60
 
   # Watchlist: The central list of symbols to track (Task 6 purge; D013: SPY benchmark-only, not in watchlist)
-  watchlist: ["NVDA", "AMD", "TSM", "ASML", "MU", "AMAT", "INTC"]
+  watchlist:
+  - 0700.HK
+  - 1810.HK
+  - 6758.T
+  - 6861.T
+  - 9988.HK
+  - ALAB
+  - AMD
+  - AMZN
+  - ANET
+  - ARM
+  - ASML
+  - AVGO
+  - BEP
+  - CCJ
+  - CDNS
+  - CEG
+  - CLS
+  - CRDO
+  - EME
+  - FIX
+  - GEV
+  - GOOGL
+  - INTC
+  - ISRG
+  - LEU
+  - LITE
+  - META
+  - MOD
+  - MRVL
+  - MSFT
+  - NVDA
+  - NVT
+  - OKLO
+  - ORCL
+  - ORSTED.CO
+  - PATH
+  - PLTR
+  - SAP.DE
+  - SMR
+  - SNPS
+  - TEAM
+  - TER
+  - TSM
+  - UUUU
+  - VRT
+  - VST
   benchmark: "SPY"
   # Date range filter
   # Note: If your data is older, adjust these dates
@@ -43,13 +87,12 @@ universe_selection:
 filtering:
   # Tickers to explicitly exclude (e.g., delisted, bad data)
   exclude_tickers: []
-  
   # Require news data to be present
   require_news: false
-  
+
   # Minimum price (exclude penny stocks)
   min_price: 1.0
-  
+
   # Exclude tickers with too many missing days
   max_missing_days_ratio: 0.1  # 10% missing days max
 
@@ -57,20 +100,19 @@ filtering:
 news_data:
   # Enable news analysis
   enabled: true
-  
+
   # Directory containing news JSON files
   directory: "data/news"
-  
+
   # News data source
   source: "marketaux"  # Options: FNSPID, Polygon, MarketAux, custom
-  
   # Date range of news data (actual content verified 2026-02-16)
   date_range:
     start: "2020-01-01"
     end: "2024-12-31"
-  
+
   # Lookback window for news analysis (days)
   lookback_days: 7
-  
+
   # Minimum articles required for analysis
   min_articles: 1
