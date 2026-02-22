@@ -6,8 +6,9 @@ Pipeline (steps 1-4 run sequentially; all non-fatal):
   Step 2: update_news_data.py      — fetch latest Marketaux news
   Step 3: generate_daily_weights.py — compute signals → outputs/daily_signals.csv
   Step 4: update_signal_db.py       — upsert → outputs/trading.db
+  Step 5: reconcile_fills.py        — fill reconciliation → outputs/fill_reconciliation_YYYY-MM-DD.md
 
-Step 5: render Command Center (rich table; plain fallback if rich not installed).
+Step 6: render Command Center (rich table; plain fallback if rich not installed).
   Consolidates logic from scripts/check_data_integrity.py — no need to run both.
 
 Usage:
@@ -219,6 +220,17 @@ def _render_command_center(
             pass
     signal_tickers = list(last_signal.keys())
 
+    # Optimizer weights for Signal Table Weight column (from last_valid_weights.json)
+    optimizer_weights: dict[str, float] = {}
+    valid_weights_path = root / "outputs" / "last_valid_weights.json"
+    if valid_weights_path.exists():
+        try:
+            with open(valid_weights_path, "r", encoding="utf-8") as f:
+                _vw = json.load(f)
+            optimizer_weights = (_vw.get("weights") or {}) if isinstance(_vw, dict) else {}
+        except Exception:
+            pass
+
     # Run all checks
     symlink_ok, symlink_str = _check_symlink(root)
     model_str, model_ok = _check_model_status(root)
@@ -230,6 +242,109 @@ def _render_command_center(
     news_today, news_tickers_count, headlines, stale_flags = _gather_news_data(
         news_dir, all_tickers, signal_tickers, today_str
     )
+
+    # Fills: from today's reconciliation file or fill ledger
+    fills_detail = "No fills yet"
+    fills_icon = "[dim]-[/]"
+    recon_path = root / "outputs" / f"fill_reconciliation_{today_str}.md"
+    if recon_path.exists():
+        try:
+            text = recon_path.read_text(encoding="utf-8")
+            matched, active = None, None
+            for line in text.splitlines():
+                if "Active positions in ledger:" in line:
+                    parts = line.split("Active positions in ledger:")
+                    if len(parts) >= 2:
+                        active = int(parts[1].strip().split()[0])
+                if "Matched:" in line and "Unintended:" in line:
+                    parts = line.split("Matched:")
+                    if len(parts) >= 2:
+                        matched = int(parts[1].strip().split()[0])
+            if matched is not None and active is not None:
+                fills_detail = f"{matched} matched / {active} total"
+                if active > 0 and matched == active:
+                    fills_icon = "[green]✓[/]"
+                elif active > 0:
+                    fills_icon = "[yellow]~[/]"
+        except Exception:
+            pass
+    else:
+        try:
+            from src.execution.fill_ledger import read_fill_ledger
+            records = read_fill_ledger()
+            net: dict[str, int] = {}
+            for r in records:
+                if (r.get("status") or "") == "mock_skip":
+                    continue
+                qty = int(r.get("qty_filled") or 0)
+                if qty <= 0:
+                    continue
+                t = (r.get("ticker") or "").strip().upper()
+                if not t:
+                    continue
+                side = (r.get("side") or "").upper()
+                if side == "BUY":
+                    net[t] = net.get(t, 0) + qty
+                elif side == "SELL":
+                    net[t] = net.get(t, 0) - qty
+            active = sum(1 for n in net.values() if n != 0)
+            if active > 0:
+                fills_detail = f"{active} positions"
+        except Exception:
+            pass
+
+    # PnL: from fill_reconciliation (Unrealized PnL line)
+    pnl_detail = "No fill prices yet"
+    pnl_icon = "[dim]-[/]"
+    if recon_path.exists():
+        try:
+            _recon_text = recon_path.read_text(encoding="utf-8")
+            if "avg_fill_price unavailable" not in _recon_text and "Unrealized PnL:" in _recon_text:
+                for _line in _recon_text.splitlines():
+                    if "Unrealized PnL:" in _line:
+                        if "+$" in _line:
+                            _i = _line.find("+$")
+                            _end = _line.find(" ", _i + 2)
+                            if _end < 0:
+                                _end = _line.find("(", _i)
+                            _val = _line[_i:_end].strip() if _end > 0 else _line[_i:].strip()
+                            pnl_detail = f"{_val} unrealized"
+                            pnl_icon = "[green]✓[/]"
+                        elif "-$" in _line:
+                            _i = _line.find("-$")
+                            _end = _line.find(" ", _i + 2)
+                            if _end < 0:
+                                _end = _line.find("(", _i)
+                            _val = _line[_i:_end].strip() if _end > 0 else _line[_i:].strip()
+                            pnl_detail = f"{_val} unrealized"
+                            pnl_icon = "[red]✗[/]"
+                        break
+        except Exception:
+            pass
+
+    # Risk: from risk_report (Max Drawdown, Max Concentration, BREACH)
+    risk_detail = "No data yet"
+    risk_icon = "[dim]-[/]"
+    risk_report_path = root / "outputs" / f"risk_report_{today_str}.md"
+    if risk_report_path.exists():
+        try:
+            _risk_text = risk_report_path.read_text(encoding="utf-8")
+            _dd_val = _conc_val = None
+            _breach = "BREACH" in _risk_text
+            for _line in _risk_text.splitlines():
+                if "Max Drawdown:" in _line and "N/A" not in _line:
+                    _parts = _line.split("Max Drawdown:")
+                    if len(_parts) >= 2:
+                        _dd_val = _parts[1].strip().split()[0]
+                if "Max Concentration:" in _line and "N/A" not in _line:
+                    _parts = _line.split("Max Concentration:")
+                    if len(_parts) >= 2:
+                        _conc_val = _parts[1].strip().split()[0]
+            if _dd_val is not None or _conc_val is not None:
+                risk_detail = f"drawdown={_dd_val or 'N/A'}  conc={_conc_val or 'N/A'}"
+                risk_icon = "[yellow]~[/]" if _breach else "[green]✓[/]"
+        except Exception:
+            pass
 
     try:
         from rich import box as rich_box
@@ -279,6 +394,9 @@ def _render_command_center(
             news_detail,
             "[green]✓[/]" if news_today > 0 else "[yellow]~[/]",
         )
+        infra.add_row("Fills", fills_detail, fills_icon)
+        infra.add_row("PnL", pnl_detail, pnl_icon)
+        infra.add_row("Risk", risk_detail, risk_icon)
 
         console.print(
             Panel(
@@ -314,7 +432,7 @@ def _render_command_center(
                     sc_str, sc_style = "N/A", "dim"
                 vt = rec.get("vol_triggered", False)
                 vf_str, vf_style = ("YES", "red") if vt else ("NO", "green")
-                w_str = f"{float(rec.get('weight', 0)):.1%}"
+                w_str = f"{float(optimizer_weights.get(t, 0)):.1%}"
                 head = headlines.get(t) or "-"
                 if len(head) > 56:
                     head = head[:53] + "..."
@@ -379,6 +497,9 @@ def _render_command_center(
             f"  News     : {news_today} articles today  "
             f"{news_tickers_count} tickers covered"
         )
+        print(f"  Fills    : {fills_detail}  {'✓' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}")
+        print(f"  PnL      : {pnl_detail}  {'✓' if pnl_icon == '[green]✓[/]' else ('✗' if pnl_icon == '[red]✗[/]' else '-')}")
+        print(f"  Risk     : {risk_detail}  {'✓' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}")
         print()
         if last_signal:
             sep2 = "-" * 90
@@ -393,7 +514,7 @@ def _render_command_center(
                 sc = rec.get("score")
                 sc_str = f"{float(sc):.3f}" if sc is not None else "N/A"
                 vf = "YES" if rec.get("vol_triggered") else "NO"
-                w_str = f"{float(rec.get('weight', 0)):.1%}"
+                w_str = f"{float(optimizer_weights.get(t, 0)):.1%}"
                 head = (headlines.get(t) or "-")[:55]
                 print(f"{t:<8} {sc_str:>10} {vf:>10} {w_str:>8}  {head}")
             print()
@@ -466,6 +587,103 @@ def main() -> int:
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
 
+    # Step 3.5: Portfolio optimizer (volatility-adjusted alpha tilt)
+    r35 = subprocess.run(
+        [py, str(scripts_dir / "portfolio_optimizer.py")],
+        cwd=str(ROOT),
+        capture_output=False,
+    )
+    logger.info("portfolio_optimizer.py exit code: %s", r35.returncode)
+    if r35.returncode != 0:
+        logger.warning("portfolio_optimizer failed — last_valid_weights.json unchanged")
+
+    # Risk guard (before step 3b): pause paper execution if drawdown or daily loss breach
+    execution_paused = False
+    try:
+        import yaml as _yaml
+        with open(ROOT / "config" / "trading_config.yaml", "r", encoding="utf-8") as _f:
+            _tc = _yaml.safe_load(_f) or {}
+        _risk = _tc.get("risk", {})
+        max_drawdown_pause = float(_risk.get("max_drawdown_pause", -0.10))
+        max_daily_loss = float(_risk.get("max_daily_loss", -0.03))
+        _db_path = ROOT / "outputs" / "trading.db"
+        if _db_path.exists():
+            import sqlite3
+            import pandas as _pd
+            _conn = sqlite3.connect(str(_db_path))
+            _df = _pd.read_sql_query(
+                "SELECT port_return, date FROM portfolio_daily ORDER BY date", _conn
+            )
+            _conn.close()
+            if len(_df) > 0:
+                _df["port_return"] = _pd.to_numeric(_df["port_return"], errors="coerce").fillna(0)
+                _equity = (1 + _df["port_return"]).cumprod()
+                _equity.iloc[0] = 1.0
+                _running_max = _equity.cummax()
+                _drawdown = (_equity - _running_max) / _running_max
+                _current_dd = float(_drawdown.iloc[-1])
+                _yesterday_return = float(_df["port_return"].iloc[-1])
+                if _current_dd < max_drawdown_pause or _yesterday_return < max_daily_loss:
+                    logger.warning(
+                        "RISK GUARD: drawdown=%s daily=%s — paper execution paused",
+                        f"{_current_dd:.2%}", f"{_yesterday_return:.2%}",
+                    )
+                    execution_paused = True
+    except Exception:
+        execution_paused = False
+
+    # Step 3b: IBKR paper execution (Monday only, if auto_paper enabled and not paused)
+    auto_paper = False
+    try:
+        import yaml as _yaml
+        with open(ROOT / "config" / "trading_config.yaml", "r", encoding="utf-8") as _f:
+            _trading = (_yaml.safe_load(_f) or {}).get("trading", {})
+        _exec = _trading.get("execution", {})
+        auto_paper = bool(_exec.get("auto_paper", False))
+    except Exception:
+        pass
+    is_monday = datetime.today().weekday() == 0
+    if auto_paper and is_monday and not execution_paused:
+        try:
+            with open(ROOT / "config" / "universe.yaml", "r", encoding="utf-8") as _f:
+                _universe = (_yaml.safe_load(_f) or {}).get("pillars", {})
+            _all_tickers = []
+            for _plist in (_universe or {}).values():
+                if isinstance(_plist, list):
+                    for _t in _plist:
+                        if isinstance(_t, str) and _t.strip():
+                            _all_tickers.append(_t.strip())
+            us_tickers = [t for t in _all_tickers if "." not in t or t.endswith(".T")]
+            us_ticker_str = ",".join(sorted(set(us_tickers)))
+            r3b = subprocess.run(
+                [py, str(scripts_dir / "run_execution.py"), "--tickers", us_ticker_str, "--rebalance", "--mode", "paper", "--confirm-paper"],
+                cwd=str(ROOT),
+                capture_output=False,
+                timeout=120,
+            )
+            logger.info("paper execution exit code: %s", r3b.returncode)
+        except Exception as _e:
+            logger.warning("paper execution skipped — TWS offline or timeout: %s", _e)
+    else:
+        logger.info("paper execution skipped (not Monday / auto_paper=False)")
+
+    # Step 3c: Fill sync from TWS (Tuesday only — sync Monday's executions)
+    is_tuesday = datetime.today().weekday() == 1
+    if is_tuesday:
+        try:
+            yesterday_str = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            r3c = subprocess.run(
+                [py, str(scripts_dir / "sync_fills_from_ibkr.py"), "--date", yesterday_str],
+                cwd=str(ROOT),
+                capture_output=False,
+                timeout=60,
+            )
+            logger.info("sync_fills_from_ibkr.py exit code: %s", r3c.returncode)
+        except Exception as _e:
+            logger.warning("fill sync skipped — TWS offline or timeout: %s", _e)
+    else:
+        logger.info("fill sync skipped (not Tuesday)")
+
     # Step 4: Upsert signal DB → outputs/trading.db
     r4 = subprocess.run(
         [py, str(scripts_dir / "update_signal_db.py")],
@@ -474,7 +692,23 @@ def main() -> int:
     )
     logger.info("update_signal_db.py exit code: %s", r4.returncode)
 
-    # Step 5: Command Center
+    # Step 5: Fill reconciliation
+    r5 = subprocess.run(
+        [py, str(scripts_dir / "reconcile_fills.py")],
+        cwd=str(ROOT),
+        capture_output=False,
+    )
+    logger.info("reconcile_fills.py exit code: %s", r5.returncode)
+
+    # Step 6: Risk report
+    r6 = subprocess.run(
+        [py, str(scripts_dir / "risk_report.py")],
+        cwd=str(ROOT),
+        capture_output=False,
+    )
+    logger.info("risk_report.py exit code: %s", r6.returncode)
+
+    # Step 7: Command Center
     news_dir = Path(_NEWS_DIR)
     last_signal_path = ROOT / "outputs" / "last_signal.json"
     today_str = datetime.now().strftime("%Y-%m-%d")
