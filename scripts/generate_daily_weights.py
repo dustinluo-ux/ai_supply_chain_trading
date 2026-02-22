@@ -72,6 +72,10 @@ def main() -> int:
         print(f"ERROR: compute_target_weights failed: {e}", flush=True)
         return 1
 
+    _scores = aux.get("scores") or {}
+    _vol_20d = aux.get("vol_20d") or {}
+    _vol_triggered = aux.get("vol_triggered") or {}
+
     date_str = as_of.strftime("%Y-%m-%d")
     rows = []
     for ticker in weights_series.index:
@@ -81,12 +85,17 @@ def main() -> int:
             notional_units = 0
         else:
             close_series = prices_dict[ticker]["close"]
-            latest_close = float(close_series.asof(as_of)) if hasattr(close_series, "asof") else float("nan")
+            _asof_val = close_series.asof(as_of) if hasattr(close_series, "asof") else float("nan")
+            if isinstance(_asof_val, pd.Series):
+                _asof_val = _asof_val.iloc[-1] if not _asof_val.empty else float("nan")
+            latest_close = float(_asof_val)
             if pd.isna(latest_close) or latest_close <= 0:
                 notional_units = 0
             else:
                 notional_units = int(w * 100_000 / latest_close)
-        rows.append((date_str, ticker, w, latest_close, notional_units))
+        _score_val = _scores.get(ticker)
+        _vol_t = 1 if _vol_triggered.get(ticker) else 0
+        rows.append((date_str, ticker, w, latest_close, notional_units, _score_val, _vol_t))
 
     # Task 7: append to outputs/daily_signals.csv (header on first run; mode 'a', newline='')
     _out_dir = ROOT / "outputs"
@@ -96,31 +105,28 @@ def main() -> int:
     with open(_signals_path, "a", newline="", encoding="utf-8") as _f:
         _writer = csv.writer(_f)
         if _write_header:
-            _writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units"])
+            _writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units", "score", "vol_triggered"])
         for _r in rows:
             _writer.writerow(_r)
 
     # UI: today's snapshot for health table (overwrite each run)
-    _scores = aux.get("scores") or {}
-    _vol_20d = aux.get("vol_20d") or {}
-    _vol_triggered = aux.get("vol_triggered") or {}
     _last_signal = {}
     for _r in rows:
-        _date_str, _ticker, _w, _lc, _nu = _r
+        _date_str, _ticker, _w, _lc, _nu, _sc, _vt = _r
         _last_signal[_ticker] = {
             "weight": float(_w),
             "latest_close": float(_lc) if not pd.isna(_lc) else None,
             "notional_units": int(_nu),
-            "score": _scores.get(_ticker) if _scores.get(_ticker) is not None else None,
+            "score": float(_sc) if _sc is not None else None,
             "vol_20d": _vol_20d.get(_ticker) if _ticker in _vol_20d else None,
-            "vol_triggered": bool(_vol_triggered.get(_ticker, False)),
+            "vol_triggered": bool(_vt),
         }
     import json
     with open(_out_dir / "last_signal.json", "w", encoding="utf-8") as _jf:
         json.dump(_last_signal, _jf, indent=2)
 
     writer = csv.writer(sys.stdout)
-    writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units"])
+    writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units", "score", "vol_triggered"])
     for r in rows:
         writer.writerow(r)
 

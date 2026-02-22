@@ -188,6 +188,14 @@ def main() -> int:
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
 
+    # 4. Upsert signal DB + compute forward returns
+    r4 = subprocess.run(
+        [py, str(scripts_dir / "update_signal_db.py")],
+        cwd=str(ROOT),
+        capture_output=False,
+    )
+    logger.info("update_signal_db.py exit code: %s", r4.returncode)
+
     # UI: system health table from last_signal.json + news files (canonical NEWS_DIR from .env)
     news_dir = Path(_NEWS_DIR)
     last_signal_path = ROOT / "outputs" / "last_signal.json"
