@@ -90,6 +90,22 @@ def main() -> int:
                 flush=True,
             )
             success += 1
+            try:
+                from src.data.news_sources.tiingo_provider import TiingoProvider
+                tiingo = TiingoProvider(data_dir=news_dir)
+                tiingo_articles = tiingo.fetch_articles_for_ticker(
+                    ticker, args.start, args.end, use_cache=True
+                )
+                k = len(tiingo_articles) if tiingo_articles else 0
+                print(
+                    f"  [{i}/{len(tickers)}] TIINGO OK {ticker}: {k} articles",
+                    flush=True,
+                )
+            except Exception as tiingo_err:
+                print(
+                    f"  [{i}/{len(tickers)}] TIINGO SKIP {ticker}: {tiingo_err}",
+                    flush=True,
+                )
         except Exception as e:
             print(
                 f"  [{i}/{len(tickers)}] FAIL {ticker}: {e}",

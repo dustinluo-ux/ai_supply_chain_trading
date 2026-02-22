@@ -150,9 +150,10 @@ def _create_paper_executor():
     trading = config.get("trading", {})
     ib_config = trading.get("ib", {})
     execution_config = trading.get("execution", {})
-    paper_account = execution_config.get("paper_account")
+    import os as _os
+    paper_account = _os.getenv("IBKR_PAPER_ACCOUNT") or execution_config.get("paper_account")
     if not paper_account:
-        raise ValueError("trading.execution.paper_account required for --mode paper")
+        raise ValueError("Set IBKR_PAPER_ACCOUNT in .env or trading.execution.paper_account in trading_config.yaml")
     from src.data.provider_factory import DataProviderFactory
     from src.execution.ib_executor import IBExecutor
     data_provider = DataProviderFactory.create("ib", **ib_config)
@@ -160,6 +161,8 @@ def _create_paper_executor():
 
 
 def main() -> tuple[int, list]:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
     parser = argparse.ArgumentParser(
         description="Canonical execution: spine -> Intent -> delta trades (mock or IB paper)."
     )

@@ -11,6 +11,20 @@ from src.utils.logger import setup_logger
 logger = setup_logger()
 
 
+def _resolve_ib_contract(ticker: str) -> tuple[str, str, str]:
+    """Return (symbol, exchange, currency) for IB Stock contract from canonical ticker."""
+    t = (ticker or "").strip()
+    if t.endswith(".T"):
+        return t[:-2], "TSE", "JPY"
+    if t.endswith(".HK"):
+        return t[:-3], "SEHK", "HKD"
+    if t.endswith(".DE"):
+        return t[:-3], "IBIS", "EUR"
+    if t.endswith(".CO"):
+        return t[:-3], "SFB", "DKK"
+    return t, "SMART", "USD"
+
+
 class IBExecutor(BaseExecutor):
     """Interactive Brokers executor for live/paper trading."""
     
@@ -58,7 +72,8 @@ class IBExecutor(BaseExecutor):
         
         try:
             # Create contract
-            contract = Stock(ticker, 'SMART', 'USD')
+            symbol, exchange, currency = _resolve_ib_contract(ticker)
+            contract = Stock(symbol, exchange, currency)
             self.ib.qualifyContracts(contract)
             
             # Create order

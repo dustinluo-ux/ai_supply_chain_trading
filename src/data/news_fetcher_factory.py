@@ -19,8 +19,7 @@ _SOURCE_MAP = {
     'alphavantage': ('src.data.news_sources.alphavantage_source', 'AlphaVantageSource'),
     'finnhub': ('src.data.news_sources.finnhub_source', 'FinnhubSource'),
     'marketaux': ('src.data.news_sources.marketaux_source', 'MarketauxSource'),
-    'tiingo': ('src.data.news_sources.tiingo_source', 'TiingoSource'),
-    'dual_stream': ('src.data.news_aggregator', 'DualStreamNewsAggregator'),
+    'tiingo': ('src.data.news_sources.tiingo_provider', 'TiingoProvider'),
 }
 
 

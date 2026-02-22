@@ -5,7 +5,6 @@ import yaml
 import os
 from typing import Optional
 from src.data.base_provider import BaseDataProvider
-from src.data.csv_provider import CSVDataProvider
 from src.data.ib_provider import IBDataProvider
 from src.utils.logger import setup_logger
 
@@ -28,6 +27,7 @@ class DataProviderFactory:
             Data provider instance
         """
         if provider_type.lower() == 'csv':
+            from src.data.csv_provider import CSVDataProvider
             data_dir = kwargs.get('data_dir', 'data/prices')
             return CSVDataProvider(data_dir=data_dir)
         
@@ -56,6 +56,7 @@ class DataProviderFactory:
             config_path = os.path.join('config', 'trading_config.yaml')
         
         if not os.path.exists(config_path):
+            from src.data.csv_provider import CSVDataProvider
             logger.warning(f"Config file not found: {config_path}, using CSV provider")
             return CSVDataProvider()
         
@@ -77,11 +78,13 @@ class DataProviderFactory:
                     cache_dir=data_config.get('cache_dir', None)
                 )
             else:
+                from src.data.csv_provider import CSVDataProvider
                 data_config = trading_config.get('data', {})
                 return CSVDataProvider(
                     data_dir=data_config.get('csv_dir', 'data/prices')
                 )
         
         except Exception as e:
+            from src.data.csv_provider import CSVDataProvider
             logger.error(f"Error loading config: {e}, using CSV provider")
             return CSVDataProvider()

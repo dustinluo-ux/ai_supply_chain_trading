@@ -62,7 +62,7 @@ training:
   # Model persistence
   save_models: true
   model_save_dir: 'models/saved/'
-  model_path: 'models/saved/ridge_20260221_131840.pkl'  # Phase 3 inference (use_ml: true)
+  model_path: 'models/saved/ridge_20260221_230133.pkl'  # Phase 3 inference — 7-feature ridge, IC=0.0202
   
 # Logging
 logging:

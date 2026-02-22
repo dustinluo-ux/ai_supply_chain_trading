@@ -1,6 +1,6 @@
 """
 Multi-Strategy News Alpha Engine.
-- Sentiment: FinBERT (ProsusAI/finbert) on headlines/bodies from data/news/{ticker}_news.json.
+- Sentiment: FinBERT (ProsusAI/finbert) on headlines/bodies from {NEWS_DIR}/{ticker}_news.json.
 - Events: spacy en_core_web_md + EventDetector (Earnings, M&A, Lawsuit, FDA, CEO Change).
 - Strategies: A Buzz (24h count > 2*std above 20d mean), B Surprise (current - 30d baseline),
   C Sector-relative (top 10%), D Event-driven (48h priority weight).
@@ -268,12 +268,15 @@ def deduplicate_articles(articles: list[dict], headline_key: str = "title") -> l
 # ---------------------------------------------------------------------------
 # Load news from data/news/{ticker}_news.json
 # ---------------------------------------------------------------------------
-def load_ticker_news(news_dir: Path | str, ticker: str, dedupe: bool = True) -> list[dict]:
+def load_ticker_news(news_dir: Path | str | None, ticker: str, dedupe: bool = True) -> list[dict]:
     """
     Load articles for a ticker from data/news/{ticker}_news.json.
     When dedupe=True (default), Levenshtein fuzzy matching on headlines is applied
     so we do not process redundant data (e.g. DualStream Marketaux + Tiingo duplicates).
     """
+    if news_dir is None:
+        from src.utils.data_manager import get_path
+        news_dir = get_path("news")
     news_dir = Path(news_dir)
     path = news_dir / f"{ticker}_news.json"
 
@@ -481,9 +484,9 @@ def _empty_news_result() -> dict[str, Any]:
 
 
 def compute_news_composite(
-    news_dir: Path | str,
-    ticker: str,
-    as_of: pd.Timestamp,
+    news_dir: Path | str | None = None,
+    ticker: str = ...,  # required when called by keyword; positional callers pass (news_dir, ticker, as_of)
+    as_of: pd.Timestamp = ...,
     sector_sentiments: Optional[dict[str, float]] = None,
     sector_map: Optional[dict[str, str]] = None,
     use_finbert: bool = True,
@@ -498,6 +501,9 @@ def compute_news_composite(
     sentiment_current, sentiment_baseline, strategies.
     Warm-up: Strategy B uses 30-day baseline; cold start = 0.5.
     """
+    if news_dir is None:
+        from src.utils.data_manager import get_path
+        news_dir = get_path("news")
     news_dir = Path(news_dir)
     # Optional testing: skip slow FinBERT to exercise Gemini bridge only (env SKIP_FINBERT_FOR_LLM_TEST=1).
     if os.environ.get("SKIP_FINBERT_FOR_LLM_TEST") == "1":

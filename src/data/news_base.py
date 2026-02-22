@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class NewsDataSource(ABC):
     """Abstract base class for all news data sources"""
     
-    def __init__(self, data_dir: str = "data/news", keywords: Optional[List[str]] = None):
+    def __init__(self, data_dir: Optional[str] = None, keywords: Optional[List[str]] = None):
         """
         Initialize news data source
         
@@ -24,6 +24,9 @@ class NewsDataSource(ABC):
             data_dir: Directory to store cached articles
             keywords: List of keywords to filter articles
         """
+        if data_dir is None:
+            from src.core.config import NEWS_DIR
+            data_dir = str(NEWS_DIR)
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
         self.keywords = keywords or []

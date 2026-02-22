@@ -13,12 +13,13 @@ import logging
 from dotenv import load_dotenv
 
 from src.data.news_base import NewsDataSource
+from src.data.news_sources.base_provider import NewsProvider
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-class MarketauxSource(NewsDataSource):
+class MarketauxSource(NewsDataSource, NewsProvider):
     """
     Marketaux News API data source
     
@@ -31,7 +32,10 @@ class MarketauxSource(NewsDataSource):
     API Documentation: https://www.marketaux.com/documentation
     """
     
-    def __init__(self, data_dir: str = "data/news", keywords: Optional[List[str]] = None):
+    def __init__(self, data_dir: Optional[str] = None, keywords: Optional[List[str]] = None):
+        if data_dir is None:
+            from src.core.config import NEWS_DIR
+            data_dir = str(NEWS_DIR)
         super().__init__(data_dir, keywords)
         
         # Initialize Marketaux API
@@ -290,3 +294,35 @@ class MarketauxSource(NewsDataSource):
         
         logger.info(f"✅ Final result: {len(unique_articles)} unique articles for {ticker} from Marketaux")
         return unique_articles
+
+    def fetch_history(self, ticker: str, start_date: str, end_date: str) -> List[Dict]:
+        """Fetch historical news articles. Returns raw provider dicts."""
+        return self.fetch_articles_for_ticker(ticker, start_date, end_date, use_cache=True)
+
+    def fetch_live(self, ticker: str) -> List[Dict]:
+        """Fetch latest news articles (last 24h)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        return self.fetch_articles_for_ticker(ticker, yesterday, today, use_cache=False)
+
+    def standardize_data(self, raw_data: List[Dict]) -> "pd.DataFrame":
+        """Standardize raw provider dicts to canonical DataFrame schema: [Date, Ticker, Title, Body, Source]."""
+        import pandas as pd
+        if not raw_data:
+            return pd.DataFrame(columns=["Date", "Ticker", "Title", "Body", "Source"])
+        rows = []
+        for a in raw_data:
+            pub = a.get("publishedAt") or a.get("published_at") or ""
+            dt = pd.to_datetime(pub, errors="coerce")
+            if pd.notna(dt) and getattr(dt, "tz", None) is not None:
+                dt = dt.tz_convert("UTC").tz_localize(None)
+            rows.append({
+                "Date": dt,
+                "Ticker": str(a.get("ticker", "")).upper(),
+                "Title": str(a.get("title", "")),
+                "Body": str(a.get("description", "") or a.get("content", "")),
+                "Source": str(a.get("source", "marketaux")),
+            })
+        df = pd.DataFrame(rows, columns=["Date", "Ticker", "Title", "Body", "Source"])
+        df = df.sort_values("Date", ascending=True).reset_index(drop=True)
+        return df
