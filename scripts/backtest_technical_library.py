@@ -208,7 +208,7 @@ def run_backtest_master_score(
         end = min(end, pd.to_datetime(end_date))
     mondays = pd.date_range(start, end, freq="W-MON")
     if len(mondays) < 2:
-        return {"sharpe": 0.0, "total_return": 0.0, "max_drawdown": 0.0, "error": "Not enough weeks"}
+        return {"sharpe": 0.0, "total_return": 0.0, "max_drawdown": 0.0, "weekly_returns": [], "error": "Not enough weeks"}
 
     # Market Kill-Switch: SPY 200-day SMA (optional)
     spy_bench = _spy_benchmark_series(data_dir) if data_dir else None
@@ -477,12 +477,14 @@ def run_backtest_master_score(
     _regime_keys = ("BULL", "BEAR", "SIDEWAYS")
     _returns_by_regime: dict[str, list[float]] = {k: [] for k in _regime_keys}
     _drawdowns_by_regime: dict[str, list[float]] = {k: [] for k in _regime_keys}
+    weekly_returns_all: list[float] = []
 
     for i in range(len(week_meta_list)):
         monday_i, regime_state_i, _news_w_i, strategy_id_i = week_meta_list[i]
         start_idx, end_idx = blocks[i]
         base = cumulative.iloc[start_idx - 1] if start_idx > 0 else 1.0
         weekly_return = (float(cumulative.iloc[end_idx - 1]) / base) - 1.0
+        weekly_returns_all.append(weekly_return)
         slice_cum = cumulative.iloc[start_idx:end_idx]
         peak = slice_cum.max()
         trough = slice_cum.min()
@@ -528,6 +530,7 @@ def run_backtest_master_score(
         "signals_df": signals_df,
         "last_regime": last_regime,
         "active_strategy_id": active_strategy_id,
+        "weekly_returns": weekly_returns_all,
     }
 
 
@@ -655,7 +658,7 @@ def main():
     if args.out_json is not None:
         _json_subset = {
             k: result[k]
-            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers")
+            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers", "weekly_returns")
             if k in result
         }
         _out_path = Path(args.out_json)
