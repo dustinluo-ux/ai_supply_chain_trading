@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -30,6 +31,11 @@ SMA_KILL_SWITCH_DAYS = 200
 KILL_SWITCH_MODE = "cash"  # "cash" = 100% cash when SPY < 200 SMA; "half" = 50% position size
 # Daily risk check: exit position same day if single-day return <= this (e.g. -0.05 = -5%)
 DAILY_EXIT_PCT = -0.05
+
+# First date of valid (post-SPAC-merger) price data for known SPAC-origin tickers
+SPAC_IPO_DATES = {
+    "OKLO": "2024-05-10",   # AltC Acquisition Corp merger closed ~May 2024
+}
 
 # --- Centralized data loading (src.data.csv_provider) ---
 from src.data.csv_provider import (
@@ -54,6 +60,8 @@ def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
         if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:
             return None
         close = df["close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
         sma = close.rolling(SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS).mean()
         return (close, sma)
     except Exception:
@@ -118,6 +126,8 @@ def _build_weight_history(
             continue
         dates = ind.index[ind.index <= monday].sort_values(ascending=False)[:lookback_days]
         close = prices_dict[t]["close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
         for d in dates:
             if d not in ind.index:
                 continue
@@ -200,8 +210,8 @@ def run_backtest_master_score(
                   f"clamping top_n to {len(tickers)}", flush=True)
         top_n = len(tickers)
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
-    start = max(df.index.min() for df in prices_dict.values())
-    end = min(df.index.max() for df in prices_dict.values())
+    start = min(df.index.min() for df in prices_dict.values())
+    end = max(df.index.max() for df in prices_dict.values())
     if start_date:
         start = max(start, pd.to_datetime(start_date))
     if end_date:
@@ -385,11 +395,20 @@ def run_backtest_master_score(
                 slice_df = df.loc[df.index <= monday].tail(30)
                 if slice_df.empty or "high" not in slice_df.columns or "low" not in slice_df.columns or "close" not in slice_df.columns:
                     continue
-                atr_series = compute_atr_series(slice_df["high"], slice_df["low"], slice_df["close"], period=14)
+                high_series = slice_df["high"]
+                low_series = slice_df["low"]
+                close_series = slice_df["close"]
+                if isinstance(high_series, pd.DataFrame):
+                    high_series = high_series.iloc[:, 0]
+                if isinstance(low_series, pd.DataFrame):
+                    low_series = low_series.iloc[:, 0]
+                if isinstance(close_series, pd.DataFrame):
+                    close_series = close_series.iloc[:, 0]
+                atr_series = compute_atr_series(high_series, low_series, close_series, period=14)
                 if len(atr_series) and pd.notna(atr_series.iloc[-1]):
                     atr_per_share[t] = float(atr_series.iloc[-1])
-                if len(slice_df) and pd.notna(slice_df["close"].iloc[-1]):
-                    prices_at_monday[t] = float(slice_df["close"].iloc[-1])
+                if len(slice_df) and pd.notna(close_series.iloc[-1]):
+                    prices_at_monday[t] = float(close_series.iloc[-1])
             cfg = get_config_manager()
             risk_pct, atr_mult = get_sizing_params_from_config(cfg)
             new_weights = position_sizer_compute_weights(intent.tickers, atr_per_share, prices_at_monday, risk_pct=risk_pct, atr_multiplier=atr_mult, target_exposure=1.0)
@@ -432,8 +451,20 @@ def run_backtest_master_score(
         prev_regime = regime_state
         week_meta_list.append((monday, regime_state, news_weight_used, active_strategy_id))
 
-    prices_df = pd.DataFrame({t: prices_dict[t]["close"] for t in tickers}, index=all_dates)
-    opens_df = pd.DataFrame({t: prices_dict[t]["open"] for t in tickers}, index=all_dates)
+    close_cols = {}
+    for t in tickers:
+        close_series = prices_dict[t]["close"]
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+        close_cols[t] = close_series
+    prices_df = pd.DataFrame(close_cols, index=all_dates)
+    open_cols = {}
+    for t in tickers:
+        open_series = prices_dict[t]["open"]
+        if isinstance(open_series, pd.DataFrame):
+            open_series = open_series.iloc[:, 0]
+        open_cols[t] = open_series
+    opens_df = pd.DataFrame(open_cols, index=all_dates)
     positions_df = pd.DataFrame(0.0, index=prices_df.index, columns=tickers)
     first_day_of_period = set()
     blocks = []
@@ -571,10 +602,16 @@ def main():
         from src.utils.config_manager import get_config
         raw_tickers = get_config().get_watchlist()
 
-    config = load_config()
-    # Force the path to the absolute data root shown in your tree
-    data_dir = ROOT / "data" / "stock_market_data" 
-    
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+    data_dir_str = os.getenv("DATA_DIR")
+    if data_dir_str:
+        data_dir = Path(data_dir_str) / "stock_market_data"
+    else:
+        config = load_config()
+        data_dir = config["data_dir"]
+    data_dir = Path(data_dir)
+
     tickers = []
     for t in raw_tickers:
         csv_path = find_csv_path(str(data_dir), t)
@@ -624,6 +661,17 @@ def main():
     if not prices_dict:
         print("ERROR: Could not load price data into dictionary.")
         return 1
+
+    # SPAC filter: clip pre-IPO (shell) price data for known SPAC-origin tickers; drop if < 30 rows after clip
+    for ticker in list(prices_dict.keys()):
+        if ticker in SPAC_IPO_DATES:
+            cutoff = pd.Timestamp(SPAC_IPO_DATES[ticker])
+            df = prices_dict[ticker]
+            df = df[df.index >= cutoff]
+            prices_dict[ticker] = df
+            if len(df) < 30:
+                del prices_dict[ticker]
+                tickers.remove(ticker)
 
     # Stale-ticker filter: when --start is set, drop tickers whose price data ends before start
     if args.start is not None:
