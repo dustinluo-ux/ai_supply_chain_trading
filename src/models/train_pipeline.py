@@ -15,13 +15,14 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any
 
 from .model_factory import create_model
 from .base_predictor import BaseReturnPredictor
 
 # Minimum price rows required for indicator computation (T-1 safety)
 _MIN_PRICE_ROWS = 60
+
 
 class ModelTrainingPipeline:
     """
@@ -30,7 +31,7 @@ class ModelTrainingPipeline:
     Usage:
         pipeline = ModelTrainingPipeline('config/model_config.yaml')
         model = pipeline.train(prices_dict, news_signals={})
-        ic = pipeline.evaluate_ic(model, prices_dict, test_start='...', test_end='...')
+        ic, fold_ics = pipeline.evaluate_ic(model, prices_dict, test_start='...', test_end='...')
         predictions = model.predict(current_features)
     """
     
@@ -188,7 +189,40 @@ class ModelTrainingPipeline:
             else:
                 news_spike = 1.0
 
-            return [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment, sentiment_velocity, news_spike]
+            # Return only features in config order (IC-based pruning: feature_names is source of truth)
+            values = {
+                "momentum_avg": momentum_avg,
+                "volume_ratio_norm": volume_ratio_norm,
+                "rsi_norm": rsi_norm,
+                "news_supply": news_supply,
+                "news_sentiment": news_sentiment,
+                "sentiment_velocity": sentiment_velocity,
+                "news_spike": news_spike,
+            }
+            # Fallback: any name in self.feature_names not in values — resolve via FEATURE_REGISTRY (extensibility)
+            from src.signals import feature_factory
+            FEATURE_REGISTRY = getattr(feature_factory, "FEATURE_REGISTRY", {})
+            for name in self.feature_names:
+                if name in values:
+                    continue
+                meta = FEATURE_REGISTRY.get(name, {})
+                if meta.get("column") and meta["column"] in ind.columns:
+                    val = ind.iloc[-1].get(meta["column"], 0.5)
+                    values[name] = float(val) if pd.notna(val) else 0.5
+                elif meta.get("compute_fn"):
+                    fn = getattr(feature_factory, meta["compute_fn"], None)
+                    if fn is not None:
+                        try:
+                            s = fn(slice_df)
+                            val = s.iloc[-1] if s is not None and not s.empty else 0.5
+                            values[name] = float(val) if pd.notna(val) else 0.5
+                        except Exception:
+                            values[name] = 0.5
+                    else:
+                        values[name] = 0.5
+                else:
+                    values[name] = 0.5
+            return [values[name] for name in self.feature_names]
         except Exception:
             return None
 
@@ -197,12 +231,23 @@ class ModelTrainingPipeline:
 
     def _calculate_forward_return(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, horizon_days: int = 7) -> Optional[float]:
         """Calculate forward return using asof to handle non-trading days. Returns None if NaN."""
+        def _to_scalar(x):
+            if isinstance(x, pd.Series):
+                x = x.iloc[-1] if len(x) else float('nan')
+            return float(x) if not pd.isna(x) else float('nan')
+
         try:
             prices = prices_dict[ticker]
-            close = prices['close'] if isinstance(prices['close'], pd.Series) else prices.loc[:, 'close']
+            raw_close = prices['close'] if isinstance(prices.get('close'), pd.Series) else prices.loc[:, 'close']
+            if isinstance(raw_close, pd.DataFrame):
+                close = raw_close.iloc[:, 0]
+            else:
+                close = raw_close
             price_current = close.asof(date)
             future_date = date + pd.Timedelta(days=horizon_days)
             price_future = close.asof(future_date)
+            price_current = _to_scalar(price_current)
+            price_future = _to_scalar(price_future)
             if pd.isna(price_current) or pd.isna(price_future) or price_current <= 0:
                 return None
             return float((price_future - price_current) / price_current)
@@ -230,7 +275,6 @@ class ModelTrainingPipeline:
         
         print(f"[Pipeline] Train: {len(X_train)} samples, Val: {len(X_val)} samples")
         
-        # Create model from config
         model = create_model(
             {**{'type': self.active_model_type}, **self.model_config},
             self.feature_names
@@ -256,11 +300,12 @@ class ModelTrainingPipeline:
     
     def evaluate_ic(self, model: BaseReturnPredictor, prices_dict: Dict,
                     test_start: str, test_end: str,
-                    news_signals: Optional[Dict] = None) -> float:
+                    news_signals: Optional[Dict] = None) -> Tuple[float, List[float]]:
         """
         Anchored walk-forward IC per DECISIONS.md D021: anchor fixed at config train_start,
         step through test period in 13-week folds. Fold k: train anchor→fold_k_start,
         test next 13 weeks. Refit model each fold; gate metric = mean IC >= 0.02.
+        Returns (mean_ic, fold_ic_list).
         """
         from scipy.stats import spearmanr
 
@@ -318,10 +363,10 @@ class ModelTrainingPipeline:
 
         if not ic_list:
             print("[IC] No walk-forward folds; mean IC = 0.0000")
-            return 0.0
+            return 0.0, []
         mean_ic = float(np.mean(ic_list))
         print(f"[IC] Walk-forward mean Spearman IC = {mean_ic:.4f} (folds={len(ic_list)})")
-        return mean_ic
+        return mean_ic, ic_list
     
     def _log_feature_importance(self, model):
         """Log feature importance to console and file."""

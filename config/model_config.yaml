@@ -5,19 +5,16 @@
 use_ml: true  # Phase 3 wiring: blend 0.7 * baseline + 0.3 * ML score
 
 # Which model to use for predictions
-active_model: 'ridge'  # Options: linear, ridge, lasso, xgboost (ridge more robust on small samples)
+active_model: ridge    # Options: linear, ridge, lasso, xgboost (ridge more robust on small samples)
 
 # Model-specific hyperparameters
 models:
   linear:
     # No hyperparameters for basic linear regression
-    
   ridge:
     alpha: 0.001  # Regularization strength (reduced from 0.01 to give momentum/volume more signal surface)
-    
   lasso:
     alpha: 0.1  # Regularization strength (higher = more feature selection)
-    
   xgboost:
     n_estimators: 100  # Number of trees
     max_depth: 3       # Tree depth (keep low to avoid overfitting)
@@ -25,47 +22,38 @@ models:
     subsample: 0.8     # Row sampling
     colsample_bytree: 0.8  # Feature sampling
     random_state: 42
-    
+
   # Add new models here:
   # random_forest:
   #   n_estimators: 100
   #   max_depth: 5
-  
   # lightgbm:
   #   num_leaves: 31
   #   learning_rate: 0.05
 
 # Feature configuration
 features:
-  # News features  
   news_lookback_days: 7   # Days of news to analyze
-  
-  # Feature list (order matters!)
+  # Feature list (order matters!) — IC-based pruning: only 3 features carry signal
   feature_names:
-    - momentum_avg
-    - volume_ratio_norm
     - rsi_norm
-    - news_supply
-    - news_sentiment
     - sentiment_velocity
-    - news_spike
-
-# Training configuration
+    - news_sentiment
+    - adx_norm
+    - roc_norm
 training:
   train_start: '2022-01-01'  # Training period start
   train_end: '2023-12-31'     # Training period end
   test_start: '2024-01-01'    # Test period start
   test_end: '2024-12-31'      # Test period end
-  
   validation_split: 0.2  # Use 20% of training data for validation
-  
   # Model persistence
   save_models: true
-  model_save_dir: 'models/saved/'
-  model_path: 'models/saved/ridge_20260221_230133.pkl'  # Phase 3 inference — 7-feature ridge, IC=0.0202
-  
+  model_save_dir: models/saved/
+  model_path: 
+    C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260226_214200.pkl # Phase 3 inference — 7-feature ridge, IC=0.0202
 # Logging
 logging:
   log_predictions: true
   log_feature_importance: true
-  log_dir: 'logs/models/'
+  log_dir: logs/models/

@@ -25,12 +25,14 @@ def _main() -> int:
     smh_threshold = args.smh_threshold
 
     vix = None
+    vix_series = None  # for Z-score (last 20 observations)
     try:
         import yfinance as yf
         t = yf.Ticker("^VIX")
-        hist = t.history(period="2d")
+        hist = t.history(period="25d")
         if hist is not None and not hist.empty and "Close" in hist.columns:
             vix = float(hist["Close"].iloc[-1])
+            vix_series = hist["Close"].dropna()
     except Exception:
         pass
 
@@ -50,23 +52,60 @@ def _main() -> int:
 
     smh_daily = None
     smh_shock = False
+    smh_returns_20d = None
     try:
         import yfinance as yf
         t = yf.Ticker("SMH")
-        smh_hist = t.history(period="3d")
+        smh_hist = t.history(period="25d")
         if smh_hist is not None and len(smh_hist) >= 2 and "Close" in smh_hist.columns:
-            smh_daily = (float(smh_hist["Close"].iloc[-1]) / float(smh_hist["Close"].iloc[-2])) - 1.0
-            smh_shock = smh_daily < smh_threshold
+            close = smh_hist["Close"]
+            smh_daily = (float(close.iloc[-1]) / float(close.iloc[-2])) - 1.0
+            rets = close.pct_change(fill_method=None).dropna()
+            if len(rets) >= 10:
+                smh_returns_20d = rets.iloc[-20:] if len(rets) >= 20 else rets
     except Exception:
         pass
 
+    # Z-score BEAR triggers: need >= 10 observations; else fall back to absolute thresholds
+    use_vix_z = vix_series is not None and len(vix_series) >= 10
+    use_smh_z = smh_returns_20d is not None and len(smh_returns_20d) >= 10
+    if use_vix_z and use_smh_z:
+        print("[Regime] Z-score BEAR triggers active (VIX and SMH).", flush=True)
+    elif not use_vix_z or not use_smh_z:
+        print("[Regime] Insufficient history for Z-score -- using absolute thresholds.", flush=True)
+
+    vix_trigger = False
+    if vix is not None:
+        if use_vix_z:
+            vix_20d = vix_series.iloc[-20:] if len(vix_series) >= 20 else vix_series
+            vix_mean = float(vix_20d.mean())
+            vix_std = float(vix_20d.std())
+            if vix_std > 0:
+                vix_z = (vix - vix_mean) / vix_std
+                vix_trigger = vix_z > 2.0 or vix > 40
+            else:
+                vix_trigger = vix > 40
+        else:
+            vix_trigger = vix > vix_threshold
+
+    if not use_smh_z and smh_daily is not None:
+        smh_shock = smh_daily < smh_threshold
+    elif use_smh_z and smh_daily is not None and smh_returns_20d is not None:
+        smh_mean = float(smh_returns_20d.mean())
+        smh_std = float(smh_returns_20d.std())
+        if smh_std > 0:
+            smh_z = (smh_daily - smh_mean) / smh_std
+            smh_shock = smh_z < -2.0 or smh_daily < -0.07
+        else:
+            smh_shock = smh_daily < -0.07
+
     emergency_reasons = []
-    if vix is not None and vix > vix_threshold:
-        emergency_reasons.append(f"VIX {vix:.1f} > {vix_threshold}")
+    if vix_trigger:
+        emergency_reasons.append(f"VIX {vix:.1f} (Z-score or backstop)" if use_vix_z else f"VIX {vix:.1f} > {vix_threshold}")
     if spy_below_sma:
         emergency_reasons.append("SPY < 200-SMA")
     if smh_shock and smh_daily is not None:
-        emergency_reasons.append(f"SMH {smh_daily:.1%} < {smh_threshold:.0%}")
+        emergency_reasons.append(f"SMH {smh_daily:.1%} (Z-score or -7%% backstop)" if use_smh_z else f"SMH {smh_daily:.1%} < {smh_threshold:.0%}")
 
     regime = "EMERGENCY" if emergency_reasons else "NORMAL"
 

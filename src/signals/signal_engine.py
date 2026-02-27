@@ -261,6 +261,8 @@ class SignalEngine:
                 from src.data.csv_provider import find_csv_path, load_data_config, load_prices
                 data_dir = load_data_config().get("data_dir") or Path("data/stock_market_data")
                 data_dir = Path(data_dir)
+                min_rsi = float(get_config().get_param("strategy_params.propagation.min_rsi_norm_for_entry", 0.50))
+                logger.info("[RSI gate] min_rsi_norm_for_entry=%.2f (config)", min_rsi)
                 added_new: set[str] = set()
                 for target in propagated_targets:
                     if target in universe:
@@ -287,7 +289,6 @@ class SignalEngine:
                         continue
                     ind = calculate_all_indicators(slice_df)
                     row = ind.iloc[-1]
-                    min_rsi = float(get_config().get_param("strategy_params.propagation.min_rsi_norm_for_entry", 0.35))
                     rsi_val = float(row.get("rsi_norm", 0.5))
                     if rsi_val < min_rsi:
                         logger.info(

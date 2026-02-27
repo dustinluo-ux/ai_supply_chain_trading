@@ -45,7 +45,7 @@ class BaseReturnPredictor(ABC):
         self.model_type = model_type
         self.feature_names = feature_names
         self.config = config or {}
-        
+
         # Training state
         self.is_trained = False
         self.training_date = None

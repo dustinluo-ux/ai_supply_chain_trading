@@ -7,6 +7,7 @@ Propagates news sentiment from a primary ticker to related companies
 Uses a directed graph approach with decay factors based on relationship strength.
 """
 
+import math
 import re
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
@@ -200,10 +201,12 @@ class SentimentPropagator:
                     
                     # Apply cumulative decay
                     final_weight = cumulative_weight * base_weight
+                    # Sigmoid concentration weight: compress extremes toward center (k=6)
+                    sigmoid_weight = 1.0 / (1.0 + math.exp(-6.0 * (final_weight - 0.5)))
                     
-                    # Calculate propagated scores
-                    propagated_sentiment = news_item.sentiment_score * final_weight
-                    propagated_supply_chain = news_item.supply_chain_score * final_weight
+                    # Calculate propagated scores using sigmoid weight
+                    propagated_sentiment = news_item.sentiment_score * sigmoid_weight
+                    propagated_supply_chain = news_item.supply_chain_score * sigmoid_weight
                     
                     # Determine relationship type for output
                     if rel_type == 'suppliers':
@@ -221,7 +224,7 @@ class SentimentPropagator:
                         supply_chain_score=propagated_supply_chain,
                         relationship_type=rel_type_str,
                         relationship_tier=current_tier + 1,
-                        propagation_weight=final_weight,
+                        propagation_weight=sigmoid_weight,
                         source_type='propagated',
                         confidence=rel.get('confidence', 'medium') == 'high' and 0.7 or 0.5,
                         reasoning=f"Propagated from {source_ticker} via {rel_type_str} relationship (Tier {current_tier + 1})"
@@ -246,6 +249,7 @@ class SentimentPropagator:
                         f"weight={final_weight:.3f}, sentiment={propagated_sentiment:.3f})"
                     )
         
+        logger.info("Applied sigmoid concentration weight (k=6) to propagation scores.")
         logger.info(f"Generated {len(propagated_signals)} propagated signals from {primary_ticker}")
         return propagated_signals
     

@@ -149,22 +149,58 @@ def _main() -> int:
         except Exception as e:
             print(f"[REGIME] SPY regime check failed ({e}); using default floor", flush=True)
 
-    # 5. 30-day rolling vol per ticker
-    vol_window = max(1, args.vol_window)
+    # 5. EWMA volatility per ticker (RiskMetrics lambda=0.94, span=38)
+    EWMA_SPAN = 38  # round(2/(1-0.94)) - 1
     vol_30d = {}
     for ticker, df in prices_dict.items():
         if df is None or df.empty or "close" not in df.columns:
             continue
         try:
             returns = df["close"].pct_change(fill_method=None).dropna()
-            if len(returns) < vol_window:
+            if len(returns) < 2:
                 continue
-            vol = float(returns.iloc[-vol_window:].std())
+            ewma_std = returns.ewm(span=EWMA_SPAN, adjust=False).std()
+            vol = float(ewma_std.iloc[-1]) if len(ewma_std) else None
             if vol is None or vol != vol or vol <= 0:
-                continue
+                vol = float(returns.std())
+            if vol is None or vol != vol or vol <= 0:
+                vol = 0.01
             vol_30d[ticker] = vol
         except Exception:
             continue
+
+    # 5b. Liquidity-scaled caps: adv_i = 20d mean(close*volume), cap_i = clip(base*sqrt(adv_i/adv_median), 0.10, 0.40)
+    BASE_CAP, CAP_FLOOR, CAP_CEIL = 0.20, 0.10, 0.40
+    adv = {}
+    for ticker, df in prices_dict.items():
+        if df is None or df.empty or "close" not in df.columns:
+            continue
+        if "volume" not in df.columns:
+            adv[ticker] = None
+            continue
+        try:
+            close = df["close"]
+            if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
+                close = close.iloc[:, 0]
+            vol = df["volume"]
+            if hasattr(vol, "iloc") and getattr(vol, "ndim", 1) > 1:
+                vol = vol.iloc[:, 0]
+            dollar_vol = (close * vol).dropna()
+            if len(dollar_vol) < 20:
+                adv[ticker] = None
+                continue
+            adv[ticker] = float(dollar_vol.iloc[-20:].mean())
+        except Exception:
+            adv[ticker] = None
+    adv_values = [v for v in adv.values() if v is not None and v > 0]
+    adv_median = float(np.median(adv_values)) if adv_values else 1.0
+    liquidity_cap = {}
+    for ticker in vol_30d:
+        if adv.get(ticker) is None or adv_median <= 0:
+            liquidity_cap[ticker] = BASE_CAP
+        else:
+            raw = BASE_CAP * np.sqrt(adv[ticker] / adv_median)
+            liquidity_cap[ticker] = float(np.clip(raw, CAP_FLOOR, CAP_CEIL))
 
     # 6. Eligible: score > effective_threshold (top quantile, with floor) and valid vol
     top_quantile = args.top_quantile
@@ -172,6 +208,48 @@ def _main() -> int:
     score_threshold = float(np.quantile(list(scores.values()), top_quantile))
     effective_threshold = max(score_threshold, score_floor)
     eligible = [t for t in scores if t in vol_30d and scores[t] > effective_threshold]
+
+    # 6b. HRP base weights for eligible (fallback to score/vol if HRP fails or < 2 tickers with enough history)
+    use_hrp = False
+    hrp_base_weight = {}  # ticker -> base weight for display
+    try:
+        import pandas as pd
+        lookback_days = 60
+        min_obs = 30
+        returns_dict = {}
+        for t in eligible:
+            if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty or "close" not in prices_dict[t].columns:
+                continue
+            df = prices_dict[t]
+            close = df["close"]
+            if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
+                close = close.iloc[:, 0]
+            ret = close.pct_change(fill_method=None).dropna()
+            if len(ret) < min_obs:
+                continue
+            ret = ret.iloc[-lookback_days:]
+            returns_dict[t] = ret
+        if len(returns_dict) < 2:
+            raise ValueError("fewer than 2 tickers with sufficient return history")
+        returns_df = pd.concat(returns_dict, axis=1, join="outer")
+        valid_counts = returns_df.notna().sum()
+        keep = valid_counts >= min_obs
+        returns_df = returns_df.loc[:, keep]
+        if returns_df.shape[1] < 2:
+            raise ValueError("fewer than 2 tickers with >= 30 valid observations")
+        from pypfopt.hierarchical_portfolio import HRPOpt
+        hrp = HRPOpt(returns=returns_df)
+        hrp_result = hrp.optimize(linkage_method="ward")
+        hrp_weights = hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+        dropped = [t for t in eligible if t not in hrp_weights]
+        hrp_sum = sum(hrp_weights.values())
+        equal_share = (1.0 - hrp_sum) / len(dropped) if dropped else 0.0
+        for t in dropped:
+            hrp_weights[t] = equal_share
+        use_hrp = True
+        hrp_base_weight = {t: hrp_weights[t] for t in eligible}
+    except Exception as e:
+        print(f"[Optimizer] HRP failed: {e} -- falling back to score/vol", flush=True)
 
     # 7. Fallback: top-3 equal weight
     as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -184,36 +262,62 @@ def _main() -> int:
         print("WARNING: No tickers above score threshold. Falling back to top-3 equal weight.", flush=True)
 
     if not fallback:
-        # 8. Raw weights: score / vol
-        raw_w = {t: scores[t] / vol_30d[t] for t in eligible}
-        total_raw = sum(raw_w.values())
-        if total_raw <= 0:
-            eligible = []
-            fallback = True
-            top3 = sorted(scores.keys(), key=lambda t: scores[t], reverse=True)[:3]
-            weights = {t: 1.0 / 3.0 for t in top3} if top3 else {}
-            metadata = {t: {"score": scores[t], "vol_30d": vol_30d.get(t), "raw_weight": 1.0 / 3.0} for t in top3} if top3 else {}
+        if use_hrp:
+            # HRP + alpha tilt: base_weight * (score / mean_score), renormalize, then liquidity cap, renormalize
+            mean_score = float(np.mean([scores[t] for t in eligible]))
+            if mean_score <= 0:
+                mean_score = 1e-9
+            tilted_w = {t: hrp_base_weight[t] * (scores[t] / mean_score) for t in eligible}
+            total_tilted = sum(tilted_w.values())
+            if total_tilted <= 0:
+                tilted_w = {t: 1.0 / len(eligible) for t in eligible}
+            else:
+                tilted_w = {t: tilted_w[t] / total_tilted for t in eligible}
+            w = tilted_w.copy()
+            raw_w = tilted_w.copy()  # for metadata display
         else:
-            # 9. Normalize
-            w = {t: raw_w[t] / total_raw for t in eligible}
-            # 10. Iterative cap at max_weight
-            max_weight = max(1e-9, min(1.0, args.max_weight))
+            # Score/vol (existing)
+            raw_w = {t: scores[t] / vol_30d[t] for t in eligible}
+            total_raw = sum(raw_w.values())
+            if total_raw <= 0:
+                eligible = []
+                fallback = True
+                top3 = sorted(scores.keys(), key=lambda t: scores[t], reverse=True)[:3]
+                weights = {t: 1.0 / 3.0 for t in top3} if top3 else {}
+                metadata = {t: {"score": scores[t], "vol_30d": vol_30d.get(t), "raw_weight": 1.0 / 3.0} for t in top3} if top3 else {}
+            else:
+                w = {t: raw_w[t] / total_raw for t in eligible}
+
+        if not fallback:
+            # 10. Iterative cap at per-ticker liquidity-scaled cap
             while True:
-                capped = {t for t in w if w[t] > max_weight}
-                uncapped = {t for t in w if w[t] <= max_weight}
+                cap_t = {t: liquidity_cap.get(t, BASE_CAP) for t in w}
+                capped = {t for t in w if w[t] > cap_t[t]}
+                uncapped = {t for t in w if w[t] <= cap_t[t]}
                 if not capped:
                     break
-                excess = sum(w[t] - max_weight for t in capped)
+                excess = sum(w[t] - cap_t[t] for t in capped)
                 for t in capped:
-                    w[t] = max_weight
+                    w[t] = cap_t[t]
                 if uncapped:
                     total_uncapped = sum(w[t] for t in uncapped)
                     for t in uncapped:
                         w[t] += excess * (w[t] / total_uncapped)
                 else:
                     break
+            total_after_cap = sum(w.values())
+            if total_after_cap > 0:
+                w = {t: w[t] / total_after_cap for t in w}
             weights = w
-            metadata = {t: {"score": scores[t], "vol_30d": vol_30d[t], "raw_weight": raw_w[t]} for t in eligible}
+            metadata = {
+                t: {
+                    "score": scores[t],
+                    "vol_30d": vol_30d[t],
+                    "raw_weight": raw_w.get(t),
+                    "hrp_weight": hrp_base_weight.get(t) if use_hrp else None,
+                }
+                for t in eligible
+            }
 
     # 11. Write last_valid_weights.json
     out_dir = ROOT / "outputs"
@@ -223,9 +327,10 @@ def _main() -> int:
         json.dump({"as_of": as_of, "weights": weights}, f, indent=2)
 
     # 12. Write last_optimized_weights.json
+    opt_method = "hrp_alpha_tilt" if (use_hrp and not fallback) else "volatility_adjusted_alpha_tilt"
     optimized = {
         "as_of": as_of,
-        "method": "volatility_adjusted_alpha_tilt",
+        "method": opt_method,
         "regime": regime,
         "params": {"top_quantile": args.top_quantile, "score_floor": score_floor, "max_weight": args.max_weight, "vol_window": args.vol_window},
         "weights": weights,
@@ -266,24 +371,29 @@ def _main() -> int:
             pass
 
     # 13. Print table
+    method_name = "HRP + Alpha Tilt" if (use_hrp and not fallback) else "Volatility-Adjusted Alpha Tilt"
     print(f"=== Portfolio Optimizer -- {as_of} ===", flush=True)
-    print("Method: Volatility-Adjusted Alpha Tilt", flush=True)
+    print(f"Method: {method_name}", flush=True)
     print(f"Regime: {regime}  |  Score threshold: {effective_threshold:.3f} (top {(1 - args.top_quantile) * 100:.0f}% quantile, floor={score_floor})", flush=True)
     print("", flush=True)
-    print("  Ticker     Score   Vol(30d)   Raw Wt   Final Wt", flush=True)
-    print("  " + "-" * 52, flush=True)
+    print("  Ticker     Score   Vol(EWMA)   HRP Wt   Final Wt", flush=True)
+    print("  " + "-" * 56, flush=True)
     for t in sorted(weights.keys(), key=lambda x: -weights[x]):
         sc = scores.get(t)
         vol = vol_30d.get(t)
-        rw = metadata.get(t, {}).get("raw_weight") if not fallback else (1.0 / 3.0)
+        hrp_wt = hrp_base_weight.get(t) if (use_hrp and not fallback) else None
         fw = weights[t]
         sc_s = f"{sc:.3f}" if sc is not None else "—"
         vol_s = f"{vol:.3f}" if vol is not None else "—"
-        rw_s = f"{rw:.2f}" if rw is not None else "—"
-        print(f"  {t:<10} {sc_s:>6}   {vol_s:>7}   {rw_s:>6}   {fw:.1%}", flush=True)
+        hrp_s = f"{hrp_wt:.1%}" if hrp_wt is not None else "—"
+        print(f"  {t:<10} {sc_s:>6}   {vol_s:>7}   {hrp_s:>6}   {fw:.1%}", flush=True)
     total_w = sum(weights.values())
     print("", flush=True)
     print(f"  Total weight: {total_w:.1%}   Positions: {len(weights)}", flush=True)
+    ewma_vols_rounded = {t: round(v, 4) for t, v in vol_30d.items()}
+    liquidity_caps_rounded = {t: round(c, 2) for t, c in liquidity_cap.items()}
+    print(f"[Optimizer] EWMA vols: {ewma_vols_rounded}", flush=True)
+    print(f"[Optimizer] Liquidity caps: {liquidity_caps_rounded}", flush=True)
     return 0
 
 
