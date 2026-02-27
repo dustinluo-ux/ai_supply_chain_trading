@@ -66,6 +66,16 @@ class ModelTrainingPipeline:
             metadata: DataFrame with [ticker, date, forward_return]
         """
         train_config = self.config['training']
+        use_residual = train_config.get('residual_target', False)
+        beta_window = train_config.get('rolling_beta_window', 60)
+        if use_residual:
+            try:
+                smh_df = self._load_smh_prices()
+            except FileNotFoundError:
+                smh_df = None
+        else:
+            smh_df = None
+
         start = train_start if train_start is not None else pd.to_datetime(train_config['train_start'])
         end = train_end if train_end is not None else pd.to_datetime(train_config['train_end'])
         news_signals = news_signals or {}
@@ -81,6 +91,11 @@ class ModelTrainingPipeline:
                 forward_return = self._calculate_forward_return(ticker, date, prices_dict)
                 if forward_return is None:
                     continue
+                if use_residual and smh_df is not None:
+                    smh_fwd = self._calculate_smh_forward_return(smh_df, date, horizon_days=7)
+                    beta = self._calculate_rolling_beta(prices_dict[ticker], smh_df, date, window=beta_window)
+                    if smh_fwd is not None:
+                        forward_return = forward_return - (beta * smh_fwd)
                 X_list.append(features)
                 y_list.append(forward_return)
                 meta_list.append({
@@ -113,6 +128,10 @@ class ModelTrainingPipeline:
         X = np.array(X_list)
         
         print(f"[Pipeline] Prepared {len(X)} training samples")
+        if use_residual:
+            print(f"  Target: Residual Return (beta-adjusted vs SMH, window={beta_window}d)")
+        else:
+            print(f"  Target: Absolute Forward Return")
         print(f"  Features: {X.shape[1]}")
         if len(metadata) > 0:
             print(f"  Date range: {metadata['date'].min()} to {metadata['date'].max()}")
@@ -243,6 +262,67 @@ class ModelTrainingPipeline:
                 close = raw_close.iloc[:, 0]
             else:
                 close = raw_close
+            price_current = close.asof(date)
+            future_date = date + pd.Timedelta(days=horizon_days)
+            price_future = close.asof(future_date)
+            price_current = _to_scalar(price_current)
+            price_future = _to_scalar(price_future)
+            if pd.isna(price_current) or pd.isna(price_future) or price_current <= 0:
+                return None
+            return float((price_future - price_current) / price_current)
+        except (KeyError, TypeError, AttributeError):
+            return None
+
+    def _load_smh_prices(self) -> pd.DataFrame:
+        """Load SMH benchmark CSV; return DataFrame with DatetimeIndex and lowercase 'close'. Raises FileNotFoundError if missing."""
+        path = self.config["training"].get("smh_benchmark_path", "trading_data/benchmarks/SMH.csv")
+        p = Path(path)
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parent.parent.parent / path
+        if not p.exists():
+            raise FileNotFoundError(f"SMH benchmark file not found: {p}")
+        df = pd.read_csv(p, index_col=0, parse_dates=True)
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        if "close" not in df.columns:
+            raise ValueError(f"SMH CSV missing 'close' column: {p}")
+        return df
+
+    def _calculate_rolling_beta(self, ticker_df: pd.DataFrame, smh_df: pd.DataFrame, date: pd.Timestamp, window: int = 60) -> float:
+        """Rolling OLS beta of ticker vs SMH up to date. Returns 1.0 if insufficient data or Var(smh)=0."""
+        try:
+            close_t = ticker_df["close"]
+            close_s = smh_df["close"]
+            if isinstance(close_t, pd.DataFrame):
+                close_t = close_t.iloc[:, 0]
+            if isinstance(close_s, pd.DataFrame):
+                close_s = close_s.iloc[:, 0]
+            r_ticker = close_t.pct_change(fill_method=None).dropna()
+            r_smh = close_s.pct_change(fill_method=None).dropna()
+            joint = pd.concat([r_ticker.rename("t"), r_smh.rename("s")], axis=1, join="inner").dropna()
+            joint = joint[joint.index <= date].tail(window)
+            if len(joint) < 30:
+                return 1.0
+            cov = np.cov(joint["t"], joint["s"])[0, 1]
+            var_s = np.var(joint["s"])
+            if var_s <= 0:
+                return 1.0
+            return float(cov / var_s)
+        except Exception:
+            return 1.0
+
+    def _calculate_smh_forward_return(self, smh_df: pd.DataFrame, date: pd.Timestamp, horizon_days: int = 7) -> Optional[float]:
+        """Forward return of SMH over horizon_days from date. Same logic as _calculate_forward_return on smh_df."""
+        def _to_scalar(x):
+            if isinstance(x, pd.Series):
+                x = x.iloc[-1] if len(x) else float("nan")
+            return float(x) if not pd.isna(x) else float("nan")
+        try:
+            close = smh_df["close"]
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
             price_current = close.asof(date)
             future_date = date + pd.Timedelta(days=horizon_days)
             price_future = close.asof(future_date)

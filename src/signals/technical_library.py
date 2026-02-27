@@ -14,6 +14,10 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+import numpy as _np
+if not hasattr(_np, 'NaN'):
+    _np.NaN = _np.nan  # numpy 2.x removed NaN; patch for pandas_ta compatibility
+
 try:
     import pandas_ta as ta
 except ImportError:

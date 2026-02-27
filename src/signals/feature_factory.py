@@ -57,6 +57,30 @@ FEATURE_REGISTRY: Dict[str, Dict[str, Any]] = {
     "cmf_norm": {"type": "technical", "column": None, "compute_fn": "_compute_cmf_norm", "active": False, "protected": False},
     "news_supply": {"type": "news", "column": None, "compute_fn": None, "active": False, "protected": False},
     "news_spike": {"type": "news", "column": None, "compute_fn": None, "active": False, "protected": False},
+    "rel_momentum_20d": {
+        "type": "relative",
+        "column": None,
+        "compute_fn": None,
+        "smh_compute_fn": "_compute_rel_momentum_20d",
+        "active": False,
+        "protected": False,
+    },
+    "rel_momentum_5d": {
+        "type": "relative",
+        "column": None,
+        "compute_fn": None,
+        "smh_compute_fn": "_compute_rel_momentum_5d",
+        "active": False,
+        "protected": False,
+    },
+    "rel_rsi": {
+        "type": "relative",
+        "column": None,
+        "compute_fn": None,
+        "smh_compute_fn": "_compute_rel_rsi",
+        "active": False,
+        "protected": False,
+    },
 }
 
 # Full 7-feature list used when calling pipeline.extract_features_for_date to get news cols
@@ -245,6 +269,63 @@ def _compute_cmf_norm(df: pd.DataFrame) -> pd.Series:
     return _rolling_minmax(cmf.reindex(df.index).fillna(0), 252)
 
 
+def _compute_rel_momentum_20d(df: pd.DataFrame, smh_df: pd.DataFrame, date: pd.Timestamp) -> Optional[float]:
+    """Stock 20-day return minus SMH 20-day return. Positive = stock outperforming sector."""
+    try:
+        stock_close = df['close'] if not isinstance(df['close'], pd.DataFrame) else df['close'].iloc[:, 0]
+        smh_close = smh_df['close']
+        lookback = pd.Timedelta(days=28)  # 28 calendar days ≈ 20 trading days
+        s_now = float(stock_close.asof(date))
+        s_then = float(stock_close.asof(date - lookback))
+        b_now = float(smh_close.asof(date))
+        b_then = float(smh_close.asof(date - lookback))
+        if any(pd.isna([s_now, s_then, b_now, b_then])) or s_then <= 0 or b_then <= 0:
+            return None
+        return (s_now / s_then - 1) - (b_now / b_then - 1)
+    except Exception:
+        return None
+
+
+def _compute_rel_momentum_5d(df: pd.DataFrame, smh_df: pd.DataFrame, date: pd.Timestamp) -> Optional[float]:
+    """Stock 5-day return minus SMH 5-day return. Short-term relative strength."""
+    try:
+        stock_close = df['close'] if not isinstance(df['close'], pd.DataFrame) else df['close'].iloc[:, 0]
+        smh_close = smh_df['close']
+        lookback = pd.Timedelta(days=7)  # 7 calendar days ≈ 5 trading days
+        s_now = float(stock_close.asof(date))
+        s_then = float(stock_close.asof(date - lookback))
+        b_now = float(smh_close.asof(date))
+        b_then = float(smh_close.asof(date - lookback))
+        if any(pd.isna([s_now, s_then, b_now, b_then])) or s_then <= 0 or b_then <= 0:
+            return None
+        return (s_now / s_then - 1) - (b_now / b_then - 1)
+    except Exception:
+        return None
+
+
+def _compute_rel_rsi(df: pd.DataFrame, smh_df: pd.DataFrame, date: pd.Timestamp) -> Optional[float]:
+    """Stock RSI(14) minus SMH RSI(14). Positive = stock more overbought than sector."""
+    if ta is None:
+        return None
+    try:
+        stock_close = df['close'] if not isinstance(df['close'], pd.DataFrame) else df['close'].iloc[:, 0]
+        stock_slice = stock_close[stock_close.index <= date].tail(30)
+        smh_slice = smh_df['close'][smh_df.index <= date].tail(30)
+        if len(stock_slice) < 15 or len(smh_slice) < 15:
+            return None
+        stock_rsi = ta.rsi(stock_slice, length=14)
+        smh_rsi = ta.rsi(smh_slice, length=14)
+        if stock_rsi is None or smh_rsi is None or stock_rsi.empty or smh_rsi.empty:
+            return None
+        s_val = float(stock_rsi.iloc[-1])
+        b_val = float(smh_rsi.iloc[-1])
+        if pd.isna(s_val) or pd.isna(b_val):
+            return None
+        return (s_val - b_val) / 100.0  # scale to roughly [-1, 1]
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # SECTION 3 — FeatureSelector
 # ---------------------------------------------------------------------------
@@ -279,6 +360,18 @@ class FeatureSelector:
         config_path = Path(__file__).resolve().parent.parent.parent / "config" / "model_config.yaml"
         pipeline = ModelTrainingPipeline(str(config_path))
         pipeline.feature_names = _FULL_FEATURE_ORDER.copy()
+
+        _use_residual = False
+        _smh_df = None
+        _beta_window = 60
+        try:
+            _cfg = pipeline.config["training"] if hasattr(pipeline, "config") else {}
+            _use_residual = _cfg.get("residual_target", False)
+            _beta_window = _cfg.get("rolling_beta_window", 60)
+            if _use_residual:
+                _smh_df = pipeline._load_smh_prices()
+        except Exception:
+            pass
 
         rows = []
         for ticker in prices_dict:
@@ -325,6 +418,16 @@ class FeatureSelector:
                         col = name if name in row.index else (meta.get("column") if meta.get("column") else None)
                         val = row.get(col, row.get(name, 0.5))
                         feat[name] = float(val) if pd.notna(val) else 0.5
+                    elif meta.get("type") == "relative" and _smh_df is not None and meta.get("smh_compute_fn"):
+                        fn_name = meta["smh_compute_fn"]
+                        fn = globals().get(fn_name)
+                        if fn is not None:
+                            val = fn(full_df, _smh_df, date)
+                            feat[name] = float(val) if val is not None and not pd.isna(val) else np.nan
+                        else:
+                            feat[name] = np.nan
+                    elif meta.get("type") == "relative":
+                        feat[name] = np.nan
                     else:
                         feat[name] = 0.5
                 news_feat = _get_news_features_for_date(ticker, date, news_signals)
@@ -334,6 +437,11 @@ class FeatureSelector:
                     fwd = pipeline._calculate_forward_return(ticker, date, prices_dict, horizon_days=7)
                 except Exception:
                     fwd = None
+                if fwd is not None and _use_residual and _smh_df is not None:
+                    smh_fwd = pipeline._calculate_smh_forward_return(_smh_df, date, horizon_days=7)
+                    beta = pipeline._calculate_rolling_beta(prices_dict[ticker], _smh_df, date, window=_beta_window)
+                    if smh_fwd is not None:
+                        fwd = fwd - (beta * smh_fwd)
                 if fwd is None or (isinstance(fwd, float) and (np.isnan(fwd) or np.isinf(fwd))):
                     continue
                 feat["forward_ret"] = float(fwd)

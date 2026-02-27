@@ -37,6 +37,10 @@ SPAC_IPO_DATES = {
     "OKLO": "2024-05-10",   # AltC Acquisition Corp merger closed ~May 2024
 }
 
+BACKTEST_EXCLUDE = {
+    "SSNLF",   # Samsung non-listed OTC share — illiquid, untradeable in practice
+}
+
 # --- Centralized data loading (src.data.csv_provider) ---
 from src.data.csv_provider import (
     load_data_config as load_config,
@@ -661,6 +665,12 @@ def main():
     if not prices_dict:
         print("ERROR: Could not load price data into dictionary.")
         return 1
+
+    for ticker in list(prices_dict.keys()):
+        if ticker in BACKTEST_EXCLUDE:
+            del prices_dict[ticker]
+            if ticker in tickers:
+                tickers.remove(ticker)
 
     # SPAC filter: clip pre-IPO (shell) price data for known SPAC-origin tickers; drop if < 30 rows after clip
     for ticker in list(prices_dict.keys()):

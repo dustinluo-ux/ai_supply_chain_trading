@@ -1,58 +1,37 @@
-# Model Configuration
-# Change 'active_model' to switch between models - NO CODE CHANGES NEEDED
-
-# Enable ML model (set to true to use regression, false to use weighted signals)
-use_ml: true  # Phase 3 wiring: blend 0.7 * baseline + 0.3 * ML score
-
-# Which model to use for predictions
-active_model: ridge    # Options: linear, ridge, lasso, xgboost (ridge more robust on small samples)
-
-# Model-specific hyperparameters
+use_ml: true
+active_model: ridge
 models:
-  linear:
-    # No hyperparameters for basic linear regression
+  linear: null
   ridge:
-    alpha: 0.001  # Regularization strength (reduced from 0.01 to give momentum/volume more signal surface)
+    alpha: 0.001
   lasso:
-    alpha: 0.1  # Regularization strength (higher = more feature selection)
+    alpha: 0.1
   xgboost:
-    n_estimators: 100  # Number of trees
-    max_depth: 3       # Tree depth (keep low to avoid overfitting)
+    n_estimators: 100
+    max_depth: 3
     learning_rate: 0.1
-    subsample: 0.8     # Row sampling
-    colsample_bytree: 0.8  # Feature sampling
+    subsample: 0.8
+    colsample_bytree: 0.8
     random_state: 42
-
-  # Add new models here:
-  # random_forest:
-  #   n_estimators: 100
-  #   max_depth: 5
-  # lightgbm:
-  #   num_leaves: 31
-  #   learning_rate: 0.05
-
-# Feature configuration
 features:
-  news_lookback_days: 7   # Days of news to analyze
-  # Feature list (order matters!) — IC-based pruning: only 3 features carry signal
+  news_lookback_days: 7
   feature_names:
-    - rsi_norm
-    - sentiment_velocity
-    - news_sentiment
-    - adx_norm
-    - roc_norm
+  - rsi_norm
+  - sentiment_velocity
+  - news_sentiment
+  - adx_norm
 training:
-  train_start: '2022-01-01'  # Training period start
-  train_end: '2023-12-31'     # Training period end
-  test_start: '2024-01-01'    # Test period start
-  test_end: '2024-12-31'      # Test period end
-  validation_split: 0.2  # Use 20% of training data for validation
-  # Model persistence
+  train_start: '2022-01-01'
+  train_end: '2023-12-31'
+  test_start: '2024-01-01'
+  test_end: '2024-12-31'
+  validation_split: 0.2
+  residual_target: true
+  smh_benchmark_path: trading_data/benchmarks/SMH.csv
+  rolling_beta_window: 60
   save_models: true
   model_save_dir: models/saved/
-  model_path: 
-    C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260226_214200.pkl # Phase 3 inference — 7-feature ridge, IC=0.0202
-# Logging
+  model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
 logging:
   log_predictions: true
   log_feature_importance: true
