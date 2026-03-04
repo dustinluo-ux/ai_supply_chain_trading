@@ -9,10 +9,10 @@ Weekly rebalance with:
 Saves log to outputs/backtest_master_score_*.txt
 """
 from __future__ import annotations
+import os
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -49,6 +49,89 @@ from src.data.csv_provider import (
     ensure_ohlcv,
 )
 from src.utils.audit_logger import log_audit_record
+
+
+def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
+    """
+    One-time load of per-ticker, per-date news sentiment for ML inference.
+    Returns {ticker: {date_str: {"sentiment_score": float, "supply_chain_score": float}}}.
+    Silent fail per ticker; returns {} if news_dir is None or does not exist.
+    """
+    if news_dir is None:
+        return {}
+    news_path = Path(news_dir)
+    if not news_path.exists() or not news_path.is_dir():
+        return {}
+    out: dict = {}
+    for ticker in tickers:
+        try:
+            path = news_path / f"{ticker}_news.json"
+            if not path.exists():
+                continue
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            articles = json.loads(raw)
+            if not isinstance(articles, list):
+                continue
+            by_date: dict[str, list[tuple[float, float]]] = {}
+            for art in articles:
+                if not isinstance(art, dict):
+                    continue
+                pub = art.get("published_at") or art.get("publishedAt")
+                if not pub:
+                    continue
+                date_str = str(pub)[:10]
+                sent = 0.5
+                if "sentiment_score" in art:
+                    try:
+                        sent = float(art["sentiment_score"])
+                    except (TypeError, ValueError):
+                        pass
+                elif "sentiment" in art:
+                    try:
+                        sent = float(art["sentiment"])
+                    except (TypeError, ValueError):
+                        pass
+                elif "entities" in art and isinstance(art["entities"], list) and art["entities"]:
+                    for ent in art["entities"]:
+                        if isinstance(ent, dict) and ent.get("symbol") == ticker:
+                            s = ent.get("sentiment_score", ent.get("sentiment"))
+                            if s is not None:
+                                try:
+                                    sent = float(s)
+                                except (TypeError, ValueError):
+                                    pass
+                            break
+                    else:
+                        e0 = art["entities"][0]
+                        if isinstance(e0, dict):
+                            s = e0.get("sentiment_score", e0.get("sentiment"))
+                            if s is not None:
+                                try:
+                                    sent = float(s)
+                                except (TypeError, ValueError):
+                                    pass
+                supply = 0.5
+                if "supply_chain_score" in art:
+                    try:
+                        supply = float(art["supply_chain_score"])
+                    except (TypeError, ValueError):
+                        pass
+                elif "supply_chain" in art:
+                    try:
+                        supply = float(art["supply_chain"])
+                    except (TypeError, ValueError):
+                        pass
+                by_date.setdefault(date_str, []).append((sent, supply))
+            out[ticker] = {}
+            for d, pairs in by_date.items():
+                n = len(pairs)
+                out[ticker][d] = {
+                    "sentiment_score": sum(p[0] for p in pairs) / n,
+                    "supply_chain_score": sum(p[1] for p in pairs) / n,
+                }
+        except Exception:
+            continue
+    return out
 
 
 def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
@@ -171,6 +254,7 @@ def run_backtest_master_score(
     rolling_method: str = "max_sharpe",
     verbose: bool = True,
     llm_enabled: bool = True,
+    model_path_override: str | None = None,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -250,6 +334,7 @@ def run_backtest_master_score(
     signals_df = pd.DataFrame(0.0, index=mondays, columns=tickers)
     if not llm_enabled and verbose:
         print("  [CONFIG] Backtest running with LLM disabled (--no-llm); Gemini will not be called.", flush=True)
+    backtest_news_signals = _load_news_signals(news_dir, tickers) if news_dir else {}
     transmat_printed = False
     prev_regime: str | None = None
     for idx, monday in enumerate(mondays):
@@ -362,6 +447,7 @@ def run_backtest_master_score(
             "spy_above_sma200": spy_above_sma200 if weight_mode == "regime" and regime_state is None else None,
             "category_weights_override": category_weights_override,
             "news_dir": news_dir,
+            "news_signals": backtest_news_signals,
             "sector_sentiments_this_week": sector_sentiments_this_week,
             "signal_horizon_days_this_week": signal_horizon_days_this_week,
             "news_weight_used": news_weight_used,
@@ -370,6 +456,9 @@ def run_backtest_master_score(
             "llm_enabled": llm_enabled,
         }
         week_scores, aux = signal_engine.generate(monday, tickers, data_context)
+        from src.core.target_weight_pipeline import apply_ml_blend
+        precomputed_indicators = aux.get("indicator_rows") or {}
+        week_scores = apply_ml_blend(week_scores, monday, prices_dict, backtest_news_signals, precomputed_indicators=precomputed_indicators, model_path_override=model_path_override)
         atr_norms = aux.get("atr_norms", {})
         buzz_by_ticker = aux.get("buzz_by_ticker", {})
 
@@ -383,13 +472,28 @@ def run_backtest_master_score(
         gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
         action = flags.get("action", "Trade")
 
-        portfolio_context = {"top_n": top_n, "atr_norms": atr_norms, "tickers": tickers}
+        # Build a filtered prices_dict for HRP: only top candidate tickers, sliced to monday.
+        _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[: top_n * 2]
+        _prices_dict_hrp: dict = {}
+        for _t, _ in _top_candidates:
+            if _t in prices_dict and prices_dict[_t] is not None:
+                _sliced = prices_dict[_t].loc[prices_dict[_t].index <= monday]
+                if len(_sliced) >= 30:
+                    _prices_dict_hrp[_t] = _sliced
+        use_hrp_sizing = bool(_prices_dict_hrp)
+
+        portfolio_context = {
+            "top_n": top_n,
+            "atr_norms": atr_norms,
+            "tickers": tickers,
+            "prices_dict": _prices_dict_hrp if use_hrp_sizing else None,
+        }
         intent = portfolio_engine.build(monday, gated_scores, portfolio_context)
 
         if effective_regime_state == "BEAR":
             for t in tickers:
                 intent.weights[t] = float(intent.weights.get(t, 0.0)) * 0.5
-        if effective_regime_state != "BEAR" and intent.tickers:
+        if effective_regime_state != "BEAR" and intent.tickers and not use_hrp_sizing:
             atr_per_share: dict[str, float] = {}
             prices_at_monday: dict[str, float] = {}
             for t in intent.tickers:
@@ -591,14 +695,32 @@ def main():
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--weight-mode", type=str, default="fixed")
-    parser.add_argument("--news-dir", type=str, default="data/news")
+    parser.add_argument("--rolling-method", type=str, default="max_sharpe", help="When weight-mode=rolling: hrp or max_sharpe")
+    parser.add_argument("--news-dir", type=str, default=None)
     parser.add_argument("--news-weight", type=float, default=None)
     parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
     parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
     parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
+    parser.add_argument("--track", choices=["A", "B"], default=None, help="Model track override: A=absolute, B=residual. Reads path from config/model_config.yaml tracks section.")
     args = parser.parse_args()
+
+    # Resolve model path override from --track flag
+    _track_model_path_override = None
+    if args.track is not None:
+        import yaml as _yaml
+        _mcfg_path = ROOT / "config" / "model_config.yaml"
+        with open(_mcfg_path, "r", encoding="utf-8") as _f:
+            _mcfg = _yaml.safe_load(_f)
+        _track_cfg = _mcfg.get("tracks", {}).get(args.track, {})
+        _raw_path = _track_cfg.get("model_path", "")
+        if _raw_path:
+            _p = Path(_raw_path)
+            _track_model_path_override = str(_p if _p.is_absolute() else ROOT / _raw_path)
+            print(f"[TRACK] {args.track}: {_track_model_path_override}")
+        else:
+            print(f"[WARN] --track {args.track} has no model_path in config/model_config.yaml tracks section")
 
     if args.tickers is not None:
         raw_tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
@@ -704,8 +826,10 @@ def main():
         "start_date": args.start,
         "end_date": args.end,
         "weight_mode": args.weight_mode,
+        "rolling_method": args.rolling_method,
         "news_weight_fixed": args.news_weight,
         "llm_enabled": not args.no_llm,
+        "model_path_override": _track_model_path_override,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days

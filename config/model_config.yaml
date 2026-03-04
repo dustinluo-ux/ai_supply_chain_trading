@@ -36,3 +36,8 @@ logging:
   log_predictions: true
   log_feature_importance: true
   log_dir: logs/models/
+tracks:
+  A:
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_20260301_224451.pkl
+  B:
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl

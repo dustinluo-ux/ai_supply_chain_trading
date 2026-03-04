@@ -17,6 +17,158 @@ from src.data.csv_provider import find_csv_path, ensure_ohlcv
 # Phase 3 ML: load once per process (fail-open if load fails)
 _ML_MODEL_CACHE = None
 _ML_PIPELINE_CACHE = None
+_ML_MODEL_PATH_CACHED: str | None = None
+
+
+def _news_features_for_date(ticker: str, as_of: pd.Timestamp, news_signals: dict) -> dict[str, float]:
+    """Compute news-derived feature values (same logic as extract_features_for_date). Returns dict with news_supply, news_sentiment, sentiment_velocity, news_spike."""
+    news_signals = news_signals or {}
+    date_str = as_of.strftime("%Y-%m-%d") if isinstance(as_of, pd.Timestamp) else str(as_of)
+    ticker_news = news_signals.get(ticker, {})
+    news = ticker_news.get(date_str) or ticker_news.get(as_of) or {}
+    if news is None:
+        news = {}
+    news_supply = float(news.get("supply_chain_score", news.get("supply_chain", 0.5)))
+    news_sentiment = float(news.get("sentiment_score", news.get("sentiment", 0.5)))
+    past_sentiment = None
+    for offset in [5, 6, 7, 4, 3]:
+        past_date = as_of - pd.Timedelta(days=offset)
+        past_str = past_date.strftime("%Y-%m-%d")
+        if past_str in ticker_news:
+            past_news = ticker_news.get(past_str) or {}
+            past_sentiment = float(past_news.get("sentiment_score", past_news.get("sentiment", 0.5)))
+            break
+    sentiment_velocity = (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+    supply_values = []
+    for d in range(1, 21):
+        back_str = (as_of - pd.Timedelta(days=d)).strftime("%Y-%m-%d")
+        if back_str not in ticker_news:
+            continue
+        back_news = ticker_news.get(back_str) or {}
+        supply_values.append(float(back_news.get("supply_chain_score", back_news.get("supply_chain", 0.5))))
+    if len(supply_values) >= 5:
+        mean_supply = float(np.mean(supply_values))
+        news_spike = (news_supply / mean_supply) if mean_supply > 0 else 1.0
+    else:
+        news_spike = 1.0
+    return {"news_supply": news_supply, "news_sentiment": news_sentiment, "sentiment_velocity": sentiment_velocity, "news_spike": news_spike}
+
+
+def _build_features_from_precomputed(
+    ticker: str,
+    as_of: pd.Timestamp,
+    precomputed_row: dict,
+    news_signals: dict,
+    feature_names: list[str],
+) -> Optional[list]:
+    """Build feature vector in feature_names order from precomputed indicator row + news. Returns None if any required indicator is missing."""
+    values: dict[str, float] = {}
+    m5 = precomputed_row.get("momentum_5d_norm")
+    m20 = precomputed_row.get("momentum_20d_norm")
+    if m5 is not None and m20 is not None:
+        values["momentum_avg"] = (float(m5) + float(m20)) / 2.0
+    for key, v in precomputed_row.items():
+        if v is not None and isinstance(key, str):
+            try:
+                values[key] = float(v)
+            except (TypeError, ValueError):
+                pass
+    news_feats = _news_features_for_date(ticker, as_of, news_signals)
+    values.update(news_feats)
+    for name in feature_names:
+        if name not in values:
+            return None
+    try:
+        return [values[name] for name in feature_names]
+    except KeyError:
+        return None
+
+
+def apply_ml_blend(
+    week_scores: dict[str, float],
+    as_of: pd.Timestamp,
+    prices_dict: dict,
+    news_signals: dict,
+    precomputed_indicators: Optional[dict[str, dict[str, float]]] = None,
+    model_path_override: Optional[str] = None,
+) -> dict[str, float]:
+    """
+    If use_ml and model loaded, blend 0.7*week_scores + 0.3*ML; else return week_scores.
+    precomputed_indicators: optional {ticker: {feature_name: float}} from signal_engine aux; avoids double calculate_all_indicators.
+    model_path_override: if set, load this .pkl instead of the path in model_config.yaml (used by --track A/B).
+    """
+    global _ML_MODEL_CACHE, _ML_PIPELINE_CACHE, _ML_MODEL_PATH_CACHED
+    _root = Path(__file__).resolve().parent.parent.parent
+    _model_cfg_path = _root / "config" / "model_config.yaml"
+    if not _model_cfg_path.exists():
+        return week_scores
+    import yaml as _yaml
+    with open(_model_cfg_path, "r", encoding="utf-8") as _f:
+        _model_cfg = _yaml.safe_load(_f)
+    if not _model_cfg.get("use_ml", False):
+        return week_scores
+    # model_path_override (from --track A/B) takes priority over config
+    if model_path_override:
+        _path = Path(model_path_override)
+    else:
+        _path = _model_cfg.get("training", {}).get("model_path")
+        if not _path:
+            return week_scores
+        _path = (_root / _path) if not Path(_path).is_absolute() else Path(_path)
+    # Invalidate cache if the model path changed (e.g. switching tracks mid-process)
+    if _ML_MODEL_PATH_CACHED is not None and str(_path) != _ML_MODEL_PATH_CACHED:
+        _ML_MODEL_CACHE = None
+        _ML_PIPELINE_CACHE = None
+    if _ML_MODEL_CACHE is None:
+        try:
+            from src.models.model_factory import MODEL_REGISTRY
+            from src.models.train_pipeline import ModelTrainingPipeline as _MLPipeline
+            _active = _model_cfg.get("active_model", "ridge")
+            _ML_MODEL_CACHE = MODEL_REGISTRY[_active].load_model(str(_path))
+            _ML_PIPELINE_CACHE = _MLPipeline(str(_root / "config" / "model_config.yaml"))
+            _ML_MODEL_PATH_CACHED = str(_path)
+        except Exception as _e:
+            logging.warning("ML model load failed (apply_ml_blend): %s", _e)
+            return week_scores
+    if _ML_MODEL_CACHE is None or _ML_PIPELINE_CACHE is None:
+        return week_scores
+    _news_signals = news_signals or {}
+    _feature_names = getattr(_ML_PIPELINE_CACHE, "feature_names", [])
+    _X_list, _ticker_list = [], []
+    for _t in week_scores:
+        _feats = None
+        if precomputed_indicators and _t in precomputed_indicators and _feature_names:
+            _feats = _build_features_from_precomputed(
+                _t, as_of, precomputed_indicators[_t], _news_signals, _feature_names
+            )
+        if _feats is None and not precomputed_indicators:
+            _feats = _ML_PIPELINE_CACHE.extract_features_for_date(_t, as_of, prices_dict, _news_signals)
+        if _feats is not None:
+            _X_list.append(_feats)
+            _ticker_list.append(_t)
+    if not _X_list:
+        return week_scores
+    _X = np.array(_X_list)
+    _inner = _ML_MODEL_CACHE.model
+    _coef = np.array(_inner.coef_).ravel()
+    _intercept = float(np.array(_inner.intercept_).ravel()[0]) if hasattr(_inner, "intercept_") else 0.0
+    _ml_raw = np.einsum("ij,j->i", np.nan_to_num(_X, nan=0.5), _coef) + _intercept
+    _mn, _mx = float(_ml_raw.min()), float(_ml_raw.max())
+    if _mx - _mn > 0:
+        _ml_scaled = (_ml_raw - _mn) / (_mx - _mn)
+    else:
+        _ml_scaled = np.full_like(_ml_raw, 0.5)
+    _ml_score = {_ticker_list[_i]: float(_ml_scaled[_i]) for _i in range(len(_ticker_list))}
+    for _t in week_scores:
+        if _t not in _ml_score:
+            _ml_score[_t] = 0.5
+    _blended = {}
+    for _t in week_scores:
+        _blended[_t] = 0.7 * week_scores[_t] + 0.3 * _ml_score[_t]
+        if _ml_score[_t] < 0.4 and week_scores[_t] > 0.6:
+            _blended[_t] *= 0.5
+    return _blended
+
 
 BENCHMARK_TICKER = "SPY"
 SMA_KILL_SWITCH_DAYS = 200
