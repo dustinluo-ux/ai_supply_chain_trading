@@ -67,7 +67,7 @@ def _main() -> int:
     pending_idxs = [
         i for i, r in enumerate(records)
         if (int(r.get("qty_filled") or 0) == 0
-        or (r.get("status") or "") in ("failed", "unknown")
+        or (r.get("status") or "") in ("failed", "unknown"))
     ]
     if not pending_idxs:
         print("All fills already reconciled.", flush=True)

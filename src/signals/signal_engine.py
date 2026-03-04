@@ -220,6 +220,7 @@ class SignalEngine:
                             sector_sentiments=sector_sentiments_this_week or None,
                             sector_map=sector_map_use,
                             signal_horizon_days=signal_horizon_days_this_week,
+                            use_finbert=llm_enabled,
                             llm_enabled=llm_enabled,
                         )
                         news_composite_val = r.get("news_composite", 0.5)
@@ -340,11 +341,21 @@ class SignalEngine:
             except Exception:
                 week_scores[t] = 0.5
 
+        # Expose indicator rows so backtest can pass precomputed_indicators to apply_ml_blend (avoids double calculate_all_indicators)
+        indicator_rows = {}
+        for t in cached:
+            if "row" in cached[t]:
+                row = cached[t]["row"]
+                if hasattr(row, "to_dict"):
+                    indicator_rows[t] = row.to_dict()
+                elif isinstance(row, dict):
+                    indicator_rows[t] = dict(row)
         aux = {
             "atr_norms": atr_norms,
             "regime_state": regime_state,
             "news_weight_used": news_weight_used,
             "buzz_by_ticker": buzz_by_ticker,
+            "indicator_rows": indicator_rows,
         }
         return week_scores, aux
 

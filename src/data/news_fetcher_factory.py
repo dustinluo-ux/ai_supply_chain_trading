@@ -91,8 +91,8 @@ class NewsFetcherFactory:
         # Get keywords from config
         keywords = config.get('news_keywords', [])
         
-        # Get data directory
-        data_dir = "data/news"
+        # Get data directory from config (config/config.yaml news.data_dir)
+        data_dir = news_config.get('data_dir', 'C:/ai_supply_chain_trading/trading_data/news')
         
         logger.info(f"Creating news source from config: {source_name}")
         return cls.create_source(source_name, data_dir, keywords, news_config)

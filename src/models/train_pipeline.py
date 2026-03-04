@@ -262,6 +262,8 @@ class ModelTrainingPipeline:
                 close = raw_close.iloc[:, 0]
             else:
                 close = raw_close
+            if not close.index.is_monotonic_increasing:
+                close = close.sort_index()
             price_current = close.asof(date)
             future_date = date + pd.Timedelta(days=horizon_days)
             price_future = close.asof(future_date)

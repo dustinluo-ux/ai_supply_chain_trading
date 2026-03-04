@@ -793,13 +793,15 @@ def main() -> int:
     )
     logger.info("update_signal_db.py exit code: %s", r4.returncode)
 
-    # Step 5: Fill reconciliation
+    # Step 5: Fill reconciliation (default paths: fills.jsonl, last_signal.json, fill_reconciliation_YYYY-MM-DD.md)
     r5 = subprocess.run(
         [py, str(scripts_dir / "reconcile_fills.py")],
         cwd=str(ROOT),
         capture_output=False,
     )
     logger.info("reconcile_fills.py exit code: %s", r5.returncode)
+    if r5.returncode != 0:
+        logger.warning("reconcile_fills.py exited non-zero — check outputs/fills/fills.jsonl and ledger")
 
     # Step 6: Risk report
     r6 = subprocess.run(

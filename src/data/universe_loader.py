@@ -305,7 +305,8 @@ class UniverseLoader:
             True if news data exists
         """
         if news_dir is None:
-            news_dir = Path("data/news")
+            from src.utils.data_manager import get_path
+            news_dir = get_path("news")
         
         # Check for main news file
         news_file = news_dir / f"{ticker}_news.json"
@@ -339,8 +340,9 @@ class UniverseLoader:
         max_tickers = max_tickers or self.config['universe_selection']['max_tickers']
         require_news = require_news if require_news is not None else self.config['filtering']['require_news']
         exclude_tickers = set(self.config['filtering']['exclude_tickers'])
-        news_dir = Path("data/news")
-        
+        from src.utils.data_manager import get_path
+        news_dir = get_path("news")
+
         # Determine pool size for supply chain analysis
         if rank_by_supply_chain:
             pool_size = supply_chain_pool_size or (max_tickers * 3)  # Default: analyze 3x the final size

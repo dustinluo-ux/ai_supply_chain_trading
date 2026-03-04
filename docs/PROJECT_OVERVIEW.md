@@ -1,5 +1,5 @@
 # PROJECT OVERVIEW — AI Supply Chain Trading System
-**Last Updated:** 2026-02-22 (end of day)
+**Last Updated:** 2026-03-04 (end of day)
 **Note:** This supersedes PROJECT_STATUS.md (last updated 2026-02-15, now stale).
 
 ---
@@ -211,31 +211,57 @@ IBKR Paper Execution       (Monday only; Tue-Fri: VIX>30 / SPY<200SMA / SMH-5% �
 | RESEARCH_ARCHIVE.md | DONE | ML decisions, rejected strategies |
 | NEP removed from universe (delisted) | DONE | 47 → 46 tickers |
 
-### Backtest Results (validated)
+### Phase 5: Factor Orthogonalization (completed 2026-02-27, commit a3b474b)
 
-| Year | Sharpe | Return | Max Drawdown | Notes |
-|------|--------|--------|--------------|-------|
-| 2022 | -0.2759 | -17.95% | -20.65% | Broad tech bear; SPY -19% |
-| 2023 | +0.3399 | +78.10% | -19.93% | NVDA/AMD news active |
-| 2024 | +0.1985 | +33.88% | -10.31% | vs S&P ~25%, NASDAQ ~29% |
+| Item | Status |
+|------|--------|
+| Residual alpha target: y = stock_return − beta×SMH_return | ✅ DONE |
+| Track B residual Ridge model (IC=0.0300) | ✅ DONE |
+| Track A absolute Ridge model (IC=0.0431) | ✅ DONE |
+| `--track A/B` CLI switch (no config editing needed) | ✅ DONE |
+
+### Phase 6: HRP + Alpha Tilt Allocation (completed 2026-03-04, commit aeedada)
+
+| Item | Status |
+|------|--------|
+| HRP pure-Python implementation (no scipy/BLAS) | ✅ DONE |
+| Alpha tilt on HRP base weights | ✅ DONE |
+| Liquidity cap (ADV-scaled, bounded iteration) | ✅ DONE |
+| Final Truth Table v2 (6 backtests × 3 tracks) | ✅ DONE |
+| Track C OLS beta estimation (rolling 60d per week) | ✅ DONE |
+
+### Backtest Results v2 — Final Truth Table (HRP + Alpha Tilt, 2026-03-04)
+
+| Year | Track A Absolute | Track B Residual | Track C Hedged (HR=1.0, OLS β) |
+|------|-----------------|-----------------|----------------------------------|
+| 2022† | Sharpe=0.10, +12.2%, DD=-21.1% | Sharpe=0.18, +26.0%, DD=-15.2% | Sharpe=0.64, +21.4%, DD=-18.6%, β=0.12 |
+| 2023† | Sharpe=0.33, +62.8%, DD=-11.4% | Sharpe=0.33, +61.1%, DD=-9.4% | Sharpe=1.64, +57.6%, DD=-9.8%, β=0.16 |
+| 2024  | Sharpe=0.51, +154.5%, DD=-9.3% | Sharpe=0.49, +136.0%, DD=-11.1% | Sharpe=3.09, +131.9%, DD=-17.8%, β=0.45 |
+
+†in-sample (model trained 2022–2023). 2024 = out-of-sample only valid year.
+Low OLS betas (0.12–0.45) reflect HRP's allocation to non-US/non-semi tickers (JP, HK).
+
+**Earlier baseline (inverse-ATR, superseded):**
+- 2022: Sharpe=-0.28, -17.95%, DD=-20.65%
+- 2023: Sharpe=+0.34, +78.10%, DD=-19.93%
+- 2024: Sharpe=+0.20, +33.88%, DD=-10.31%
 
 **Statistical validation (3-year combined, 2026-02-22):**
 - Bootstrap Sharpe 95% CI: [1.163, 3.013] — entirely above zero
 - Alpha t-test vs SPY: mean +0.82%/week (+42.6% ann.), p=0.053
 - Hit rate vs SPY: 55.4% (87/157 weeks)
-- Max drawdown percentile: 57th (normal range)
 
 ---
 
-## Current Open Items (as of 2026-02-22)
+## Current Open Items (as of 2026-03-04)
 
 | Item | Priority | Notes |
 |------|----------|-------|
+| Track C: rolling OLS beta for hedge | High | Fixed beta=1.0 now; compute 60d OLS per week vs SMH |
 | Data gaps (NVDA, AMD, TSM, ASML + 10 others) | Medium | Gaps >5 cal days — likely corporate actions, not errors |
-| IBKR fill reconciliation | Medium | fills.jsonl exists; reconcile_fills.py + sync_fills_from_ibkr.py written but not tested end-to-end |
+| IBKR fill reconciliation | DONE | sync bug fixed, unicode fixed, --no-llm wired, end-to-end verified |
 | Scheduling automation | Medium | Manual runs only; no cron/APScheduler wired |
 | Real-time data feeds | Low/Future | Historical CSVs only |
-| ~~Statistical validation~~ | ~~Low~~ | DONE 2026-02-22 — see Backtest Results above |
 
 ---
 
@@ -250,7 +276,7 @@ IBKR Paper Execution       (Monday only; Tue-Fri: VIX>30 / SPY<200SMA / SMH-5% �
 | Daily Operations | 100% — DONE | — |
 | Monitoring Dashboard | 100% — DONE | — |
 | Risk Management (regime gate, emergency brake) | 100% — DONE | — |
-| Paper Trading | ~80% | Fill reconciliation loop + scheduling not automated |
+| Paper Trading | ~90% | Fill reconciliation loop + scheduling not automated |
 | Live Trading | ~25% | Real-time feeds, fill reconciliation, scheduling missing |
 
 ---

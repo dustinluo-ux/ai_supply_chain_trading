@@ -160,44 +160,44 @@ def _main() -> int:
     # Sort: non-flat first, then by ticker
     rows.sort(key=lambda r: (0 if (r[1] != 0 or r[2] != 0) else 1, r[0]))
 
-    # Format helpers: currency by ticker (.T, .HK → ¥ else $)
+    # Format helpers: currency prefix by ticker (.T→JPY, .HK→HKD, else $)
     def _currency(ticker: str) -> str:
-        return "¥" if ".T" in ticker or ".HK" in ticker else "$"
+        if ".T" in ticker:
+            return "JPY "
+        if ".HK" in ticker:
+            return "HKD "
+        return "$"
 
     def _fmt_price(ticker: str, p: float | None) -> str:
         if p is None:
-            return "—"
-        c = _currency(ticker)
-        if c == "¥":
-            return f"¥{p:,.2f}"
-        return f"${p:,.2f}"
+            return "-"
+        return f"{_currency(ticker)}{p:,.2f}"
 
     def _fmt_mv(ticker: str, mv: float | None) -> str:
         if mv is None:
-            return "—"
-        c = _currency(ticker)
-        return f"{c}{mv:,.0f}"
+            return "-"
+        return f"{_currency(ticker)}{mv:,.0f}"
 
     def _fmt_pnl(pnl: float | None) -> str:
         if pnl is None:
-            return "—"
+            return "-"
         if pnl >= 0:
             return f"+${pnl:,.0f}"
         return f"-${abs(pnl):,.0f}"
 
-    # Build report text — columns: Ticker, Intended Qty, Held Qty, Avg Fill, Last Price, Cost Basis, Mkt Value, Unreal PnL, Status
+    # Build report text - columns: Ticker, Intended Qty, Held Qty, Avg Fill, Last Price, Cost Basis, Mkt Value, Unreal PnL, Status
     lines = [
-        f"=== Fill Reconciliation — {today_str} ===",
+        f"=== Fill Reconciliation -- {today_str} ===",
         f"Last signal: {today_str}   Active positions in ledger: {sum(1 for r in rows if r[2] != 0)}",
         "",
         "  Ticker     Intended Qty   Held Qty   Avg Fill   Last Price   Cost Basis   Mkt Value   Unreal PnL   Status",
-        "  " + "─" * 95,
+        "  " + "-" * 95,
     ]
     for r in rows:
         ticker, iq, hq, avg_fill, price, cost_basis, mv, pnl, status = r
         af_s = _fmt_price(ticker, avg_fill)
         pr_s = _fmt_price(ticker, price)
-        cb_s = _fmt_mv(ticker, cost_basis) if cost_basis is not None else "—"
+        cb_s = _fmt_mv(ticker, cost_basis)
         mv_s = _fmt_mv(ticker, mv)
         pnl_s = _fmt_pnl(pnl)
         lines.append(
@@ -225,7 +225,7 @@ def _main() -> int:
         pct_s = f"+{pct:.2f}%" if pct >= 0 else f"{pct:.2f}%"
         pnl_total_s = f"+${unreal_pnl_total:,.0f}" if unreal_pnl_total >= 0 else f"-${abs(unreal_pnl_total):,.0f}"
         lines.extend([
-            "  " + "─" * 50,
+            "  " + "-" * 50,
             f"  Total Cost Basis:    ${total_cost_basis:,.0f}",
             f"  Total Market Value:  ${total_mkt_value:,.0f}",
             f"  Unrealized PnL:      {pnl_total_s}  ({pct_s})",

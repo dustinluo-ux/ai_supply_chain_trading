@@ -1,3 +1,11 @@
+## 🛠 Development Environment (Auto-Setup)
+- **Python Interpreter**: Always use the Anaconda environment named `wealth`.
+- **Environment Path**: `C:\Users\dusro\anaconda3\envs\wealth`
+- **Python Executable**: `C:\Users\dusro\anaconda3\envs\wealth\python.exe`
+- **Activation Command**: `conda activate wealth`
+- **Rule**: When running scripts or installing packages, the Agent should use the absolute path to the python executable above to ensure the `wealth` environment is utilized.
+---
+
 ● Session Summary
 
   What we fixed (all committed & pushed through 2026-02-18, plus 2026-02-19 fixes below)

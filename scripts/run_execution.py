@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -117,6 +118,7 @@ def compute_target_weights(
     *,
     top_n: int = 3,
     sideways_risk_scale: float = 0.5,
+    llm_enabled: bool | None = None,
 ) -> pd.Series:
     """
     Target weights from canonical spine (SignalEngine -> PolicyEngine -> PortfolioEngine).
@@ -125,7 +127,7 @@ def compute_target_weights(
     """
     from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
     from src.utils.config_manager import get_config as _get_config
-    _llm_enabled = bool(_get_config().get_param("llm_analysis.enabled", True))
+    _llm = bool(llm_enabled) if llm_enabled is not None else bool(_get_config().get_param("llm_analysis.enabled", True))
 
     return _compute_target_weights(
         as_of,
@@ -136,7 +138,7 @@ def compute_target_weights(
         sideways_risk_scale=sideways_risk_scale,
         weight_mode="fixed",
         path="weekly",
-        llm_enabled=_llm_enabled,
+        llm_enabled=_llm,
     )
 
 
@@ -174,6 +176,7 @@ def main() -> tuple[int, list]:
     parser.add_argument("--confirm-paper", action="store_true", help="With --mode paper: actually submit orders; without: dry-run print only")
     parser.add_argument("--rebalance", action="store_true", help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)")
     parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
+    parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
     args = parser.parse_args()
 
     run_start_ts = datetime.now(timezone.utc).isoformat()
@@ -264,6 +267,7 @@ def main() -> tuple[int, list]:
             data_dir,
             top_n=args.top_n,
             sideways_risk_scale=args.sideways_risk_scale,
+            llm_enabled=not args.no_llm,
         )
         if optimal_weights_series.sum() == 0:
             print("No target tickers from portfolio engine.", flush=True)
@@ -309,6 +313,59 @@ def main() -> tuple[int, list]:
         with open(trading_config_path, "r", encoding="utf-8") as f:
             tc = yaml.safe_load(f)
         account_value = float(tc.get("trading", {}).get("initial_capital", 100_000))
+
+    smh_short_shares = 0
+    smh_hedge_row = None
+    if optimal_weights_series.sum() != 0 and intent_tickers:
+        if trading_config_path.exists():
+            with open(trading_config_path, "r", encoding="utf-8") as f:
+                tc_hedge = yaml.safe_load(f) or {}
+            hedge_cfg = tc_hedge.get("trading", {}).get("hedge", {})
+            if hedge_cfg.get("hedge_enabled", False):
+                hedge_ratio = float(hedge_cfg.get("hedge_ratio", 1.0))
+                annual_borrow_rate = float(hedge_cfg.get("annual_borrow_rate", 0.05))
+                beta_lookback_days = int(hedge_cfg.get("beta_lookback_days", 60))
+                smh_prices = load_prices(data_dir, ["SMH"])
+                smh_df = smh_prices.get("SMH") if smh_prices else None
+                if smh_df is not None and not smh_df.empty and "close" in smh_df.columns:
+                    smh_sliced = smh_df.loc[smh_df.index <= as_of]
+                    if not smh_sliced.empty:
+                        rets_smh = smh_sliced["close"].pct_change().dropna()
+                        smh_last_price = float(smh_sliced["close"].iloc[-1])
+                        if smh_last_price > 0:
+                            betas = {}
+                            for t in intent_tickers:
+                                if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+                                    betas[t] = 1.0
+                                    continue
+                                df_t = prices_dict[t].loc[prices_dict[t].index <= as_of]
+                                if df_t.empty or "close" not in df_t.columns:
+                                    betas[t] = 1.0
+                                    continue
+                                rets_t = df_t["close"].pct_change().dropna()
+                                aligned = pd.concat([rets_t, rets_smh], axis=1, join="inner").dropna().tail(beta_lookback_days)
+                                if len(aligned) >= 20:
+                                    cov = np.cov(aligned.iloc[:, 0], aligned.iloc[:, 1])
+                                    betas[t] = cov[0, 1] / cov[1, 1] if cov[1, 1] > 0 else 1.0
+                                else:
+                                    betas[t] = 1.0
+                            effective_beta = sum(float(optimal_weights_series.get(t, 0)) * betas[t] for t in intent_tickers)
+                            smh_short_notional = account_value * hedge_ratio * effective_beta
+                            smh_short_shares = int(smh_short_notional / smh_last_price)
+                            weekly_borrow_cost = (annual_borrow_rate / 52) * smh_short_notional
+                            print(
+                                f"  [HEDGE] SMH short: {smh_short_shares} shares | beta={effective_beta:.3f} | weekly_borrow_cost=${weekly_borrow_cost:.2f}",
+                                flush=True,
+                            )
+                            if smh_short_shares > 0:
+                                smh_hedge_row = {
+                                    "symbol": "SMH",
+                                    "side": "SELL",
+                                    "quantity": smh_short_shares,
+                                    "delta_weight": -effective_beta * hedge_ratio,
+                                    "drift": 0.0,
+                                    "delta_dollars": -smh_short_notional,
+                                }
 
     if args.rebalance:
         # Portfolio-level rebalance: only orders for tickers that drifted past threshold
@@ -356,6 +413,8 @@ def main() -> tuple[int, list]:
         ])
         if executable.empty:
             executable = pd.DataFrame(columns=["symbol", "side", "quantity", "delta_weight", "drift", "delta_dollars"])
+        if smh_short_shares > 0 and smh_hedge_row is not None:
+            executable = pd.concat([executable, pd.DataFrame([smh_hedge_row])], ignore_index=True)
     else:
         # Build last-close prices as of as_of so PositionManager can compute share quantities.
         # Without prices, quantity = int(delta_dollars / 0) = 0 and executable is always empty.
@@ -384,6 +443,8 @@ def main() -> tuple[int, list]:
             significance_threshold=0.02,
         )
         executable = delta_trades[delta_trades["should_trade"] & (delta_trades["quantity"] > 0)]
+        if smh_short_shares > 0 and smh_hedge_row is not None:
+            executable = pd.concat([executable, pd.DataFrame([smh_hedge_row])], ignore_index=True)
 
     mode_label = "mock" if args.mode == "mock" else "paper"
     title = "rebalance (drift threshold)" if args.rebalance else "delta trades"

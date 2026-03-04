@@ -102,7 +102,7 @@ news_data:
   enabled: true
 
   # Directory containing news JSON files
-  directory: "data/news"
+  directory: "C:/ai_supply_chain_trading/trading_data/news"
 
   # News data source
   source: "marketaux"  # Options: FNSPID, Polygon, MarketAux, custom
