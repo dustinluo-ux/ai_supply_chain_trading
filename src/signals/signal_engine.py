@@ -115,7 +115,7 @@ class SignalEngine:
         enable_propagation = data_context.get("enable_propagation", False)
         logger.info(
             "Propagation enabled: %s | news_dir: %s | news_weight: %.2f",
-            enable_propagation, news_dir is not None, news_weight_used,
+            enable_propagation, str(news_dir) if news_dir is not None else False, news_weight_used,
         )
 
         # ==============================================================

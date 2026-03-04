@@ -818,16 +818,40 @@ def main():
             print("ERROR: No tickers with price data on or after window start.")
             return 1
 
+    # Resolve news_dir: CLI override, else config/config.yaml (news.enabled + news.data_dir)
+    news_dir_resolved: Path | str | None = None
+    if args.news_dir is not None:
+        news_dir_resolved = Path(args.news_dir)
+    else:
+        try:
+            import yaml as _yaml
+            _cfg_path = ROOT / "config" / "config.yaml"
+            if _cfg_path.exists():
+                with open(_cfg_path, "r", encoding="utf-8") as _f:
+                    _cfg = _yaml.safe_load(_f) or {}
+                _news = _cfg.get("news") or {}
+                if _news.get("enabled", False) and _news.get("data_dir"):
+                    _p = Path(_news["data_dir"])
+                    if not _p.is_absolute():
+                        _p = ROOT / _p
+                    if _p.exists() and _p.is_dir():
+                        news_dir_resolved = _p
+        except Exception:
+            pass
+
+    # When --no-llm, force news_weight 0 so overlay is off; else use CLI or default (None → 0.20 in loop)
+    news_weight_fixed_resolved = 0.0 if args.no_llm else args.news_weight
+
     run_kw: dict = {
         "prices_dict": prices_dict,
         "data_dir": data_dir,
-        "news_dir": args.news_dir,
+        "news_dir": news_dir_resolved,
         "top_n": args.top_n,
         "start_date": args.start,
         "end_date": args.end,
         "weight_mode": args.weight_mode,
         "rolling_method": args.rolling_method,
-        "news_weight_fixed": args.news_weight,
+        "news_weight_fixed": news_weight_fixed_resolved,
         "llm_enabled": not args.no_llm,
         "model_path_override": _track_model_path_override,
     }
@@ -861,8 +885,8 @@ def main():
         "start": args.start,
         "end": args.end,
         "weight_mode": args.weight_mode,
-        "news_dir": args.news_dir,
-        "news_weight": args.news_weight,
+        "news_dir": str(news_dir_resolved) if news_dir_resolved is not None else None,
+        "news_weight": news_weight_fixed_resolved,
     }
     _audit_output_paths = {
         k: v for k, v in {"out": args.out,
