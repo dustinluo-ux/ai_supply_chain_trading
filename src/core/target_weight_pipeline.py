@@ -91,11 +91,13 @@ def apply_ml_blend(
     news_signals: dict,
     precomputed_indicators: Optional[dict[str, dict[str, float]]] = None,
     model_path_override: Optional[str] = None,
+    use_ml_override: bool | None = None,
 ) -> dict[str, float]:
     """
     If use_ml and model loaded, blend 0.7*week_scores + 0.3*ML; else return week_scores.
     precomputed_indicators: optional {ticker: {feature_name: float}} from signal_engine aux; avoids double calculate_all_indicators.
     model_path_override: if set, load this .pkl instead of the path in model_config.yaml (used by --track A/B).
+    use_ml_override: if not None, overrides config use_ml (e.g. False for --no-ml in backtest).
     """
     global _ML_MODEL_CACHE, _ML_PIPELINE_CACHE, _ML_MODEL_PATH_CACHED
     _root = Path(__file__).resolve().parent.parent.parent
@@ -105,8 +107,10 @@ def apply_ml_blend(
     import yaml as _yaml
     with open(_model_cfg_path, "r", encoding="utf-8") as _f:
         _model_cfg = _yaml.safe_load(_f)
-    if not _model_cfg.get("use_ml", False):
+    _use_ml = use_ml_override if use_ml_override is not None else _model_cfg.get("use_ml", False)
+    if not _use_ml:
         return week_scores
+    _ml_blend_weight = float(_model_cfg.get("models", {}).get("ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)))
     # model_path_override (from --track A/B) takes priority over config
     if model_path_override:
         _path = Path(model_path_override)
@@ -162,9 +166,10 @@ def apply_ml_blend(
     for _t in week_scores:
         if _t not in _ml_score:
             _ml_score[_t] = 0.5
+    _base_weight = 1.0 - _ml_blend_weight
     _blended = {}
     for _t in week_scores:
-        _blended[_t] = 0.7 * week_scores[_t] + 0.3 * _ml_score[_t]
+        _blended[_t] = _base_weight * week_scores[_t] + _ml_blend_weight * _ml_score[_t]
         if _ml_score[_t] < 0.4 and week_scores[_t] > 0.6:
             _blended[_t] *= 0.5
     return _blended
@@ -206,6 +211,7 @@ def compute_target_weights(
     path: Optional[str] = None,
     llm_enabled: bool = True,
     return_aux: bool = False,
+    use_ml_override: bool | None = None,
 ) -> pd.Series | tuple[pd.Series, dict]:
     """
     Canonical spine:
@@ -304,7 +310,9 @@ def compute_target_weights(
         import yaml as _yaml
         with open(_model_cfg_path, "r", encoding="utf-8") as _f:
             _model_cfg = _yaml.safe_load(_f)
-        if _model_cfg.get("use_ml", False):
+        _use_ml = use_ml_override if use_ml_override is not None else _model_cfg.get("use_ml", False)
+        if _use_ml:
+            _ml_bw = float(_model_cfg.get("models", {}).get("ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)))
             global _ML_MODEL_CACHE, _ML_PIPELINE_CACHE
             if _ML_MODEL_CACHE is None:
                 _path = _model_cfg.get("training", {}).get("model_path")
@@ -340,9 +348,10 @@ def compute_target_weights(
                     for _t in week_scores:
                         if _t not in _ml_score:
                             _ml_score[_t] = 0.5
+                    _bw = 1.0 - _ml_bw
                     _blended = {}
                     for _t in week_scores:
-                        _blended[_t] = 0.7 * week_scores[_t] + 0.3 * _ml_score[_t]
+                        _blended[_t] = _bw * week_scores[_t] + _ml_bw * _ml_score[_t]
                         if _ml_score[_t] < 0.4 and week_scores[_t] > 0.6:
                             _blended[_t] *= 0.5
                     scores_to_use = _blended

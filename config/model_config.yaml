@@ -1,6 +1,7 @@
 use_ml: true
 active_model: ridge
 models:
+  ml_blend_weight: 0.3
   linear: null
   ridge:
     alpha: 0.001
@@ -19,12 +20,13 @@ features:
   - rsi_norm
   - sentiment_velocity
   - news_sentiment
-  - adx_norm
+  - cmf_norm
+  - macd_norm
 training:
   train_start: '2022-01-01'
-  train_end: '2023-12-31'
-  test_start: '2024-01-01'
-  test_end: '2024-12-31'
+  train_end: '2024-12-31'
+  test_start: '2025-01-01'
+  test_end: '2025-12-31'
   validation_split: 0.2
   residual_target: true
   smh_benchmark_path: trading_data/benchmarks/SMH.csv
@@ -38,6 +40,6 @@ logging:
   log_dir: logs/models/
 tracks:
   A:
-    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_20260301_224451.pkl
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_duel_20260306_233218.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl

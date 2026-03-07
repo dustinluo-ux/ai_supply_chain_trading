@@ -31,8 +31,6 @@ from src.models.train_pipeline import ModelTrainingPipeline
 # Note: models/saved/ridge_20260221_131840.pkl is stale (5 features); current config uses 7 features.
 # Do not delete the old file; re-run training to produce a new saved model.
 CONFIG_PATH = "config/model_config.yaml"
-TEST_START = "2024-01-01"
-TEST_END = "2024-12-31"
 IC_GATE = 0.01
 
 
@@ -40,6 +38,7 @@ def main() -> int:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-tournament", action="store_true", default=False, help="Use feature_names from config, skip tournament")
+    parser.add_argument("--no-residual", action="store_true", help="Override residual_target to False at runtime (absolute target); does not modify config file")
     args = parser.parse_args()
 
     cfg = get_config()
@@ -87,11 +86,16 @@ def main() -> int:
 
     pipeline = ModelTrainingPipeline(CONFIG_PATH)
     pipeline.config["training"]["save_models"] = False
+    if args.no_residual:
+        pipeline.config["training"]["residual_target"] = False
     model = pipeline.train(prices_dict, technical_signals=None, news_signals=news_signals)
 
+    train_cfg = pipeline.config.get("training", {})
+    test_start = train_cfg.get("test_start", "2024-01-01")
+    test_end = train_cfg.get("test_end", "2024-12-31")
     ic, _ = pipeline.evaluate_ic(
         model, prices_dict,
-        test_start=TEST_START, test_end=TEST_END,
+        test_start=test_start, test_end=test_end,
         news_signals=news_signals,
     )
 
@@ -107,6 +111,18 @@ def main() -> int:
         save_path = save_dir / f"{pipeline.active_model_type}_{timestamp}.pkl"
         model.save_model(str(save_path))
         print(f"[Pipeline] Model saved to {save_path}", flush=True)
+        # Update tracks.A.model_path in config so backtest/live use new model
+        config_path = ROOT / CONFIG_PATH
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        if "tracks" not in cfg:
+            cfg["tracks"] = {}
+        if "A" not in cfg["tracks"]:
+            cfg["tracks"]["A"] = {}
+        cfg["tracks"]["A"]["model_path"] = str(save_path.resolve())
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        print(f"[Config] Updated tracks.A.model_path to {save_path}", flush=True)
 
     return 0 if passed else 1
 

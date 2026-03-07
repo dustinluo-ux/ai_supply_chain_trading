@@ -163,6 +163,7 @@ def compute_target_weights(
     top_n: int = 3,
     sideways_risk_scale: float = 0.5,
     weight_mode: str = "fixed",
+    use_ml_override: bool | None = None,
 ) -> pd.Series:
     """
     Single-date target weights from canonical spine (SignalEngine -> PolicyEngine -> PortfolioEngine).
@@ -181,6 +182,7 @@ def compute_target_weights(
         sideways_risk_scale=sideways_risk_scale,
         weight_mode=weight_mode,
         path=None,
+        use_ml_override=use_ml_override,
     )
 
 
@@ -255,6 +257,7 @@ def run_backtest_master_score(
     verbose: bool = True,
     llm_enabled: bool = True,
     model_path_override: str | None = None,
+    use_ml_override: bool | None = None,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -458,7 +461,7 @@ def run_backtest_master_score(
         week_scores, aux = signal_engine.generate(monday, tickers, data_context)
         from src.core.target_weight_pipeline import apply_ml_blend
         precomputed_indicators = aux.get("indicator_rows") or {}
-        week_scores = apply_ml_blend(week_scores, monday, prices_dict, backtest_news_signals, precomputed_indicators=precomputed_indicators, model_path_override=model_path_override)
+        week_scores = apply_ml_blend(week_scores, monday, prices_dict, backtest_news_signals, precomputed_indicators=precomputed_indicators, model_path_override=model_path_override, use_ml_override=use_ml_override)
         atr_norms = aux.get("atr_norms", {})
         buzz_by_ticker = aux.get("buzz_by_ticker", {})
 
@@ -702,6 +705,7 @@ def main():
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
     parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
     parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
+    parser.add_argument("--no-ml", action="store_true", default=False, help="Disable ML blend (Technical+News only; use_ml_override=False)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
     parser.add_argument("--track", choices=["A", "B"], default=None, help="Model track override: A=absolute, B=residual. Reads path from config/model_config.yaml tracks section.")
     args = parser.parse_args()
@@ -854,6 +858,7 @@ def main():
         "news_weight_fixed": news_weight_fixed_resolved,
         "llm_enabled": not args.no_llm,
         "model_path_override": _track_model_path_override,
+        "use_ml_override": False if args.no_ml else None,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days
