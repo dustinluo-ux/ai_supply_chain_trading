@@ -61,7 +61,9 @@ def _build_features_from_precomputed(
     news_signals: dict,
     feature_names: list[str],
 ) -> Optional[list]:
-    """Build feature vector in feature_names order from precomputed indicator row + news. Returns None if any required indicator is missing."""
+    """Build feature vector in feature_names order from precomputed indicator row + news. Returns None only if precomputed_row is empty/None (no technical data). Missing features are filled with 0.0."""
+    if not precomputed_row:
+        return None
     values: dict[str, float] = {}
     m5 = precomputed_row.get("momentum_5d_norm")
     m20 = precomputed_row.get("momentum_20d_norm")
@@ -77,7 +79,7 @@ def _build_features_from_precomputed(
     values.update(news_feats)
     for name in feature_names:
         if name not in values:
-            return None
+            values[name] = 0.0
     try:
         return [values[name] for name in feature_names]
     except KeyError:
@@ -153,10 +155,7 @@ def apply_ml_blend(
     if not _X_list:
         return week_scores
     _X = np.array(_X_list)
-    _inner = _ML_MODEL_CACHE.model
-    _coef = np.array(_inner.coef_).ravel()
-    _intercept = float(np.array(_inner.intercept_).ravel()[0]) if hasattr(_inner, "intercept_") else 0.0
-    _ml_raw = np.einsum("ij,j->i", np.nan_to_num(_X, nan=0.5), _coef) + _intercept
+    _ml_raw = np.asarray(_ML_MODEL_CACHE.predict(np.nan_to_num(_X, nan=0.0))).ravel()
     _mn, _mx = float(_ml_raw.min()), float(_ml_raw.max())
     if _mx - _mn > 0:
         _ml_scaled = (_ml_raw - _mn) / (_mx - _mn)

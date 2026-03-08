@@ -8,7 +8,7 @@ Everything else just uses the factory.
 from typing import Dict, List
 from .base_predictor import BaseReturnPredictor
 from .linear_model import LinearReturnPredictor, RidgeReturnPredictor, LassoReturnPredictor
-from .tree_model import XGBoostReturnPredictor
+from .tree_model import XGBoostReturnPredictor, CatBoostReturnPredictor
 
 # Model registry - maps config names to classes
 MODEL_REGISTRY = {
@@ -16,6 +16,7 @@ MODEL_REGISTRY = {
     'ridge': RidgeReturnPredictor,
     'lasso': LassoReturnPredictor,
     'xgboost': XGBoostReturnPredictor,
+    'catboost': CatBoostReturnPredictor,
     # Add new models here:
     # 'random_forest': RandomForestReturnPredictor,
     # 'lightgbm': LightGBMReturnPredictor,

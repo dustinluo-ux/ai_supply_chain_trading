@@ -14,7 +14,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -87,6 +89,64 @@ def main() -> int:
         print("ERROR: No tickers provided.", flush=True)
         return 1
 
+    # Factory evaluation: ensure a winner is cached; only run expensive tournament if cache stale/missing
+    _factory_cache_path = ROOT / "models" / "factory_winner.json"
+    _run_factory = True
+    if _factory_cache_path.exists():
+        _age_seconds = time.time() - _factory_cache_path.stat().st_mtime
+        if _age_seconds <= 7 * 24 * 3600:
+            _run_factory = False
+    if not _run_factory:
+        try:
+            with open(_factory_cache_path, "r", encoding="utf-8") as _f:
+                _cache = json.load(_f)
+            _mt = _cache.get("model_type", "—")
+            _ic = float(_cache.get("ic", 0))
+            print(f"[REBALANCE] Using cached factory winner: {_mt} IC={_ic:.4f}", flush=True)
+        except Exception as _e:
+            print(f"[REBALANCE][WARN] Could not read factory cache: {_e}", flush=True)
+    else:
+        try:
+            from src.models.factory import get_best_model
+            from src.data.csv_provider import load_prices
+            _data_cfg_path = ROOT / "config" / "data_config.yaml"
+            _data_dir = ROOT / "data" / "stock_market_data"
+            if _data_cfg_path.exists():
+                with open(_data_cfg_path, "r", encoding="utf-8") as _f:
+                    _dc = yaml.safe_load(_f)
+                _ds = (_dc or {}).get("data_sources", {})
+                if _ds.get("data_dir"):
+                    _data_dir = Path(_ds["data_dir"])
+            _ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
+            _prices_dict = load_prices(_data_dir, _ticker_list)
+            _news_signals = {}
+            try:
+                from src.core.config import NEWS_DIR
+                import pandas as pd
+                _eodhd = Path(NEWS_DIR) / "eodhd_global_backfill.parquet"
+                if _eodhd.exists():
+                    _df = pd.read_parquet(_eodhd, engine="fastparquet")
+                    if not _df.empty and "Ticker" in _df.columns and "Date" in _df.columns and "Sentiment" in _df.columns:
+                        for _ticker, _grp in _df.groupby("Ticker"):
+                            _by_date = _grp.groupby("Date")["Sentiment"].mean()
+                            _news_signals[_ticker] = {
+                                str(_d): {"sentiment": float(_s), "supply_chain": 0.5}
+                                for _d, _s in _by_date.items()
+                            }
+            except Exception:
+                pass
+            _winner_model, _winner_type, _winner_ic = get_best_model(
+                prices_dict=_prices_dict,
+                news_signals=_news_signals if _news_signals else None,
+                config_path=ROOT / "config" / "model_config.yaml",
+            )
+            if _winner_type != "tech_only":
+                print(f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} — model active", flush=True)
+            else:
+                print("[REBALANCE] Factory returned tech_only (no ML model passed IC gate)", flush=True)
+        except Exception as _e:
+            print(f"[REBALANCE][WARN] Factory skipped: {_e}", flush=True)
+
     # Build argv for run_execution.main()
     argv = [
         "run_execution",
@@ -124,6 +184,26 @@ def main() -> int:
             output_paths={},
             trade_summary=_fill_records,
         )
+        from src.monitoring.telegram_alerts import send_alert
+        _ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
+        _nav = 0
+        _regime = "—"
+        try:
+            _ps_path = ROOT / "outputs" / "portfolio_state.json"
+            if _ps_path.exists():
+                import json
+                with open(_ps_path, "r", encoding="utf-8") as _f:
+                    _ps = json.load(_f)
+                _nav = float(_ps.get("last_nav") or 0)
+                _regime = str(_ps.get("regime") or "—")
+        except Exception:
+            pass
+        send_alert("rebalance_complete", {
+            "n_tickers": len(_ticker_list),
+            "nav": _nav,
+            "regime": _regime,
+            "timestamp": _dt.datetime.now().isoformat(),
+        })
         return _exit_code
     finally:
         sys.argv = old_argv

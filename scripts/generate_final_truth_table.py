@@ -1,11 +1,12 @@
 """
 Generate Final Truth table and report from 6 FINAL_*.json backtest outputs.
 
-Reads FINAL_BASELINE_ABS_2022/2023/2024 and FINAL_RESIDUAL_ALPHA_2022/2023/2024,
-applies Hedger to residual track for hedged_residual metrics, writes
+Reads FINAL_BASELINE_2022/2023/2024 (no-ML track) and FINAL_ALPHA_2022/2023/2024 (factory ML track),
+applies Hedger to residual track for hedged metrics, writes
 outputs/FINAL_TRUTH_TABLE.json and outputs/FINAL_TRUTH_REPORT.md.
 
 Per docs/FINAL_TRUTH_SYSTEM_SPEC.md §2.
+In-sample: 2022–2023. Out-of-sample: 2024.
 """
 
 from __future__ import annotations
@@ -21,16 +22,21 @@ sys.path.insert(0, str(ROOT))
 
 # Explicit filenames per spec (no glob)
 FINAL_ABS_FILES = [
-    "FINAL_BASELINE_ABS_2022.json",
-    "FINAL_BASELINE_ABS_2023.json",
-    "FINAL_BASELINE_ABS_2024.json",
+    "FINAL_BASELINE_2022.json",
+    "FINAL_BASELINE_2023.json",
+    "FINAL_BASELINE_2024.json",
 ]
 FINAL_RESIDUAL_FILES = [
-    "FINAL_RESIDUAL_ALPHA_2022.json",
-    "FINAL_RESIDUAL_ALPHA_2023.json",
-    "FINAL_RESIDUAL_ALPHA_2024.json",
+    "FINAL_ALPHA_2022.json",
+    "FINAL_ALPHA_2023.json",
+    "FINAL_ALPHA_2024.json",
 ]
 OUTPUTS_DIR = ROOT / "outputs"
+TRACK_LABELS = {
+    "absolute": "Baseline (No ML)",
+    "residual": "Alpha (Factory ML — Residual Target)",
+    "hedged_residual": "Hedged",
+}
 
 
 def _load_json(path: Path) -> dict:
@@ -127,7 +133,7 @@ def main() -> int:
     # Load all 6 JSON files by explicit path
     abs_by_year: dict[str, dict] = {}
     for name in FINAL_ABS_FILES:
-        year = name.replace("FINAL_BASELINE_ABS_", "").replace(".json", "")
+        year = name.replace("FINAL_BASELINE_", "").replace(".json", "")
         path = outputs / name
         if not path.exists():
             print(f"ERROR: Missing {path}", file=sys.stderr)
@@ -136,7 +142,7 @@ def main() -> int:
 
     res_by_year: dict[str, dict] = {}
     for name in FINAL_RESIDUAL_FILES:
-        year = name.replace("FINAL_RESIDUAL_ALPHA_", "").replace(".json", "")
+        year = name.replace("FINAL_ALPHA_", "").replace(".json", "")
         path = outputs / name
         if not path.exists():
             print(f"ERROR: Missing {path}", file=sys.stderr)
@@ -197,6 +203,7 @@ def main() -> int:
         "universe_size": universe_size,
         "hedge_params": {"hedge_ratio": 1.0, "annual_borrow_rate": 0.05, "beta_method": "rolling_ols_60w"},
         "tracks": ["absolute", "residual", "hedged_residual"],
+        "track_labels": TRACK_LABELS,
         "by_year": by_year,
     }
 
@@ -214,12 +221,12 @@ def main() -> int:
 
     # Markdown report
     report_lines = [
-        "# Final Truth Table — Absolute vs Residual vs Hedged",
+        "# Final Truth Table — Baseline (No ML) vs Alpha (Factory ML) vs Hedged",
         "",
         f"**Generated:** {truth_table['generated']}",
         "",
-        "| Year | Track A Absolute | Track B Residual | Track C Hedged (HR=1.0, OLS beta) |",
-        "|------|------------------|-------------------|-----------------------------------|",
+        f"| Year | {TRACK_LABELS['absolute']} | {TRACK_LABELS['residual']} | {TRACK_LABELS['hedged_residual']} (HR=1.0, OLS beta) |",
+        "|------|---------------------------|----------------------------------|-----------------------------------|",
     ]
     for year in ("2022", "2023", "2024"):
         row = by_year[year]
@@ -245,10 +252,9 @@ def main() -> int:
     report_lines.extend([
         "",
         "> ⚠ LOOK-AHEAD BIAS NOTICE",
-        "> The Ridge model was trained on 2022–2023 data (train_start/train_end in",
-        "> config/model_config.yaml). Results for 2022 and 2023 are IN-SAMPLE and",
-        "> carry look-ahead bias in the model parameters. Only 2024 results are",
-        "> OUT-OF-SAMPLE and statistically valid for performance evaluation.",
+        "> 2022–2023 in-sample, 2024 out-of-sample. Model(s) trained on 2022–2023",
+        "> (train_start/train_end in config). Results for 2022 and 2023 are IN-SAMPLE;",
+        "> only 2024 is OUT-OF-SAMPLE and statistically valid for performance evaluation.",
         "",
     ])
 

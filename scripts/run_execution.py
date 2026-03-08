@@ -632,6 +632,18 @@ def main() -> tuple[int, list]:
                                 order_comment=_order.get("order_comment"),
                             )
                             current_run_fills.append(_rec)
+                            if _qty_filled < _order["quantity"]:
+                                try:
+                                    from src.monitoring.telegram_alerts import send_alert as _sa
+                                    _sa("fill_miss", {
+                                        "ticker": _t,
+                                        "side": _order["side"],
+                                        "qty_requested": _order["quantity"],
+                                        "qty_filled": _qty_filled,
+                                        "fill_check_reason": _chk.get("reason", ""),
+                                    })
+                                except Exception:
+                                    pass
                         cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
                 else:
                     from src.utils.config_manager import get_config as _get_config

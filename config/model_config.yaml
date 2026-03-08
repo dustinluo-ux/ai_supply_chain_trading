@@ -1,5 +1,5 @@
 use_ml: true
-active_model: ridge
+active_model: catboost
 models:
   ml_blend_weight: 0.3
   linear: null
@@ -14,6 +14,13 @@ models:
     subsample: 0.8
     colsample_bytree: 0.8
     random_state: 42
+  catboost:
+    iterations: 500
+    depth: 4
+    learning_rate: 0.05
+    loss_function: RMSE
+    random_seed: 42
+    verbose: 0
 features:
   news_lookback_days: 7
   feature_names:
@@ -24,22 +31,22 @@ features:
   - macd_norm
 training:
   train_start: '2022-01-01'
-  train_end: '2024-12-31'
-  test_start: '2025-01-01'
-  test_end: '2025-12-31'
+  train_end: '2023-12-31'
+  test_start: '2024-01-01'
+  test_end: '2024-12-31'
   validation_split: 0.2
   residual_target: true
   smh_benchmark_path: trading_data/benchmarks/SMH.csv
   rolling_beta_window: 60
   save_models: true
   model_save_dir: models/saved/
-  model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
+  model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260308_103404.pkl
 logging:
   log_predictions: true
   log_feature_importance: true
   log_dir: logs/models/
 tracks:
   A:
-    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_duel_20260306_233218.pkl
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260308_103404.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl

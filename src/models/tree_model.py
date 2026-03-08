@@ -55,4 +55,56 @@ class XGBoostReturnPredictor(BaseReturnPredictor):
             for name, importance in zip(self.feature_names, self.model.feature_importances_)
         }
 
+
+class CatBoostReturnPredictor(BaseReturnPredictor):
+    """
+    CatBoost gradient boosting.
+
+    Config options:
+        iterations: Number of trees (default: 500)
+        depth: Tree depth (default: 4)
+        learning_rate: Step size (default: 0.05)
+        loss_function: 'RMSE' (default)
+        random_seed: 42 (default)
+        verbose: 0 (default)
+    """
+
+    def __init__(self, feature_names, config=None):
+        config = config or {}
+        super().__init__(
+            model_name=f"catboost_iter{config.get('iterations', 500)}",
+            model_type="CatBoost",
+            feature_names=feature_names,
+            config=config
+        )
+
+    def _build_model(self):
+        try:
+            import catboost as cb
+        except ImportError:
+            raise ImportError(
+                "CatBoost not installed. Install with: pip install catboost"
+            )
+
+        default_config = {
+            "iterations": 500,
+            "depth": 4,
+            "learning_rate": 0.05,
+            "loss_function": "RMSE",
+            "random_seed": 42,
+            "verbose": 0,
+        }
+        final_config = {**default_config, **self.config}
+        return cb.CatBoostRegressor(**final_config)
+
+    def get_feature_importance(self) -> Dict[str, float]:
+        if not self.is_trained:
+            return {}
+        imp = self.model.get_feature_importance()
+        return {
+            name: float(importance)
+            for name, importance in zip(self.feature_names, imp)
+        }
+
+
 # TODO: Add RandomForestReturnPredictor, LightGBMReturnPredictor when needed
