@@ -50,3 +50,12 @@ tracks:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260308_103404.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
+  D:
+    mode: long_short_130_30
+    top_n: 15
+    bottom_n: 8
+    target_vol: 0.15
+    max_leverage: 1.6
+    max_position: 0.10
+    thesis_alert_rho: 0.8
+    borrow_cost_threshold: 0.05

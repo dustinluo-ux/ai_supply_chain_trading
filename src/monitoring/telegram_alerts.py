@@ -78,6 +78,17 @@ def send_alert(alert_type: str, payload: dict) -> None:
             f"Model: {model_path}\n"
             f"Date: {date}"
         )
+    elif alert_type == "thesis_collapse":
+        rho = payload.get("rho")
+        reason = payload.get("reason", "—")
+        rho_s = f"{rho:.3f}" if rho is not None else "—"
+        text = (
+            "⚠️ *Thesis Alert — Long/Short Decoupling*\n"
+            f"Correlation ρ={rho_s} (threshold: 0.80)\n"
+            "Long and short baskets trading in lockstep — edge degrading\n"
+            "Gross exposure reduced 50%\n"
+            f"Reason: {reason}"
+        )
     else:
         print(f"[telegram_alerts] Unknown alert_type={alert_type!r}; skipping.", file=sys.stderr)
         return

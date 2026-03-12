@@ -74,6 +74,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Do not submit orders (default)")
     parser.add_argument("--live", action="store_true", help="Use IB paper account (implies --confirm-paper if not --dry-run)")
     parser.add_argument("--confirm-paper", action="store_true", help="With --live: actually submit orders to paper account")
+    parser.add_argument("--track", type=str, default=None,
+                        help="Strategy track: D = 130/30 long/short. Default: Alpha (ML blend).")
     args = parser.parse_args()
 
     tickers = args.tickers
@@ -147,6 +149,53 @@ def main() -> int:
         except Exception as _e:
             print(f"[REBALANCE][WARN] Factory skipped: {_e}", flush=True)
 
+    if args.track == "D":
+        import run_execution
+        import pandas as pd
+        config = run_execution.load_config()
+        data_dir = config["data_dir"]
+        ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
+        prices_dict = run_execution.load_prices(data_dir, ticker_list)
+        if not prices_dict:
+            print("ERROR: No price data for track D.", flush=True)
+            return 1
+        all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
+        if not all_dates:
+            print("ERROR: No dates in price data.", flush=True)
+            return 1
+        mondays = pd.date_range(min(all_dates), max(all_dates), freq="W-MON")
+        as_of = mondays[-1] if len(mondays) else pd.Timestamp(all_dates[-1])
+        if args.date:
+            as_of = pd.to_datetime(args.date).normalize()
+        regime_status = {}
+        regime_path = ROOT / "outputs" / "regime_status.json"
+        if regime_path.exists():
+            try:
+                with open(regime_path, "r", encoding="utf-8") as f:
+                    regime_status = json.load(f)
+            except Exception:
+                pass
+        model_cfg_path = ROOT / "config" / "model_config.yaml"
+        config_d = {}
+        if model_cfg_path.exists():
+            with open(model_cfg_path, "r", encoding="utf-8") as f:
+                model_cfg = yaml.safe_load(f)
+            config_d = (model_cfg or {}).get("tracks", {}).get("D", {})
+        from src.core.target_weight_pipeline import compute_target_weights
+        _top_n_d = config_d.get("top_n", 15)
+        _weights_series, aux = compute_target_weights(
+            as_of, ticker_list, prices_dict, data_dir,
+            top_n=_top_n_d, path="weekly", return_aux=True,
+        )
+        scores = pd.Series(aux.get("scores", {}))
+        scores_df = pd.DataFrame([aux.get("scores", {})], index=[as_of]) if scores.size else pd.DataFrame()
+        from src.portfolio.long_short_optimizer import rebalance_long_short
+        weights_result = rebalance_long_short(scores, scores_df, prices_dict, regime_status, config_d)
+        out_dir = ROOT / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / "last_valid_weights.json", "w", encoding="utf-8") as f:
+            json.dump({"as_of": str(as_of.date()), "weights": weights_result.to_dict()}, f, indent=2)
+
     # Build argv for run_execution.main()
     argv = [
         "run_execution",
@@ -155,6 +204,8 @@ def main() -> int:
     ]
     if args.date:
         argv.extend(["--date", args.date])
+    if args.track == "D":
+        argv.extend(["--rebalance"])
     if args.live:
         argv.extend(["--mode", "paper"])
         if args.confirm_paper and not args.dry_run:
