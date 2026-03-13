@@ -54,8 +54,9 @@ tracks:
     mode: long_short_130_30
     top_n: 15
     bottom_n: 8
-    target_vol: 0.15
+    target_vol: 0.40
     max_leverage: 1.6
     max_position: 0.10
     thesis_alert_rho: 0.8
     borrow_cost_threshold: 0.05
+    dispersion_anchor: 0.40   # 40% annualised vol = full short exposure (S=0.30)

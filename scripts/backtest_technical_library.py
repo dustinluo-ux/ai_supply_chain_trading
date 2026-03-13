@@ -258,6 +258,7 @@ def run_backtest_master_score(
     llm_enabled: bool = True,
     model_path_override: str | None = None,
     use_ml_override: bool | None = None,
+    track: str | None = None,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -285,6 +286,16 @@ def run_backtest_master_score(
     signal_engine = SignalEngine()
     policy_engine = PolicyEngine()
     portfolio_engine = PortfolioEngine()
+    config_d: dict = {}
+    scores_buffer: list[tuple] = []
+    gross_exposure_per_week: list[float] = []
+    if track == "D":
+        _mcfg_path = ROOT / "config" / "model_config.yaml"
+        if _mcfg_path.exists():
+            import yaml as _yaml
+            with open(_mcfg_path, "r", encoding="utf-8") as _f:
+                _mcfg = _yaml.safe_load(_f)
+            config_d = (_mcfg or {}).get("tracks", {}).get("D", {})
     week_meta_list: list[tuple] = []  # (monday, regime_state, news_weight_used, active_strategy_id) per week
     # P0 safety initialization
     active_strategy_id = None
@@ -338,6 +349,15 @@ def run_backtest_master_score(
     if not llm_enabled and verbose:
         print("  [CONFIG] Backtest running with LLM disabled (--no-llm); Gemini will not be called.", flush=True)
     backtest_news_signals = _load_news_signals(news_dir, tickers) if news_dir else {}
+    # Wire EODHD historical news (fills in where Marketaux flat files are absent)
+    from src.data.eodhd_news_loader import load_eodhd_news_signals as _load_eodhd
+    _eodhd_signals = _load_eodhd(tickers, start_date=str(mondays[0].date()), end_date=str(mondays[-1].date()))
+    for _t, _dates in _eodhd_signals.items():
+        if _t not in backtest_news_signals:
+            backtest_news_signals[_t] = {}
+        for _d, _v in _dates.items():
+            if _d not in backtest_news_signals[_t]:   # EODHD fills gaps only — Marketaux takes priority
+                backtest_news_signals[_t][_d] = _v
     transmat_printed = False
     prev_regime: str | None = None
     for idx, monday in enumerate(mondays):
@@ -465,100 +485,122 @@ def run_backtest_master_score(
         atr_norms = aux.get("atr_norms", {})
         buzz_by_ticker = aux.get("buzz_by_ticker", {})
 
-        policy_context = {
-            "regime_state": effective_regime_state,
-            "spy_below_sma200": spy_below_sma200,
-            "sideways_risk_scale": sideways_risk_scale_this_week,
-            "kill_switch_mode": KILL_SWITCH_MODE,
-            "kill_switch_active": kill_switch_active,
-        }
-        gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
-        action = flags.get("action", "Trade")
-
-        # Build a filtered prices_dict for HRP: only top candidate tickers, sliced to monday.
-        _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[: top_n * 2]
-        _prices_dict_hrp: dict = {}
-        for _t, _ in _top_candidates:
-            if _t in prices_dict and prices_dict[_t] is not None:
-                _sliced = prices_dict[_t].loc[prices_dict[_t].index <= monday]
-                if len(_sliced) >= 30:
-                    _prices_dict_hrp[_t] = _sliced
-        use_hrp_sizing = bool(_prices_dict_hrp)
-
-        portfolio_context = {
-            "top_n": top_n,
-            "atr_norms": atr_norms,
-            "tickers": tickers,
-            "prices_dict": _prices_dict_hrp if use_hrp_sizing else None,
-        }
-        intent = portfolio_engine.build(monday, gated_scores, portfolio_context)
-
-        if effective_regime_state == "BEAR":
+        if track == "D":
+            from src.portfolio.long_short_optimizer import rebalance_alpha_sleeve
+            from types import SimpleNamespace
+            scores = pd.Series(week_scores)
+            scores_buffer.append((monday, dict(week_scores)))
+            _last_60 = scores_buffer[-60:]
+            scores_df = pd.DataFrame(
+                {t: [row[1].get(t) for row in _last_60] for t in tickers},
+                index=[row[0] for row in _last_60],
+            )
+            _prices_sliced = {t: df.loc[df.index <= monday].copy() for t, df in prices_dict.items() if df is not None and not df.empty}
+            regime_status = {"vix_z": 0.0}
+            weights_result = rebalance_alpha_sleeve(scores, scores_df, _prices_sliced, regime_status, config_d)
+            intent = SimpleNamespace(
+                tickers=[t for t in weights_result.index if weights_result.get(t, 0) != 0],
+                weights=weights_result.to_dict(),
+            )
             for t in tickers:
-                intent.weights[t] = float(intent.weights.get(t, 0.0)) * 0.5
-        if effective_regime_state != "BEAR" and intent.tickers and not use_hrp_sizing:
-            atr_per_share: dict[str, float] = {}
-            prices_at_monday: dict[str, float] = {}
-            for t in intent.tickers:
-                df = prices_dict.get(t)
-                if df is None or len(df) < 15:
-                    continue
-                slice_df = df.loc[df.index <= monday].tail(30)
-                if slice_df.empty or "high" not in slice_df.columns or "low" not in slice_df.columns or "close" not in slice_df.columns:
-                    continue
-                high_series = slice_df["high"]
-                low_series = slice_df["low"]
-                close_series = slice_df["close"]
-                if isinstance(high_series, pd.DataFrame):
-                    high_series = high_series.iloc[:, 0]
-                if isinstance(low_series, pd.DataFrame):
-                    low_series = low_series.iloc[:, 0]
-                if isinstance(close_series, pd.DataFrame):
-                    close_series = close_series.iloc[:, 0]
-                atr_series = compute_atr_series(high_series, low_series, close_series, period=14)
-                if len(atr_series) and pd.notna(atr_series.iloc[-1]):
-                    atr_per_share[t] = float(atr_series.iloc[-1])
-                if len(slice_df) and pd.notna(close_series.iloc[-1]):
-                    prices_at_monday[t] = float(close_series.iloc[-1])
-            cfg = get_config_manager()
-            risk_pct, atr_mult = get_sizing_params_from_config(cfg)
-            new_weights = position_sizer_compute_weights(intent.tickers, atr_per_share, prices_at_monday, risk_pct=risk_pct, atr_multiplier=atr_mult, target_exposure=1.0)
-            for t in tickers:
-                intent.weights[t] = float(new_weights.get(t, 0.0))
-
-        for t in tickers:
-            w = intent.weights.get(t, 0.0)
-            if pd.isna(w): w = 0.0
-            signals_df.loc[monday, t] = float(w)
-        _ws = sum(signals_df.loc[monday, t] for t in tickers)
-        if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
-            for t in tickers:
-                signals_df.loc[monday, t] *= 1.0 / _ws
-        elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - 0.5) > 1e-5:
-            # Dynamic propagated tickers (not in `tickers`) may absorb part of the BEAR-halved
-            # weight; renormalize the tracked subset to the intended 0.5 exposure target.
-            for t in tickers:
-                signals_df.loc[monday, t] *= 0.5 / _ws
-        weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
-        if action == "Cash":
-            assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
-        elif effective_regime_state == "BEAR":
-            # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
-            assert abs(weight_sum - 0.5) < 1e-5 or abs(weight_sum) < 1e-6, \
-                f"Expected sum(weights)≈0.5 (or 0) when BEAR (fractional), got {weight_sum}"
+                signals_df.loc[monday, t] = float(weights_result.get(t, 0.0))
+            gross_exposure_per_week.append(float(weights_result.abs().sum()))
+            config_d["prior_weights"] = weights_result.to_dict()
         else:
-            # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
-            assert abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6, \
-                f"Expected sum(weights)≈1.0 (or 0) when trading, got {weight_sum}"
+            policy_context = {
+                "regime_state": effective_regime_state,
+                "spy_below_sma200": spy_below_sma200,
+                "sideways_risk_scale": sideways_risk_scale_this_week,
+                "kill_switch_mode": KILL_SWITCH_MODE,
+                "kill_switch_active": kill_switch_active,
+            }
+            gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
+            action = flags.get("action", "Trade")
 
-        if verbose and intent.tickers and weight_sum > 0:
-            parts = [f"{t}={intent.weights.get(t, 0):.3f}" for t in intent.tickers if intent.weights.get(t, 0) > 0]
-            if parts:
-                print(f"  [SIZING] {monday.date()} Top-N: " + " ".join(parts), flush=True)
-        if verbose and (weight_mode == "regime" or news_dir is not None):
-            regime_letter = {"BULL": "B", "BEAR": "E", "SIDEWAYS": "S"}.get(regime_state or "", "-")
-            news_buzz = "T" if (news_dir and intent.tickers and any(buzz_by_ticker.get(t, False) for t in intent.tickers)) else ("-" if not news_dir else "F")
-            print(f"  [STATE] {monday.date()} | Regime: {regime_letter} | News Buzz: {news_buzz} | Action: {action}", flush=True)
+            # Build a filtered prices_dict for HRP: only top candidate tickers, sliced to monday.
+            _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[: top_n * 2]
+            _prices_dict_hrp: dict = {}
+            for _t, _ in _top_candidates:
+                if _t in prices_dict and prices_dict[_t] is not None:
+                    _sliced = prices_dict[_t].loc[prices_dict[_t].index <= monday]
+                    if len(_sliced) >= 30:
+                        _prices_dict_hrp[_t] = _sliced
+            use_hrp_sizing = bool(_prices_dict_hrp)
+
+            portfolio_context = {
+                "top_n": top_n,
+                "atr_norms": atr_norms,
+                "tickers": tickers,
+                "prices_dict": _prices_dict_hrp if use_hrp_sizing else None,
+            }
+            intent = portfolio_engine.build(monday, gated_scores, portfolio_context)
+
+            if effective_regime_state == "BEAR":
+                for t in tickers:
+                    intent.weights[t] = float(intent.weights.get(t, 0.0)) * 0.5
+            if effective_regime_state != "BEAR" and intent.tickers and not use_hrp_sizing:
+                atr_per_share: dict[str, float] = {}
+                prices_at_monday: dict[str, float] = {}
+                for t in intent.tickers:
+                    df = prices_dict.get(t)
+                    if df is None or len(df) < 15:
+                        continue
+                    slice_df = df.loc[df.index <= monday].tail(30)
+                    if slice_df.empty or "high" not in slice_df.columns or "low" not in slice_df.columns or "close" not in slice_df.columns:
+                        continue
+                    high_series = slice_df["high"]
+                    low_series = slice_df["low"]
+                    close_series = slice_df["close"]
+                    if isinstance(high_series, pd.DataFrame):
+                        high_series = high_series.iloc[:, 0]
+                    if isinstance(low_series, pd.DataFrame):
+                        low_series = low_series.iloc[:, 0]
+                    if isinstance(close_series, pd.DataFrame):
+                        close_series = close_series.iloc[:, 0]
+                    atr_series = compute_atr_series(high_series, low_series, close_series, period=14)
+                    if len(atr_series) and pd.notna(atr_series.iloc[-1]):
+                        atr_per_share[t] = float(atr_series.iloc[-1])
+                    if len(slice_df) and pd.notna(close_series.iloc[-1]):
+                        prices_at_monday[t] = float(close_series.iloc[-1])
+                cfg = get_config_manager()
+                risk_pct, atr_mult = get_sizing_params_from_config(cfg)
+                new_weights = position_sizer_compute_weights(intent.tickers, atr_per_share, prices_at_monday, risk_pct=risk_pct, atr_multiplier=atr_mult, target_exposure=1.0)
+                for t in tickers:
+                    intent.weights[t] = float(new_weights.get(t, 0.0))
+
+            for t in tickers:
+                w = intent.weights.get(t, 0.0)
+                if pd.isna(w): w = 0.0
+                signals_df.loc[monday, t] = float(w)
+            _ws = sum(signals_df.loc[monday, t] for t in tickers)
+            if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
+                for t in tickers:
+                    signals_df.loc[monday, t] *= 1.0 / _ws
+            elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - 0.5) > 1e-5:
+                # Dynamic propagated tickers (not in `tickers`) may absorb part of the BEAR-halved
+                # weight; renormalize the tracked subset to the intended 0.5 exposure target.
+                for t in tickers:
+                    signals_df.loc[monday, t] *= 0.5 / _ws
+            weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
+            if action == "Cash":
+                assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
+            elif effective_regime_state == "BEAR":
+                # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
+                assert abs(weight_sum - 0.5) < 1e-5 or abs(weight_sum) < 1e-6, \
+                    f"Expected sum(weights)≈0.5 (or 0) when BEAR (fractional), got {weight_sum}"
+            else:
+                # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
+                assert abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6, \
+                    f"Expected sum(weights)≈1.0 (or 0) when trading, got {weight_sum}"
+
+            if verbose and intent.tickers and weight_sum > 0:
+                parts = [f"{t}={intent.weights.get(t, 0):.3f}" for t in intent.tickers if intent.weights.get(t, 0) > 0]
+                if parts:
+                    print(f"  [SIZING] {monday.date()} Top-N: " + " ".join(parts), flush=True)
+            if verbose and (weight_mode == "regime" or news_dir is not None):
+                regime_letter = {"BULL": "B", "BEAR": "E", "SIDEWAYS": "S"}.get(regime_state or "", "-")
+                news_buzz = "T" if (news_dir and intent.tickers and any(buzz_by_ticker.get(t, False) for t in intent.tickers)) else ("-" if not news_dir else "F")
+                print(f"  [STATE] {monday.date()} | Regime: {regime_letter} | News Buzz: {news_buzz} | Action: {action}", flush=True)
         prev_regime = regime_state
         week_meta_list.append((monday, regime_state, news_weight_used, active_strategy_id))
 
@@ -590,7 +632,7 @@ def run_backtest_master_score(
         blocks.append((start_idx, end_idx))
         for t in tickers:
             w = signals_df.loc[monday, t]
-            if w > 0:
+            if w != 0:
                 positions_df.iloc[start_idx:end_idx, positions_df.columns.get_loc(t)] = w
     
     returns = prices_df.pct_change()
@@ -660,7 +702,7 @@ def run_backtest_master_score(
             "max_drawdown": float(min(_dd_list)) if _dd_list else 0.0,
         }
 
-    return {
+    out = {
         "sharpe": float(sharpe),
         "total_return": float(total_return),
         "max_drawdown": float(max_dd or 0),
@@ -674,6 +716,10 @@ def run_backtest_master_score(
         "active_strategy_id": active_strategy_id,
         "weekly_returns": weekly_returns_all,
     }
+    if track == "D":
+        out["track"] = "D"
+        out["gross_exposure_avg"] = float(np.mean(gross_exposure_per_week)) if gross_exposure_per_week else 0.0
+    return out
 
 
 def _print_safety_report():
@@ -707,12 +753,14 @@ def main():
     parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
     parser.add_argument("--no-ml", action="store_true", default=False, help="Disable ML blend (Technical+News only; use_ml_override=False)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
-    parser.add_argument("--track", choices=["A", "B"], default=None, help="Model track override: A=absolute, B=residual. Reads path from config/model_config.yaml tracks section.")
+    parser.add_argument("--track", choices=["A", "B", "D"], default=None, help="Model track override: A=absolute, B=residual, D=Dynamic Alpha-Sleeve 130/30 long/short. Reads path from config/model_config.yaml tracks section.")
     args = parser.parse_args()
 
-    # Resolve model path override from --track flag
+    # Resolve model path override from --track flag (A/B only; D uses rebalance_alpha_sleeve, not model path)
     _track_model_path_override = None
-    if args.track is not None:
+    if args.track == "D":
+        _track_model_path_override = None
+    elif args.track is not None:
         import yaml as _yaml
         _mcfg_path = ROOT / "config" / "model_config.yaml"
         with open(_mcfg_path, "r", encoding="utf-8") as _f:
@@ -859,6 +907,7 @@ def main():
         "llm_enabled": not args.no_llm,
         "model_path_override": _track_model_path_override,
         "use_ml_override": False if args.no_ml else None,
+        "track": args.track,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days
@@ -872,6 +921,9 @@ def main():
             for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers", "weekly_returns")
             if k in result
         }
+        if args.track == "D":
+            _json_subset["track"] = result.get("track", "D")
+            _json_subset["gross_exposure_avg"] = result.get("gross_exposure_avg", 0.0)
         _out_path = Path(args.out_json)
         _out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(_out_path, "w", encoding="utf-8") as _f:

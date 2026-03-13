@@ -311,3 +311,244 @@ def rebalance_long_short(
         scores, prices_dict, top_n, bottom_n, multiplier, thesis_result["thesis_alert"], max_position
     )
     return weights
+
+
+def get_short_exposure(
+    short_candidates: list,
+    scores: pd.Series,
+    prices_dict: dict,
+    rho: float | None,
+    top_n: int,
+    dispersion_anchor: float = 0.40,
+) -> float:
+    """
+    Returns S in [0.0, 0.30] — the dynamic short sleeve size.
+    Correlation gate: rho > 0.70 → 0.0. Else scale by cross-sectional dispersion of short candidates.
+    """
+    if rho is not None and rho > 0.70:
+        return 0.0
+    vols = []
+    for t in short_candidates:
+        if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+            continue
+        df = prices_dict[t]
+        if "close" not in df.columns:
+            continue
+        close = df["close"]
+        if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
+            close = close.iloc[:, 0]
+        ret = close.pct_change(fill_method=None).dropna()
+        if len(ret) < 10:
+            continue
+        tail = ret.tail(20)
+        ann_vol = float(tail.std()) * ANNUALIZATION_FACTOR
+        vols.append(ann_vol)
+    sector_dispersion = float(np.mean(vols)) if vols else 0.0
+    S = 0.30 * min(sector_dispersion / dispersion_anchor, 1.0)
+    return float(np.clip(S, 0.0, 0.30))
+
+
+def get_leverage_multiplier_v2(
+    target_vol: float,
+    portfolio_returns: pd.Series,
+    vix_z: float,
+    max_leverage: float = 1.6,
+) -> float:
+    """
+    Same logic as get_leverage_multiplier; caller can pass adjusted ceiling (e.g. 1.6 / (1.0 + S))
+    when shorts are active so gross cap 1.6 is shared between long and short.
+    """
+    return get_leverage_multiplier(target_vol, portfolio_returns, vix_z, max_leverage)
+
+
+def rebalance_alpha_sleeve(
+    scores: pd.Series,
+    scores_df: pd.DataFrame,
+    prices_dict: dict,
+    regime_status: dict,
+    config: dict,
+) -> pd.Series:
+    """
+    Orchestrator for Dynamic Alpha-Sleeve. Dynamic short size S from dispersion and correlation;
+    long book L = 1.0 base, short book S in [0, 0.30]. Effective multiplier ceiling shared when S > 0.
+    - S = 0, multiplier = 1.6 → pure leveraged long-only (bull momentum regime)
+    - S = 0.30, multiplier ≈ 1.23 → full 130/30 equivalent (high-dispersion neutral/bear regime)
+    - S = 0, multiplier = 0.1 → near-cash (VIX emergency)
+    """
+    target_vol = config.get("target_vol", 0.15)
+    max_leverage = config.get("max_leverage", 1.6)
+    top_n = config.get("top_n", 15)
+    bottom_n = config.get("bottom_n", 8)
+    max_position = config.get("max_position", 0.10)
+    dispersion_anchor = config.get("dispersion_anchor", 0.40)
+
+    scores_clean = scores.dropna()
+    if scores_clean.empty:
+        return pd.Series(dtype=float)
+    sorted_tickers = scores_clean.sort_values(ascending=False)
+    long_candidates = sorted_tickers.head(top_n).index.tolist()
+    short_candidates = sorted_tickers.tail(bottom_n).index.tolist()
+
+    portfolio_returns = pd.Series(dtype=float)
+    prior_weights = config.get("prior_weights")
+    if prior_weights is not None and isinstance(prior_weights, (dict, pd.Series)):
+        w = prior_weights if isinstance(prior_weights, dict) else prior_weights.to_dict()
+        tickers_with_data = [t for t in w if t in prices_dict and prices_dict[t] is not None and not prices_dict[t].empty]
+        if tickers_with_data:
+            rets = []
+            for t in tickers_with_data:
+                df = prices_dict[t]
+                close = df["close"]
+                if getattr(close, "ndim", 1) > 1:
+                    close = close.iloc[:, 0]
+                rets.append(close.pct_change(fill_method=None))
+            if rets:
+                ret_df = pd.concat(rets, axis=1, join="outer")
+                ret_df.columns = tickers_with_data[: ret_df.shape[1]]
+                weights_vec = np.array([w.get(t, 0) for t in ret_df.columns])
+                if weights_vec.size == ret_df.shape[1]:
+                    portfolio_returns = (ret_df * weights_vec).sum(axis=1)
+    if portfolio_returns.empty or len(portfolio_returns.dropna()) < 10:
+        rets = []
+        for t in long_candidates:
+            if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+                continue
+            df = prices_dict[t]
+            close = df["close"]
+            if getattr(close, "ndim", 1) > 1:
+                close = close.iloc[:, 0]
+            rets.append(close.pct_change(fill_method=None))
+        if rets:
+            ret_df = pd.concat(rets, axis=1, join="outer")
+            portfolio_returns = ret_df.mean(axis=1)
+        else:
+            portfolio_returns = pd.Series(dtype=float)
+
+    vix_z = 0.0
+    if "vix_z" in regime_status:
+        v = regime_status["vix_z"]
+        if isinstance(v, (int, float)) and not (isinstance(v, bool)):
+            vix_z = float(v)
+    if vix_z == 0.0 and "vix" in regime_status:
+        vix_val = regime_status["vix"]
+        if isinstance(vix_val, (int, float)) and not (isinstance(vix_val, bool)):
+            vix_series = regime_status.get("vix_series")
+            if vix_series is not None and len(vix_series) >= 20:
+                arr = np.asarray(vix_series[-20:], dtype=float)
+                m, s = arr.mean(), arr.std()
+                if s > 0:
+                    vix_z = (float(vix_val) - m) / s
+
+    thesis_result = check_thesis_integrity(scores_df, top_n, bottom_n, window=60)
+    rho = thesis_result["rho"]
+    S = get_short_exposure(short_candidates, scores, prices_dict, rho, top_n, dispersion_anchor=dispersion_anchor)
+    effective_max_lev = (1.6 / (1.0 + S)) if S > 0 else 1.6
+    multiplier = get_leverage_multiplier_v2(target_vol, portfolio_returns, vix_z, max_leverage=effective_max_lev)
+
+    lookback_days = 60
+    min_obs = 30
+    returns_dict = {}
+    for t in long_candidates:
+        if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+            continue
+        df = prices_dict[t]
+        close = df["close"]
+        if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
+            close = close.iloc[:, 0]
+        ret = close.pct_change(fill_method=None).dropna()
+        if len(ret) < min_obs:
+            continue
+        ret = ret.iloc[-lookback_days:]
+        returns_dict[t] = ret
+    if len(returns_dict) < 2:
+        long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+    else:
+        try:
+            returns_df = pd.concat(returns_dict, axis=1, join="outer")
+            valid_counts = returns_df.notna().sum()
+            keep = valid_counts >= min_obs
+            returns_df = returns_df.loc[:, keep]
+            if returns_df.shape[1] < 2:
+                long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+            else:
+                from pypfopt.hierarchical_portfolio import HRPOpt
+                hrp = HRPOpt(returns=returns_df)
+                hrp_result = hrp.optimize(linkage_method="ward")
+                hrp_weights = hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+                dropped = [t for t in long_candidates if t not in hrp_weights]
+                hrp_sum = sum(hrp_weights.values())
+                equal_share = (1.0 - hrp_sum) / len(dropped) if dropped else 0.0
+                for t in dropped:
+                    hrp_weights[t] = equal_share
+                long_weights = {t: hrp_weights.get(t, 0.0) for t in long_candidates}
+                total = sum(long_weights.values())
+                if total <= 0:
+                    long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+                else:
+                    long_weights = {t: long_weights[t] / total for t in long_candidates}
+        except Exception:
+            long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+
+    weights = {}
+    for t in long_candidates:
+        weights[t] = long_weights[t] * multiplier
+    if S > 0 and short_candidates:
+        for t in short_candidates:
+            weights[t] = -(S / len(short_candidates)) * multiplier
+    else:
+        for t in short_candidates:
+            weights[t] = 0.0
+
+    target_long_sum = 1.0 * multiplier
+    target_short_sum = -S * multiplier if S > 0 else 0.0
+    while True:
+        clipped = [t for t in long_candidates if t in weights and weights[t] > max_position]
+        if not clipped:
+            break
+        unclipped = [t for t in long_candidates if t in weights and weights[t] < max_position]
+        if not unclipped:
+            break
+        excess = sum(weights[t] - max_position for t in clipped)
+        for t in clipped:
+            weights[t] = max_position
+        for t in unclipped:
+            weights[t] += excess / len(unclipped)
+    long_sum = sum(weights.get(t, 0) for t in long_candidates)
+    if long_sum > 0 and long_candidates:
+        scale = target_long_sum / long_sum
+        for t in long_candidates:
+            if t in weights:
+                weights[t] *= scale
+
+    if S > 0 and short_candidates:
+        while True:
+            clipped = [t for t in short_candidates if t in weights and weights[t] < -max_position]
+            if not clipped:
+                break
+            unclipped = [t for t in short_candidates if t in weights and weights[t] > -max_position]
+            if not unclipped:
+                break
+            excess = sum(weights[t] + max_position for t in clipped)
+            for t in clipped:
+                weights[t] = -max_position
+            for t in unclipped:
+                weights[t] += excess / len(unclipped)
+        short_sum = sum(weights.get(t, 0) for t in short_candidates)
+        if short_sum < 0 and short_candidates:
+            scale = target_short_sum / short_sum
+            for t in short_candidates:
+                if t in weights:
+                    weights[t] *= scale
+
+    gross = sum(abs(weights[t]) for t in weights)
+    if gross > 1.6 and gross > 0:
+        scale = 1.6 / gross
+        for t in list(weights.keys()):
+            weights[t] *= scale
+    net = sum(weights.values())
+    if multiplier > 0 and (net < 0.9 * multiplier or net > 1.1 * multiplier):
+        logger.warning("rebalance_alpha_sleeve: sum(weights)=%s outside [0.9, 1.1] * multiplier=%s", net, multiplier)
+    if thesis_result["thesis_alert"]:
+        from src.monitoring.telegram_alerts import send_alert
+        send_alert("thesis_collapse", {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]})
+    return pd.Series(weights)
