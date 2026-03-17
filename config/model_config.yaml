@@ -60,3 +60,16 @@ tracks:
     thesis_alert_rho: 0.8
     borrow_cost_threshold: 0.05
     dispersion_anchor: 0.40   # 40% annualised vol = full short exposure (S=0.30)
+
+pods:
+  meta_allocator:
+    temperature: 0.5
+    ballast_floor: 0.20
+    prior:
+      core: 0.50
+      extension: 0.30
+      ballast: 0.20
+  sector_cap: 0.40
+  gross_cap: 1.60
+  fitness_path: outputs/pod_fitness.json
+  meta_weights_path: outputs/meta_weights.json

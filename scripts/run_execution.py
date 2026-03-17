@@ -162,6 +162,165 @@ def _create_paper_executor():
     return IBExecutor(ib_provider=data_provider, account=paper_account)
 
 
+def _run_pods(
+    as_of: pd.Timestamp,
+    tickers: list[str],
+    prices_dict: dict[str, pd.DataFrame],
+    data_dir: Path,
+    args: argparse.Namespace,
+) -> pd.Series:
+    """
+    Three-pod aggregation path: Core, Extension, Ballast → aggregate_pod_weights.
+    """
+    from pods import PodCore, PodExtension, PodBallast, aggregate_pod_weights
+    from src.signals.technical_library import calculate_all_indicators, compute_signal_strength
+
+    # 1. Master Score per ticker using technical_library (no look-ahead; slice to as_of)
+    scores: dict[str, float] = {}
+    prices_sliced: dict[str, pd.DataFrame] = {}
+    for t in tickers:
+        df = prices_dict.get(t)
+        if df is None or df.empty:
+            continue
+        df_slice = df[df.index <= as_of]
+        if df_slice.empty or len(df_slice) < 60:
+            continue
+        prices_sliced[t] = df_slice
+        try:
+            indi = calculate_all_indicators(df_slice)
+            if indi.empty:
+                continue
+            row = indi.iloc[-1]
+            score, _meta = compute_signal_strength(row)
+            scores[t] = float(score)
+        except Exception as e:
+            print(f"[PODS] Master score failed for {t}: {e}", flush=True)
+            continue
+
+    if not scores:
+        print("[PODS] No valid master scores; returning empty weights.", flush=True)
+        return pd.Series(dtype=float)
+
+    scores_series = pd.Series(scores)
+
+    # 2. Load regime_status (silent fail → empty dict)
+    regime_status: dict = {}
+    regime_path = ROOT / "outputs" / "regime_status.json"
+    try:
+        if regime_path.exists():
+            with open(regime_path, "r", encoding="utf-8") as f:
+                regime_status = json.load(f)
+    except Exception as e:
+        print(f"[PODS] Could not load regime_status.json: {e}", flush=True)
+        regime_status = {}
+
+    # 3. Load pod config and Track D config for Extension pod
+    import yaml as _yaml
+
+    mcfg_path = ROOT / "config" / "model_config.yaml"
+    pods_cfg: dict = {}
+    track_d_cfg: dict = {}
+    if mcfg_path.exists():
+        try:
+            with open(mcfg_path, "r", encoding="utf-8") as f:
+                mcfg = _yaml.safe_load(f) or {}
+            pods_cfg = mcfg.get("pods", {}) or {}
+            track_d_cfg = (mcfg.get("tracks", {}) or {}).get("D", {}) or {}
+        except Exception as e:
+            print(f"[PODS] Could not load model_config.yaml: {e}", flush=True)
+            pods_cfg = {}
+            track_d_cfg = {}
+
+    core_cfg = pods_cfg.get("core", {}) or {}
+    extension_cfg = track_d_cfg
+    ballast_cfg = pods_cfg.get("ballast", {}) or {}
+
+    # 4. Instantiate and call pods with per-pod error isolation
+    core = PodCore()
+    ext = PodExtension()
+    ballast = PodBallast()
+
+    pod_weights: dict[str, pd.Series] = {}
+
+    try:
+        w_core = core.generate_weights(scores_series, prices_sliced, regime_status, core_cfg)
+        pod_weights["core"] = w_core if isinstance(w_core, pd.Series) else pd.Series(dtype=float)
+    except Exception as e:
+        print(f"[POD_CORE] Error: {e}", flush=True)
+        pod_weights["core"] = pd.Series(dtype=float)
+
+    try:
+        w_ext = ext.generate_weights(scores_series, prices_sliced, regime_status, extension_cfg)
+        pod_weights["extension"] = w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
+    except Exception as e:
+        print(f"[POD_EXTENSION] Error: {e}", flush=True)
+        pod_weights["extension"] = pd.Series(dtype=float)
+
+    try:
+        w_ballast = ballast.generate_weights(scores_series, prices_sliced, regime_status, ballast_cfg)
+        pod_weights["ballast"] = w_ballast if isinstance(w_ballast, pd.Series) else pd.Series(dtype=float)
+    except Exception as e:
+        print(f"[POD_BALLAST] Error: {e}", flush=True)
+        pod_weights["ballast"] = pd.Series(dtype=float)
+
+    # 5. Load meta weights from outputs/meta_weights.json with fallback
+    default_meta = {"core": 0.50, "extension": 0.30, "ballast": 0.20}
+    meta_weights_path = ROOT / (pods_cfg.get("meta_weights_path") or "outputs/meta_weights.json")
+    meta_weights = default_meta.copy()
+    try:
+        if meta_weights_path.exists():
+            with open(meta_weights_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            w = data.get("weights") or data
+            for k in default_meta:
+                if k in w:
+                    meta_weights[k] = float(w[k])
+    except Exception as e:
+        print(f"[PODS] Could not load meta_weights.json: {e}", flush=True)
+        meta_weights = default_meta.copy()
+
+    # 6. Load universe pillars from config/universe.yaml
+    universe_pillars: dict[str, list] = {}
+    universe_path = ROOT / "config" / "universe.yaml"
+    if universe_path.exists():
+        try:
+            with open(universe_path, "r", encoding="utf-8") as f:
+                ucfg = _yaml.safe_load(f) or {}
+            universe_pillars = ucfg.get("pillars", {}) or {}
+        except Exception as e:
+            print(f"[PODS] Could not load universe.yaml: {e}", flush=True)
+            universe_pillars = {}
+
+    # 7. Aggregate with sector and gross caps from pods config
+    sector_cap = float(pods_cfg.get("sector_cap", 0.40))
+    gross_cap = float(pods_cfg.get("gross_cap", 1.60))
+
+    agg_weights = aggregate_pod_weights(
+        pod_weights=pod_weights,
+        meta_weights=meta_weights,
+        universe_pillars=universe_pillars,
+        sector_cap=sector_cap,
+        gross_cap=gross_cap,
+    )
+
+    # 8. Print per-pod and final summary
+    for name in ("core", "extension", "ballast"):
+        s = pod_weights.get(name, pd.Series(dtype=float))
+        active = int((s != 0).sum()) if not s.empty else 0
+        gross = float(s.abs().sum()) if not s.empty else 0.0
+        print(f"[POD_{name.upper()}] positions={active} gross={gross:.3f}", flush=True)
+
+    active_total = int((agg_weights != 0).sum()) if not agg_weights.empty else 0
+    gross_total = float(agg_weights.abs().sum()) if not agg_weights.empty else 0.0
+    net_total = float(agg_weights.sum()) if not agg_weights.empty else 0.0
+    print(
+        f"[PODS] Aggregated -- positions={active_total} gross={gross_total:.3f} net={net_total:.3f}",
+        flush=True,
+    )
+
+    return agg_weights
+
+
 def main() -> tuple[int, list]:
     from dotenv import load_dotenv as _load_dotenv
     _load_dotenv()
@@ -177,6 +336,7 @@ def main() -> tuple[int, list]:
     parser.add_argument("--rebalance", action="store_true", help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)")
     parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
+    parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
     args = parser.parse_args()
 
     run_start_ts = datetime.now(timezone.utc).isoformat()
@@ -260,19 +420,22 @@ def main() -> tuple[int, list]:
                           if float(w) != 0 and t in set(tickers)]
         intent = SimpleNamespace(tickers=intent_tickers, weights=dict(optimal_weights_series))
     else:
-        optimal_weights_series = compute_target_weights(
-            as_of,
-            tickers,
-            prices_dict,
-            data_dir,
-            top_n=args.top_n,
-            sideways_risk_scale=args.sideways_risk_scale,
-            llm_enabled=not args.no_llm,
-        )
+        if args.pods:
+            optimal_weights_series = _run_pods(as_of, tickers, prices_dict, data_dir, args)
+        else:
+            optimal_weights_series = compute_target_weights(
+                as_of,
+                tickers,
+                prices_dict,
+                data_dir,
+                top_n=args.top_n,
+                sideways_risk_scale=args.sideways_risk_scale,
+                llm_enabled=not args.no_llm,
+            )
         if optimal_weights_series.sum() == 0:
             print("No target tickers from portfolio engine.", flush=True)
             return (0, [])
-        intent_tickers = list(optimal_weights_series[optimal_weights_series > 0].index)
+        intent_tickers = [t for t, w in optimal_weights_series.items() if float(w) != 0]
         intent = SimpleNamespace(tickers=intent_tickers, weights=optimal_weights_series.to_dict())
         # Persist for next --rebalance
         LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)

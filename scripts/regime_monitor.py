@@ -137,6 +137,44 @@ def _main() -> int:
     except Exception:
         pass
 
+    # --- Bayesian Meta-Allocator ---
+    try:
+        import yaml as _yaml
+        from pods.meta_allocator import compute_pod_weights, load_pod_fitness, save_pod_fitness
+        _mcfg_path = ROOT / "config" / "model_config.yaml"
+        _pods_cfg: dict = {}
+        if _mcfg_path.exists():
+            with open(_mcfg_path, "r", encoding="utf-8") as _f:
+                _mcfg = _yaml.safe_load(_f) or {}
+            _pods_cfg = _mcfg.get("pods", {})
+        _fitness_path = ROOT / _pods_cfg.get("fitness_path", "outputs/pod_fitness.json")
+        _meta_weights_path = ROOT / _pods_cfg.get("meta_weights_path", "outputs/meta_weights.json")
+        _meta_cfg = _pods_cfg.get("meta_allocator", {})
+        _pod_fitness = load_pod_fitness(_fitness_path)
+        _meta_weights = compute_pod_weights(
+            pod_fitness=_pod_fitness,
+            regime_status=out,
+            prior=_meta_cfg.get("prior"),
+            temperature=float(_meta_cfg.get("temperature", 0.5)),
+            ballast_floor=float(_meta_cfg.get("ballast_floor", 0.20)),
+        )
+        _meta_out = {
+            "as_of": out["as_of"],
+            "regime": regime,
+            "weights": _meta_weights,
+            "fitness_used": _pod_fitness,
+        }
+        _meta_weights_path.parent.mkdir(parents=True, exist_ok=True)
+        _meta_weights_path.write_text(json.dumps(_meta_out, indent=2), encoding="utf-8")
+        print(
+            f"[META] weights -- core={_meta_weights['core']:.3f} | "
+            f"extension={_meta_weights['extension']:.3f} | "
+            f"ballast={_meta_weights['ballast']:.3f}",
+            flush=True,
+        )
+    except Exception as _e:
+        print(f"[META] Meta-allocator skipped: {type(_e).__name__}: {_e}", flush=True)
+
     if regime == "NORMAL":
         vix_s = f"{vix:.1f}" if vix is not None else "N/A"
         spy_s = f"{spy_close:.1f}" if spy_close is not None else "N/A"
