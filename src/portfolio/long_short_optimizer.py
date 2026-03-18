@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,101 @@ def check_thesis_integrity(
         thesis_alert = float(rho) > 0.8
         alert_reason = "correlation above 0.8" if thesis_alert else "ok"
     return {"rho": float(rho) if rho is not None else None, "thesis_alert": thesis_alert, "alert_reason": alert_reason}
+
+
+def _compute_rolling_ic(
+    scores_df: pd.DataFrame,
+    prices_dict: dict,
+    window: int = 60,
+) -> float | None:
+    """
+    Rolling IC: for each of the last `window` dates, compute Spearman(score, next-day return);
+    return mean IC if >= 10 valid dates else None.
+    """
+    try:
+        slice_df = scores_df.tail(window)
+        if slice_df.empty:
+            logger.debug("[TRACK_D_IC] insufficient data")
+            return None
+        dates = slice_df.index.tolist()
+        ic_list = []
+        for i in range(len(dates) - 1):
+            date_curr = dates[i]
+            date_next = dates[i + 1]
+            try:
+                row = slice_df.loc[date_curr]
+                scores_vals = []
+                returns_vals = []
+                for t in row.dropna().index:
+                    if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+                        continue
+                    df = prices_dict[t]
+                    if "close" not in df.columns:
+                        continue
+                    close = df["close"]
+                    if getattr(close, "ndim", 1) > 1:
+                        close = close.iloc[:, 0]
+                    close = close.reindex([date_curr, date_next])
+                    close = close.dropna()
+                    if len(close) < 2:
+                        continue
+                    try:
+                        c_curr = float(close.loc[date_curr])
+                        c_next = float(close.loc[date_next])
+                    except (KeyError, TypeError):
+                        continue
+                    if c_curr is None or c_curr <= 0 or c_next is None:
+                        continue
+                    score_val = row.get(t)
+                    if pd.isna(score_val):
+                        continue
+                    next_ret = (c_next / c_curr) - 1.0
+                    scores_vals.append(float(score_val))
+                    returns_vals.append(next_ret)
+                if len(scores_vals) < 5 or len(returns_vals) < 5:
+                    continue
+                r, _ = spearmanr(scores_vals, returns_vals)
+                if r is not None and np.isfinite(r):
+                    ic_list.append(float(r))
+            except Exception as e:
+                logger.debug("[TRACK_D_IC] date %s: %s", date_curr, e)
+                continue
+        if len(ic_list) < 10:
+            logger.info("[TRACK_D_IC] insufficient data")
+            return None
+        mean_ic = float(np.mean(ic_list))
+        logger.info("[TRACK_D_IC] rolling_ic=%.4f n_dates=%d", mean_ic, len(ic_list))
+        return mean_ic
+    except Exception as e:
+        logger.exception("[TRACK_D_IC] %s", e)
+        return None
+
+
+def _determine_fsm_state(
+    thesis_result: dict,
+    rolling_ic: float | None,
+    regime_status: dict,
+    config: dict,
+) -> dict[str, str]:
+    """Returns dict with state ('A', 'B', or 'C') and reason."""
+    rho = thesis_result.get("rho")
+    spy_below_sma = regime_status.get("spy_below_sma", regime_status.get("spy_below_sma200", False)) is True
+
+    # State C: IC negative
+    if rolling_ic is not None and rolling_ic < 0.0:
+        return {"state": "C", "reason": f"IC negative: {rolling_ic:.4f}"}
+
+    # State B: any of three sub-conditions
+    rho_threshold = 0.65 if not spy_below_sma else 0.80
+    if rho is not None and rho > rho_threshold:
+        reason = f"thesis_alert rho={rho:.3f} (bull_prior)" if not spy_below_sma else f"thesis_alert rho={rho:.3f}"
+        return {"state": "B", "reason": reason}
+    if rho is not None and rho > 0.70:
+        return {"state": "B", "reason": f"cross_sectional_rho={rho:.3f} > 0.70"}
+    if not spy_below_sma and rolling_ic is not None and rolling_ic < 0.01:
+        return {"state": "B", "reason": f"near_zero_IC={rolling_ic:.4f} in bull regime"}
+
+    return {"state": "A", "reason": "normal"}
 
 
 def build_long_short_weights(
@@ -439,12 +534,26 @@ def rebalance_alpha_sleeve(
                 if s > 0:
                     vix_z = (float(vix_val) - m) / s
 
+    # Step 1: thesis integrity
     thesis_result = check_thesis_integrity(scores_df, top_n, bottom_n, window=60)
     rho = thesis_result["rho"]
+
+    # Step 2: rolling IC
+    rolling_ic = _compute_rolling_ic(scores_df, prices_dict, window=60)
+
+    # Step 3: FSM state
+    fsm = _determine_fsm_state(thesis_result, rolling_ic, regime_status, config)
+    logger.info("[TRACK_D_FSM] state=%s | reason=%s", fsm["state"], fsm["reason"])
+
+    # Step 4: leverage multiplier (State A: 1.6/(1+S); B/C: max_leverage)
     S = get_short_exposure(short_candidates, scores, prices_dict, rho, top_n, dispersion_anchor=dispersion_anchor)
-    effective_max_lev = (1.6 / (1.0 + S)) if S > 0 else 1.6
+    if fsm["state"] == "A":
+        effective_max_lev = (1.6 / (1.0 + S)) if S > 0 else 1.6
+    else:
+        effective_max_lev = max_leverage
     multiplier = get_leverage_multiplier_v2(target_vol, portfolio_returns, vix_z, max_leverage=effective_max_lev)
 
+    # Step 5: long book (HRP unchanged)
     lookback_days = 60
     min_obs = 30
     returns_dict = {}
@@ -492,15 +601,33 @@ def rebalance_alpha_sleeve(
     weights = {}
     for t in long_candidates:
         weights[t] = long_weights[t] * multiplier
-    if S > 0 and short_candidates:
+
+    # Step 6: short weights by FSM state
+    short_light_cap = config.get("short_light_cap", 0.12)
+    if fsm["state"] == "A":
+        if S > 0 and short_candidates:
+            for t in short_candidates:
+                weights[t] = -(S / len(short_candidates)) * multiplier
+        else:
+            for t in short_candidates:
+                weights[t] = 0.0
+        target_short_sum = -S * multiplier if S > 0 else 0.0
+    elif fsm["state"] == "B":
         for t in short_candidates:
-            weights[t] = -(S / len(short_candidates)) * multiplier
+            weights[t] = 0.0
+        if "SMH" in prices_dict and prices_dict["SMH"] is not None and not prices_dict["SMH"].empty:
+            weights["SMH"] = -short_light_cap
+        else:
+            logger.warning("[TRACK_D_FSM] State B: SMH not in prices_dict, skipping SMH short")
+        target_short_sum = -short_light_cap
     else:
         for t in short_candidates:
             weights[t] = 0.0
+        target_short_sum = 0.0
 
     target_long_sum = 1.0 * multiplier
-    target_short_sum = -S * multiplier if S > 0 else 0.0
+
+    # Step 7: position caps, gross cap 1.6, net sanity
     while True:
         clipped = [t for t in long_candidates if t in weights and weights[t] > max_position]
         if not clipped:
@@ -520,25 +647,27 @@ def rebalance_alpha_sleeve(
             if t in weights:
                 weights[t] *= scale
 
-    if S > 0 and short_candidates:
-        while True:
-            clipped = [t for t in short_candidates if t in weights and weights[t] < -max_position]
-            if not clipped:
-                break
-            unclipped = [t for t in short_candidates if t in weights and weights[t] > -max_position]
-            if not unclipped:
-                break
-            excess = sum(weights[t] + max_position for t in clipped)
-            for t in clipped:
-                weights[t] = -max_position
-            for t in unclipped:
-                weights[t] += excess / len(unclipped)
-        short_sum = sum(weights.get(t, 0) for t in short_candidates)
-        if short_sum < 0 and short_candidates:
-            scale = target_short_sum / short_sum
-            for t in short_candidates:
-                if t in weights:
-                    weights[t] *= scale
+    if target_short_sum < 0 and fsm["state"] == "A":
+        short_tickers = [t for t in short_candidates if t in weights]
+        if short_tickers:
+            while True:
+                clipped = [t for t in short_tickers if t in weights and weights[t] < -max_position]
+                if not clipped:
+                    break
+                unclipped = [t for t in short_tickers if t in weights and weights[t] > -max_position]
+                if not unclipped:
+                    break
+                excess = sum(weights[t] + max_position for t in clipped)
+                for t in clipped:
+                    weights[t] = -max_position
+                for t in unclipped:
+                    weights[t] += excess / len(unclipped)
+            short_sum = sum(weights.get(t, 0) for t in short_tickers)
+            if short_sum < 0:
+                scale = target_short_sum / short_sum
+                for t in short_tickers:
+                    if t in weights:
+                        weights[t] *= scale
 
     gross = sum(abs(weights[t]) for t in weights)
     if gross > 1.6 and gross > 0:
@@ -548,7 +677,11 @@ def rebalance_alpha_sleeve(
     net = sum(weights.values())
     if multiplier > 0 and (net < 0.9 * multiplier or net > 1.1 * multiplier):
         logger.warning("rebalance_alpha_sleeve: sum(weights)=%s outside [0.9, 1.1] * multiplier=%s", net, multiplier)
+
+    # Step 8: thesis_collapse alert (independent of FSM)
     if thesis_result["thesis_alert"]:
         from src.monitoring.telegram_alerts import send_alert
         send_alert("thesis_collapse", {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]})
+
+    # Step 9
     return pd.Series(weights)

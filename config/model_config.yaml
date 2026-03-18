@@ -60,6 +60,7 @@ tracks:
     thesis_alert_rho: 0.8
     borrow_cost_threshold: 0.05
     dispersion_anchor: 0.40   # 40% annualised vol = full short exposure (S=0.30)
+    short_light_cap: 0.12
 
 pods:
   meta_allocator:
