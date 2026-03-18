@@ -13,6 +13,21 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _load_yaml(path: str | Path) -> dict:
+    """Return parsed YAML or empty dict."""
+    p = Path(path) if not isinstance(path, Path) else path
+    if not p.is_absolute():
+        p = ROOT / p
+    if not p.exists():
+        return {}
+    try:
+        import yaml
+        with open(p, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
 def load_json(path: str | Path) -> dict | list | None:
     """Return parsed JSON or None if file missing or parse error; log to stderr."""
     p = Path(path) if not isinstance(path, Path) else path
@@ -57,7 +72,166 @@ with st.sidebar:
         st.rerun()
     auto_refresh = st.toggle("Auto-refresh", value=True)
 
-# Panel 1 — Regime & Risk
+# Panel 1 — Probabilistic Regime Assignment
+st.subheader("Probabilistic Regime Assignment")
+meta_weights_data = load_json("outputs/meta_weights.json")
+if meta_weights_data is None or not meta_weights_data.get("weights"):
+    st.markdown(
+        '<span style="color: #888; background: #f0f0f0; padding: 0.5rem 1rem; border-radius: 4px;">Regime probabilities unavailable.</span>',
+        unsafe_allow_html=True,
+    )
+else:
+    weights = meta_weights_data.get("weights") or {}
+    core_w = float(weights.get("core", 0))
+    ext_w = float(weights.get("extension", 0))
+    ballast_w = float(weights.get("ballast", 0))
+    total = core_w + ext_w + ballast_w
+    if total <= 0:
+        core_w, ext_w, ballast_w = 1 / 3, 1 / 3, 1 / 3
+        total = 1.0
+    core_pct = core_w / total
+    ext_pct = ext_w / total
+    ballast_pct = ballast_w / total
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=["Regime"],
+        x=[core_pct * 100],
+        name="BULL",
+        orientation="h",
+        marker_color="rgb(34, 139, 34)",
+        text=[f"{core_pct * 100:.0f}%"],
+        textposition="inside",
+    ))
+    fig.add_trace(go.Bar(
+        y=["Regime"],
+        x=[ext_pct * 100],
+        name="TRANSITION",
+        orientation="h",
+        marker_color="rgb(255, 191, 0)",
+        text=[f"{ext_pct * 100:.0f}%"],
+        textposition="inside",
+    ))
+    fig.add_trace(go.Bar(
+        y=["Regime"],
+        x=[ballast_pct * 100],
+        name="BEAR",
+        orientation="h",
+        marker_color="rgb(178, 34, 34)",
+        text=[f"{ballast_pct * 100:.0f}%"],
+        textposition="inside",
+    ))
+    fig.update_layout(
+        barmode="stack",
+        xaxis=dict(tickformat=".0f", ticksuffix="%", range=[0, 100]),
+        yaxis=dict(showticklabels=False),
+        showlegend=True,
+        legend=dict(orientation="h"),
+        height=120,
+        margin=dict(l=80, r=80, t=20, b=20),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    regime_label = str(meta_weights_data.get("regime", "—")).upper()
+    as_of = meta_weights_data.get("as_of", "—")
+    st.caption(f"Regime: {regime_label}  |  As of: {as_of}")
+
+# Panel 2 — Tiered Alerts
+st.subheader("Tiered Alerts")
+breakdown = load_json("outputs/structural_breakdown.json")
+drawdown_data = load_json("outputs/drawdown_tracker.json")
+mcfg = _load_yaml("config/model_config.yaml")
+risk_cfg = mcfg.get("risk_management", {})
+stop_threshold = float(risk_cfg.get("stop_loss_threshold", -0.10))
+ic_baseline = float(risk_cfg.get("ic_baseline", 0.0428))
+
+def _severity_style(s: str) -> str:
+    s = (s or "ok").lower()
+    if s == "critical":
+        return 'color: #c00; font-weight: bold;'
+    if s == "warning":
+        return 'color: #b8860b;'
+    return 'color: #06c;'
+
+def _status_cell(triggered: bool) -> str:
+    return "⚠ Active" if triggered else "✓ OK"
+
+alert_rows = []
+# IC Decay
+ic_decay = (breakdown or {}).get("ic_decay") or {}
+ic_val = ic_decay.get("rolling_ic_20d")
+ic_str = f"{ic_val:.4f}" if ic_val is not None else "N/A"
+ic_sev = ic_decay.get("severity", "ok")
+ic_trig = ic_decay.get("triggered", False)
+alert_rows.append({
+    "Alert Name": "IC Decay",
+    "Current Value": ic_str,
+    "Threshold": f"{ic_baseline:.4f}",
+    "Severity": ic_sev,
+    "Status": _status_cell(ic_trig),
+})
+
+# Residual Risk
+res_risk = (breakdown or {}).get("residual_risk") or {}
+rr_val = res_risk.get("pnl_vol_8w")
+rr_str = f"{rr_val:.4f}" if rr_val is not None else "N/A"
+rr_sev = res_risk.get("severity", "ok")
+rr_trig = res_risk.get("triggered", False)
+alert_rows.append({
+    "Alert Name": "Residual Risk",
+    "Current Value": rr_str,
+    "Threshold": "2× baseline",
+    "Severity": rr_sev,
+    "Status": _status_cell(rr_trig),
+})
+
+# Regime Misalignment
+mis = (breakdown or {}).get("regime_misalignment") or {}
+betas = mis.get("pod_betas") or {}
+betas_str = ", ".join(f"{k}={v:.2f}" for k, v in betas.items()) if betas else "N/A"
+mis_sev = mis.get("severity", "ok")
+mis_trig = mis.get("triggered", False)
+alert_rows.append({
+    "Alert Name": "Regime Misalignment",
+    "Current Value": betas_str[:40] + "…" if len(betas_str) > 40 else betas_str,
+    "Threshold": "mandate ± buffer",
+    "Severity": mis_sev,
+    "Status": _status_cell(mis_trig),
+})
+
+# Portfolio Drawdown
+dd_val = None
+if drawdown_data is not None:
+    dd_val = drawdown_data.get("drawdown")
+dd_str = f"{dd_val:.1%}" if dd_val is not None else "N/A"
+dd_sev = "critical" if (dd_val is not None and dd_val <= -0.10) else "ok"
+flatten = drawdown_data.get("flatten_active", False) if drawdown_data else False
+alert_rows.append({
+    "Alert Name": "Portfolio Drawdown",
+    "Current Value": dd_str,
+    "Threshold": f"{stop_threshold:.0%}",
+    "Severity": dd_sev,
+    "Status": _status_cell(flatten),
+})
+
+if alert_rows:
+    # Header
+    h1, h2, h3, h4, h5 = st.columns([2, 2, 2, 1.5, 1.5])
+    h1.write("**Alert Name**")
+    h2.write("**Current Value**")
+    h3.write("**Threshold**")
+    h4.write("**Severity**")
+    h5.write("**Status**")
+    for r in alert_rows:
+        cols = st.columns([2, 2, 2, 1.5, 1.5])
+        cols[0].write(r["Alert Name"])
+        cols[1].write(r["Current Value"])
+        cols[2].write(r["Threshold"])
+        cols[3].markdown(f'<span style="{_severity_style(r["Severity"])}">{r["Severity"]}</span>', unsafe_allow_html=True)
+        cols[4].write(r["Status"])
+else:
+    st.caption("No alert data (structural_breakdown.json and/or drawdown_tracker.json missing).")
+
+# Panel 3 — Regime & Risk (formerly Panel 1)
 regime_data = load_json("outputs/regime_status.json")
 if regime_data is None:
     st.info("⏳ outputs/regime_status.json not yet generated")

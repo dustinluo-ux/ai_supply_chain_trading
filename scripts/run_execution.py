@@ -321,6 +321,40 @@ def _run_pods(
     return agg_weights
 
 
+def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
+    """
+    Read outputs/drawdown_tracker.json if it exists; update peak_nav, current_nav,
+    drawdown, last_updated; write back. If file missing, initialise with peak_nav=account_value,
+    drawdown=0.0, flatten_active=False. Returns the updated tracker dict.
+    """
+    from datetime import datetime, timezone
+    default = {
+        "peak_nav": account_value,
+        "current_nav": account_value,
+        "drawdown": 0.0,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "flatten_active": False,
+    }
+    if not tracker_path.exists():
+        tracker_path.parent.mkdir(parents=True, exist_ok=True)
+        tracker_path.write_text(json.dumps(default, indent=2), encoding="utf-8")
+        return default
+    try:
+        with open(tracker_path, "r", encoding="utf-8") as f:
+            tracker = json.load(f)
+    except Exception:
+        tracker = dict(default)
+    peak = float(tracker.get("peak_nav", account_value))
+    peak = max(peak, account_value)
+    tracker["peak_nav"] = peak
+    tracker["current_nav"] = account_value
+    tracker["drawdown"] = (account_value - peak) / peak if peak > 0 else 0.0
+    tracker["last_updated"] = datetime.now(timezone.utc).isoformat()
+    tracker_path.parent.mkdir(parents=True, exist_ok=True)
+    tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+    return tracker
+
+
 def main() -> tuple[int, list]:
     from dotenv import load_dotenv as _load_dotenv
     _load_dotenv()
@@ -337,6 +371,7 @@ def main() -> tuple[int, list]:
     parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
     parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
+    parser.add_argument("--reset-stop-loss", action="store_true", help="Clear flatten_active in drawdown_tracker and continue normal execution")
     args = parser.parse_args()
 
     run_start_ts = datetime.now(timezone.utc).isoformat()
@@ -404,6 +439,39 @@ def main() -> tuple[int, list]:
         mondays = pd.date_range(min(all_dates), max(all_dates), freq="W-MON")
         as_of = mondays[-1] if len(mondays) else pd.Timestamp(all_dates[-1])
 
+    # Resolve executor, position_manager, and account_value before weight computation (stop-loss gate needs NAV).
+    from src.execution.executor_factory import ExecutorFactory
+    from src.execution.mock_executor import MockExecutor
+    from src.portfolio.position_manager import PositionManager
+    trading_config_path = ROOT / "config" / "trading_config.yaml"
+    if args.mode == "mock":
+        executor = ExecutorFactory.from_config_file()
+        if not isinstance(executor, MockExecutor):
+            raise RuntimeError(
+                "With --mode mock, config must specify executor: mock. "
+                "Use --mode paper for IB paper."
+            )
+    else:
+        executor = _create_paper_executor()
+    position_manager = PositionManager(executor)
+    current_positions = position_manager.get_current_positions()
+    current_weights = position_manager.positions_to_weights(current_positions)
+    account_value = position_manager.get_account_value()
+    if args.mode == "paper" and hasattr(executor, "ib_provider"):
+        try:
+            from src.execution.ibkr_bridge import AccountMonitor
+            monitor_for_nav = AccountMonitor(executor.ib_provider)
+            monitor_for_nav.refresh()
+            live_nav = monitor_for_nav.get_net_liquidation()
+            if live_nav > 0:
+                account_value = live_nav
+        except Exception:
+            pass
+    if account_value <= 0 and trading_config_path.exists():
+        with open(trading_config_path, "r", encoding="utf-8") as f:
+            tc = yaml.safe_load(f)
+        account_value = float(tc.get("trading", {}).get("initial_capital", 100_000))
+
     if args.rebalance:
         # Rebalance mode: pull last valid weights from cache (no fresh signal generation)
         if not LAST_VALID_WEIGHTS_PATH.exists():
@@ -420,6 +488,57 @@ def main() -> tuple[int, list]:
                           if float(w) != 0 and t in set(tickers)]
         intent = SimpleNamespace(tickers=intent_tickers, weights=dict(optimal_weights_series))
     else:
+        # --reset-stop-loss: clear flatten_active before any other logic
+        if args.reset_stop_loss:
+            _dd_path = ROOT / "outputs" / "drawdown_tracker.json"
+            try:
+                _dd = {}
+                if _dd_path.exists():
+                    with open(_dd_path, "r", encoding="utf-8") as _f:
+                        _dd = json.load(_f)
+                _dd["flatten_active"] = False
+                _dd_path.parent.mkdir(parents=True, exist_ok=True)
+                _dd_path.write_text(json.dumps(_dd, indent=2), encoding="utf-8")
+                print("[STOP-LOSS] Reset: flatten_active cleared. Normal execution continues.", flush=True)
+            except Exception as _e:
+                print(f"[STOP-LOSS] Reset failed: {_e}", flush=True)
+
+        _tracker_path = ROOT / "outputs" / "drawdown_tracker.json"
+        tracker = _update_drawdown_tracker(account_value, _tracker_path)
+        stop_threshold = -0.10
+        _mcfg_path = ROOT / "config" / "model_config.yaml"
+        if _mcfg_path.exists():
+            try:
+                with open(_mcfg_path, "r", encoding="utf-8") as _f:
+                    _mcfg = yaml.safe_load(_f) or {}
+                stop_threshold = float(_mcfg.get("risk_management", {}).get("stop_loss_threshold", -0.10))
+            except Exception:
+                pass
+        if tracker["drawdown"] <= stop_threshold or tracker.get("flatten_active"):
+            print(
+                f"[STOP-LOSS] Drawdown {tracker['drawdown']:.1%} hit threshold {stop_threshold:.0%} — FLATTEN ALL. Skipping weight generation.",
+                flush=True,
+            )
+            optimal_weights_series = pd.Series(0.0, index=tickers)
+            intent_tickers = []
+            intent = SimpleNamespace(tickers=[], weights={})
+            try:
+                from src.monitoring.telegram_alerts import send_alert
+                send_alert(
+                    "stop_loss",
+                    {
+                        "drawdown": tracker["drawdown"],
+                        "peak_nav": tracker.get("peak_nav", 0),
+                        "current_nav": tracker.get("current_nav", 0),
+                    },
+                )
+            except Exception:
+                pass
+            tracker["flatten_active"] = True
+            _tracker_path.parent.mkdir(parents=True, exist_ok=True)
+            _tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+            return (0, [])
+
         if args.pods:
             optimal_weights_series = _run_pods(as_of, tickers, prices_dict, data_dir, args)
         else:
@@ -441,41 +560,6 @@ def main() -> tuple[int, list]:
         LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LAST_VALID_WEIGHTS_PATH, "w", encoding="utf-8") as f:
             json.dump({"as_of": str(as_of.date()), "weights": optimal_weights_series.to_dict()}, f, indent=2)
-
-    from src.execution.executor_factory import ExecutorFactory
-    from src.execution.mock_executor import MockExecutor
-    from src.portfolio.position_manager import PositionManager
-
-    if args.mode == "mock":
-        executor = ExecutorFactory.from_config_file()
-        if not isinstance(executor, MockExecutor):
-            raise RuntimeError(
-                "With --mode mock, config must specify executor: mock. "
-                "Use --mode paper for IB paper."
-            )
-    else:
-        executor = _create_paper_executor()
-
-    position_manager = PositionManager(executor)
-    current_positions = position_manager.get_current_positions()
-    current_weights = position_manager.positions_to_weights(current_positions)
-    account_value = position_manager.get_account_value()
-    # Live bridge: when IB is used, refresh account from provider so sizing uses live NAV
-    if args.mode == "paper" and hasattr(executor, "ib_provider"):
-        try:
-            from src.execution.ibkr_bridge import AccountMonitor
-            monitor_for_nav = AccountMonitor(executor.ib_provider)
-            monitor_for_nav.refresh()
-            live_nav = monitor_for_nav.get_net_liquidation()
-            if live_nav > 0:
-                account_value = live_nav
-        except Exception:
-            pass
-    trading_config_path = ROOT / "config" / "trading_config.yaml"
-    if account_value <= 0 and trading_config_path.exists():
-        with open(trading_config_path, "r", encoding="utf-8") as f:
-            tc = yaml.safe_load(f)
-        account_value = float(tc.get("trading", {}).get("initial_capital", 100_000))
 
     smh_short_shares = 0
     smh_hedge_row = None

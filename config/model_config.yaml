@@ -73,3 +73,12 @@ pods:
   gross_cap: 1.60
   fitness_path: outputs/pod_fitness.json
   meta_weights_path: outputs/meta_weights.json
+
+risk_management:
+  ic_baseline: 0.0428
+  ic_decay_window: 20
+  stop_loss_threshold: -0.10
+  residual_risk_warning_multiple: 2.0
+  residual_risk_critical_multiple: 3.0
+  beta_mandate_warning_buffer: 0.3
+  beta_mandate_critical_buffer: 0.6

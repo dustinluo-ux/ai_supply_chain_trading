@@ -89,6 +89,14 @@ def send_alert(alert_type: str, payload: dict) -> None:
             "Gross exposure reduced 50%\n"
             f"Reason: {reason}"
         )
+    elif alert_type == "stop_loss":
+        drawdown = payload.get("drawdown", 0.0)
+        peak_nav = payload.get("peak_nav", 0)
+        current_nav = payload.get("current_nav", 0)
+        text = (
+            "🚨 STOP-LOSS TRIGGERED — Portfolio drawdown "
+            f"{drawdown:.1%} hit -10% floor. FLATTEN ALL initiated."
+        )
     else:
         print(f"[telegram_alerts] Unknown alert_type={alert_type!r}; skipping.", file=sys.stderr)
         return

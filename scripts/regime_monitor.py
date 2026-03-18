@@ -175,6 +175,96 @@ def _main() -> int:
     except Exception as _e:
         print(f"[META] Meta-allocator skipped: {type(_e).__name__}: {_e}", flush=True)
 
+    # --- Structural Breakdown ---
+    try:
+        from dotenv import load_dotenv
+        import os as _os
+        import yaml as _yaml
+        import pandas as _pd
+        load_dotenv(ROOT / ".env")
+        _data_dir = _os.environ.get("DATA_DIR", "")
+        _data_dir = Path(_data_dir) if _data_dir else None
+
+        _tickers = []
+        _universe_path = ROOT / "config" / "universe.yaml"
+        if _universe_path.exists():
+            with open(_universe_path, "r", encoding="utf-8") as _f:
+                _ucfg = _yaml.safe_load(_f) or {}
+            _pillars = _ucfg.get("pillars", {}) or {}
+            for _pillar_tickers in _pillars.values():
+                _tickers.extend(_pillar_tickers)
+
+        _prices_dict = {}
+        if _data_dir and _tickers:
+            try:
+                from src.data.csv_provider import load_prices as _load_prices
+                _prices_dict = _load_prices(_data_dir, _tickers)
+            except Exception:
+                _prices_dict = {}
+
+        _weights_history = []
+        _last_weights_path = ROOT / "outputs" / "last_valid_weights.json"
+        if _last_weights_path.exists():
+            try:
+                with open(_last_weights_path, "r", encoding="utf-8") as _f:
+                    _cache = json.load(_f)
+                _w = _cache.get("weights") or {}
+                _as_of = _cache.get("as_of", "")
+                _weights_history = [{"date": _as_of, "weights": _w}]
+            except Exception:
+                _weights_history = []
+
+        _ic_history = []
+        _ic_path = ROOT / "outputs" / "ic_monitor.json"
+        if _ic_path.exists():
+            try:
+                with open(_ic_path, "r", encoding="utf-8") as _f:
+                    _ic_data = json.load(_f)
+                _ic_history = _ic_data if isinstance(_ic_data, list) else []
+            except Exception:
+                _ic_history = []
+
+        _smh_prices = _pd.DataFrame()
+        if _data_dir:
+            _smh_csv = _data_dir / "benchmarks" / "SMH.csv"
+            if _smh_csv.exists():
+                try:
+                    _smh_df = _pd.read_csv(_smh_csv, index_col=0, parse_dates=False)
+                    _smh_df.index = _pd.to_datetime(_smh_df.index, format="mixed", dayfirst=True)
+                    _smh_prices = _smh_df
+                except Exception:
+                    pass
+
+        _breakdown_cfg = {}
+        _mcfg_path = ROOT / "config" / "model_config.yaml"
+        if _mcfg_path.exists():
+            try:
+                with open(_mcfg_path, "r", encoding="utf-8") as _f:
+                    _mcfg = _yaml.safe_load(_f) or {}
+                _breakdown_cfg = _mcfg.get("risk_management", {}) or {}
+            except Exception:
+                pass
+
+        from src.monitoring.structural_breakdown import assess_structural_breakdown
+        _breakdown_out = assess_structural_breakdown(
+            regime_status=out,
+            prices_dict=_prices_dict,
+            weights_history=_weights_history,
+            ic_history=_ic_history,
+            smh_prices=_smh_prices,
+            config=_breakdown_cfg,
+        )
+        _ic_sev = _breakdown_out.get("ic_decay", {}).get("severity", "ok")
+        _res_sev = _breakdown_out.get("residual_risk", {}).get("severity", "ok")
+        _mis_sev = _breakdown_out.get("regime_misalignment", {}).get("severity", "ok")
+        _overall = _breakdown_out.get("structural_breakdown_severity", "ok")
+        print(
+            f"[BREAKDOWN] ic={_ic_sev} | residual={_res_sev} | misalignment={_mis_sev} | overall={_overall}",
+            flush=True,
+        )
+    except Exception as _e:
+        print(f"[BREAKDOWN] skipped: {type(_e).__name__}: {_e}", flush=True)
+
     if regime == "NORMAL":
         vix_s = f"{vix:.1f}" if vix is not None else "N/A"
         spy_s = f"{spy_close:.1f}" if spy_close is not None else "N/A"
