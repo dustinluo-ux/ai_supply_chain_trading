@@ -211,6 +211,7 @@ def compute_target_weights(
     llm_enabled: bool = True,
     return_aux: bool = False,
     use_ml_override: bool | None = None,
+    score_floor: Optional[float] = None,
 ) -> pd.Series | tuple[pd.Series, dict]:
     """
     Canonical spine:
@@ -421,6 +422,8 @@ def compute_target_weights(
     portfolio_context = {"top_n": top_n, "atr_norms": atr_norms, "tickers": tickers}
     if path is not None:
         portfolio_context["path"] = path
+    if score_floor is not None:
+        portfolio_context["score_floor"] = score_floor
     intent = portfolio_engine.build(as_of, gated_scores, portfolio_context)
 
     # Task 6 (task6_validation.md BUG 2): restrict to requested universe only. Propagation

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,8 @@ def _main() -> int:
     # Z-score BEAR triggers: need >= 10 observations; else fall back to absolute thresholds
     use_vix_z = vix_series is not None and len(vix_series) >= 10
     use_smh_z = smh_returns_20d is not None and len(smh_returns_20d) >= 10
+    vix_z = None
+    smh_z = None
     if use_vix_z and use_smh_z:
         print("[Regime] Z-score BEAR triggers active (VIX and SMH).", flush=True)
     elif not use_vix_z or not use_smh_z:
@@ -112,9 +115,36 @@ def _main() -> int:
     # Dynamic score floor: BEAR (SPY < 200-SMA) raises entry hurdle
     score_floor = args.bear_score_floor if spy_below_sma else args.bull_score_floor
 
+    # regime_stress: continuous [0, 1] from VIX, SMH, SPY components
+    vix_stress = 0.0
+    try:
+        if use_vix_z and vix_series is not None and vix_z is not None and math.isfinite(vix_z):
+            vix_stress = 1.0 / (1.0 + math.exp(-(vix_z - 1.0)))
+        elif vix is not None and math.isfinite(vix):
+            vix_stress = 1.0 / (1.0 + math.exp(-(vix - 20.0) / 5.0))
+    except Exception:
+        vix_stress = 0.0
+    smh_stress = 0.0
+    try:
+        if use_smh_z and smh_z is not None and math.isfinite(smh_z):
+            smh_stress = 1.0 / (1.0 + math.exp(-(-smh_z - 1.0)))
+        elif smh_daily is not None and math.isfinite(smh_daily):
+            smh_stress = 1.0 / (1.0 + math.exp(-(-smh_daily / 0.03 - 1.0)))
+    except Exception:
+        smh_stress = 0.0
+    spy_stress = 0.30 if spy_below_sma else 0.0
+    try:
+        regime_stress = 0.33 * vix_stress + 0.33 * smh_stress + 0.33 * spy_stress
+        regime_stress = max(0.0, min(1.0, regime_stress))
+        if not math.isfinite(regime_stress):
+            regime_stress = 0.0
+    except Exception:
+        regime_stress = 0.0
+
     out = {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "regime": regime,
+        "regime_stress": regime_stress,
         "reasons": emergency_reasons,
         "score_floor": score_floor,
         "vix": vix,
@@ -271,10 +301,10 @@ def _main() -> int:
         sma_s = f"{spy_sma200:.1f}" if spy_sma200 is not None else "N/A"
         cmp = ">=" if not spy_below_sma else "<"
         smh_s = f"{smh_daily:+.1%}" if smh_daily is not None else "N/A"
-        print(f"[REGIME] NORMAL  -- VIX {vix_s} | SPY {spy_s} {cmp} SMA200 {sma_s} | SMH {smh_s} | score_floor={score_floor}", flush=True)
+        print(f"[REGIME] NORMAL  -- VIX {vix_s} | SPY {spy_s} {cmp} SMA200 {sma_s} | SMH {smh_s} | score_floor={score_floor} | stress={regime_stress:.3f}", flush=True)
     else:
         reasons_str = " | ".join(emergency_reasons)
-        print(f"[REGIME] EMERGENCY -- {reasons_str}", flush=True)
+        print(f"[REGIME] EMERGENCY -- {reasons_str} | stress={regime_stress:.3f}", flush=True)
     return 0
 
 

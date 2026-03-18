@@ -119,26 +119,31 @@ def compute_target_weights(
     top_n: int = 3,
     sideways_risk_scale: float = 0.5,
     llm_enabled: bool | None = None,
+    score_floor: float | None = None,
 ) -> pd.Series:
     """
     Target weights from canonical spine (SignalEngine -> PolicyEngine -> PortfolioEngine).
     Delegates to src.core.target_weight_pipeline.compute_target_weights (path="weekly").
-    Used by parity harness and by main(); returns intent.weights before delta computation.
+    score_floor: optional; when provided, passed to pipeline for regime-aware filtering (continuous from meta_weights).
     """
     from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
     from src.utils.config_manager import get_config as _get_config
     _llm = bool(llm_enabled) if llm_enabled is not None else bool(_get_config().get_param("llm_analysis.enabled", True))
-
+    kwargs = {
+        "top_n": top_n,
+        "sideways_risk_scale": sideways_risk_scale,
+        "weight_mode": "fixed",
+        "path": "weekly",
+        "llm_enabled": _llm,
+    }
+    if score_floor is not None:
+        kwargs["score_floor"] = score_floor
     return _compute_target_weights(
         as_of,
         tickers,
         prices_dict,
         data_dir,
-        top_n=top_n,
-        sideways_risk_scale=sideways_risk_scale,
-        weight_mode="fixed",
-        path="weekly",
-        llm_enabled=_llm,
+        **kwargs,
     )
 
 
@@ -233,9 +238,27 @@ def _run_pods(
 
     core_cfg = pods_cfg.get("core", {}) or {}
     extension_cfg = track_d_cfg
-    ballast_cfg = pods_cfg.get("ballast", {}) or {}
+    ballast_cfg = dict(pods_cfg.get("ballast", {}) or {})
 
-    # 4. Instantiate and call pods with per-pod error isolation
+    # 4. Load meta weights early so we can inject ballast_weight into ballast_cfg (Change 4)
+    default_meta = {"core": 0.50, "extension": 0.30, "ballast": 0.20}
+    meta_weights_path = ROOT / (pods_cfg.get("meta_weights_path") or "outputs/meta_weights.json")
+    meta_weights = default_meta.copy()
+    try:
+        if meta_weights_path.exists():
+            with open(meta_weights_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            w = data.get("weights") or data
+            for k in default_meta:
+                if k in w:
+                    meta_weights[k] = float(w[k])
+    except Exception as e:
+        print(f"[PODS] Could not load meta_weights.json: {e}", flush=True)
+        meta_weights = default_meta.copy()
+    ballast_weight = max(0.20, min(0.50, meta_weights.get("ballast", 0.20)))
+    ballast_cfg["ballast_weight"] = ballast_weight
+
+    # 5. Instantiate and call pods with per-pod error isolation
     core = PodCore()
     ext = PodExtension()
     ballast = PodBallast()
@@ -262,22 +285,6 @@ def _run_pods(
     except Exception as e:
         print(f"[POD_BALLAST] Error: {e}", flush=True)
         pod_weights["ballast"] = pd.Series(dtype=float)
-
-    # 5. Load meta weights from outputs/meta_weights.json with fallback
-    default_meta = {"core": 0.50, "extension": 0.30, "ballast": 0.20}
-    meta_weights_path = ROOT / (pods_cfg.get("meta_weights_path") or "outputs/meta_weights.json")
-    meta_weights = default_meta.copy()
-    try:
-        if meta_weights_path.exists():
-            with open(meta_weights_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            w = data.get("weights") or data
-            for k in default_meta:
-                if k in w:
-                    meta_weights[k] = float(w[k])
-    except Exception as e:
-        print(f"[PODS] Could not load meta_weights.json: {e}", flush=True)
-        meta_weights = default_meta.copy()
 
     # 6. Load universe pillars from config/universe.yaml
     universe_pillars: dict[str, list] = {}
@@ -317,6 +324,23 @@ def _run_pods(
         f"[PODS] Aggregated -- positions={active_total} gross={gross_total:.3f} net={net_total:.3f}",
         flush=True,
     )
+
+    # Log per-pod weights before returning (for pod_pnl_tracker)
+    try:
+        from src.portfolio.pod_pnl_tracker import log_pod_weights
+        pod_weights_dict = {
+            name: (s.to_dict() if hasattr(s, "to_dict") else dict(s))
+            for name, s in pod_weights.items()
+        }
+        log_pod_weights(
+            pod_weights=pod_weights_dict,
+            aggregate_weights=agg_weights,
+            as_of=datetime.now(timezone.utc).isoformat(),
+            history_path=ROOT / "outputs" / "pod_weights_history.jsonl",
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("log_pod_weights failed: %s", e)
 
     return agg_weights
 
@@ -390,6 +414,37 @@ def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
     tracker_path.parent.mkdir(parents=True, exist_ok=True)
     tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
     return tracker
+
+
+def _get_score_floor() -> float:
+    """
+    Continuous score_floor from meta_weights.json: 0.50 + 0.30 * ballast_weight,
+    with ballast_weight clipped to [0.20, 0.50]. Fallback: regime_status.json spy_below_sma -> 0.65 else 0.50.
+    """
+    meta_path = ROOT / "outputs" / "meta_weights.json"
+    try:
+        if meta_path.exists():
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            weights = data.get("weights") or data
+            ballast_weight = float(weights.get("ballast", 0.20))
+            ballast_weight = max(0.20, min(0.50, ballast_weight))
+            return 0.50 + 0.30 * ballast_weight
+    except Exception:
+        pass
+    regime_path = ROOT / "outputs" / "regime_status.json"
+    try:
+        if regime_path.exists():
+            with open(regime_path, "r", encoding="utf-8") as f:
+                regime = json.load(f)
+            score_floor_val = regime.get("score_floor")
+            if score_floor_val is not None:
+                return float(score_floor_val)
+            if regime.get("spy_below_sma", regime.get("spy_below_sma200", False)):
+                return 0.65
+    except Exception:
+        pass
+    return 0.50
 
 
 def main() -> tuple[int, list]:
@@ -601,6 +656,7 @@ def main() -> tuple[int, list]:
             _tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
             return (0, [])
 
+        score_floor = _get_score_floor()
         if args.pods:
             optimal_weights_series = _run_pods(as_of, tickers, prices_dict, data_dir, args)
         else:
@@ -612,6 +668,7 @@ def main() -> tuple[int, list]:
                 top_n=args.top_n,
                 sideways_risk_scale=args.sideways_risk_scale,
                 llm_enabled=not args.no_llm,
+                score_floor=score_floor,
             )
         if optimal_weights_series.sum() == 0:
             print("No target tickers from portfolio engine.", flush=True)
@@ -976,6 +1033,20 @@ def main() -> tuple[int, list]:
                 print("  (Paper: orders submitted to IB paper account.)", flush=True)
         else:
             print("  (Paper: DRY-RUN. Use --confirm-paper to submit orders.)", flush=True)
+
+    # Update pod fitness after execution when --pods (Task 2 of 3)
+    if args.pods:
+        try:
+            from src.portfolio.pod_pnl_tracker import update_pod_fitness
+            update_pod_fitness(
+                fitness_path=ROOT / "outputs" / "pod_fitness.json",
+                weights_history_path=ROOT / "outputs" / "pod_weights_history.jsonl",
+                fills_path=ROOT / "outputs" / "fills" / "fills.jsonl",
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("update_pod_fitness failed: %s", e)
+
     return (0, current_run_fills)
 
 
