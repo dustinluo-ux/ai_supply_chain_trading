@@ -200,7 +200,70 @@ class IBExecutor(BaseExecutor):
         except Exception as e:
             logger.error(f"Error submitting order for {ticker}: {e}")
             raise
-    
+
+    def cancel_all_orders(self, timeout_seconds: int = 30) -> list:
+        """Cancel all open orders; poll until drain or timeout. Returns list of cancelled order IDs. Never raises."""
+        is_connected = getattr(self.ib, "isConnected", lambda: False)()
+        if not is_connected:
+            logger.warning("[IBExecutor] cancel_all_orders: not connected — skipping")
+            return []
+        try:
+            self.ib.reqAllOpenOrders()
+            open_orders = getattr(self.ib, "openOrders", lambda: [])()
+            if not open_orders and hasattr(self.ib, "openTrades"):
+                open_orders = [getattr(t, "order", t) for t in self.ib.openTrades()]
+            cancelled_ids = []
+            for order in open_orders:
+                oid = getattr(order, "orderId", None)
+                if oid is not None:
+                    cancelled_ids.append(oid)
+                self.ib.cancelOrder(order)
+            initial_count = len(cancelled_ids)
+            for _ in range(timeout_seconds):
+                sleep_fn = getattr(self.ib, "sleep", None)
+                if sleep_fn is not None and callable(sleep_fn):
+                    sleep_fn(1)
+                else:
+                    import time
+                    time.sleep(1)
+                remaining = getattr(self.ib, "openOrders", lambda: [])()
+                if not remaining and hasattr(self.ib, "openTrades"):
+                    remaining = self.ib.openTrades()
+                remaining = len(remaining) if isinstance(remaining, list) else 0
+                if remaining == 0:
+                    break
+            remaining_final = getattr(self.ib, "openOrders", lambda: [])()
+            if not remaining_final and hasattr(self.ib, "openTrades"):
+                remaining_final = self.ib.openTrades()
+            remaining_final = len(remaining_final) if isinstance(remaining_final, list) else 0
+            logger.info("[IBExecutor] cancel_all_orders: cancelled %d orders, remaining=%d", initial_count, remaining_final)
+            return cancelled_ids
+        except Exception as e:
+            logger.error("[IBExecutor] cancel_all_orders failed: %s", e)
+            return []
+
+    def verify_safe_state(self, timeout_seconds: int = 10) -> dict:
+        """Check that no open orders remain after reqAllOpenOrders. Returns dict with safe_state, open_orders_remaining. Never raises."""
+        is_connected = getattr(self.ib, "isConnected", lambda: False)()
+        if not is_connected:
+            return {"safe_state": False, "open_orders_remaining": -1, "note": "not connected"}
+        try:
+            self.ib.reqAllOpenOrders()
+            for _ in range(timeout_seconds):
+                sleep_fn = getattr(self.ib, "sleep", None)
+                if sleep_fn is not None and callable(sleep_fn):
+                    sleep_fn(1)
+                else:
+                    import time
+                    time.sleep(1)
+            remaining_list = getattr(self.ib, "openOrders", lambda: [])()
+            if not remaining_list and hasattr(self.ib, "openTrades"):
+                remaining_list = self.ib.openTrades()
+            remaining = len(remaining_list) if isinstance(remaining_list, list) else 0
+            return {"safe_state": remaining == 0, "open_orders_remaining": remaining}
+        except Exception as e:
+            return {"safe_state": False, "open_orders_remaining": -1, "error": str(e)}
+
     def cancel_order(self, order_id: str) -> bool:
         """
         Cancel an order.

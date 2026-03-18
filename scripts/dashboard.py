@@ -329,7 +329,31 @@ else:
                 cols[5].write(ballast_str)
     st.caption(f"Audit as of: {aggregator_audit.get('as_of', '—')}")
 
-# Panel 4 — Regime & Risk (formerly Panel 1)
+# Panel 4 — Pod Status
+st.subheader("Pod Status")
+frozen_data = load_json("outputs/frozen_pods.json")
+frozen_pods = (frozen_data.get("frozen_pods") if isinstance(frozen_data, dict) else None) or {}
+if not frozen_data:
+    st.markdown(
+        '<span style="background: #1a7f37; color: white; padding: 2px 10px; border-radius: 4px;">All pods active</span>',
+        unsafe_allow_html=True,
+    )
+    st.caption("No pod freeze data.")
+elif not frozen_pods:
+    st.markdown(
+        '<span style="background: #1a7f37; color: white; padding: 2px 10px; border-radius: 4px;">All pods active</span>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"As of: {frozen_data.get('as_of', '—')}")
+else:
+    for pod_name, info in frozen_pods.items():
+        c1, c2, c3 = st.columns([1.5, 3, 2])
+        c1.markdown(f"**:red[{pod_name}]**")
+        c2.write((info or {}).get("reason", "—"))
+        c3.write((info or {}).get("frozen_at", "—"))
+    st.caption("To unfreeze: add pod name to config/strategy_params.yaml → pod_overrides → frozen_pods_resume")
+
+# Panel 5 — Regime & Risk (formerly Panel 1)
 regime_data = load_json("outputs/regime_status.json")
 if regime_data is None:
     st.info("⏳ outputs/regime_status.json not yet generated")

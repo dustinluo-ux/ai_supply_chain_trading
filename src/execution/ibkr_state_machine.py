@@ -77,6 +77,14 @@ class IBKRStateMachine:
             return
         self.current_state = to_state
         logger.info("[IBKRStateMachine] %s --[%s]--> %s", from_state, event, to_state)
+        try:
+            from src.monitoring.incident_logger import log_incident
+            log_incident(
+                "state_machine_transition",
+                {"from": from_state, "event": event, "to": to_state, "latency_ms": self.latency_ms},
+            )
+        except Exception:
+            pass
 
         if to_state == "FROZEN":
             self._on_enter_frozen()
@@ -120,11 +128,19 @@ class IBKRStateMachine:
         if ib_connection is None:
             self.latency_ms = None
             return None
+        req_fn = getattr(ib_connection, "reqCurrentTime", None)
+        if req_fn is None:
+            self.latency_ms = None
+            return None
         try:
             t0 = datetime.now(timezone.utc)
-            # Stub: replace with actual reqCurrentTime or equivalent call when wiring to live TWS.
-            # e.g. ib_connection.reqCurrentTime() and wait for response, or use a no-op API call.
-            _ = ib_connection
+            result = req_fn()
+            if hasattr(result, "__await__"):
+                try:
+                    import asyncio
+                    asyncio.get_event_loop().run_until_complete(result)
+                except Exception:
+                    pass
             t1 = datetime.now(timezone.utc)
             elapsed_ms = (t1 - t0).total_seconds() * 1000.0
             self.latency_ms = elapsed_ms

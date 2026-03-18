@@ -21,6 +21,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.monitoring.incident_logger import log_incident
+
 # Cache for --rebalance: last valid weights from last non-rebalance run
 LAST_VALID_WEIGHTS_PATH = ROOT / "outputs" / "last_valid_weights.json"
 
@@ -258,6 +260,127 @@ def _run_pods(
     ballast_weight = max(0.20, min(0.50, meta_weights.get("ballast", 0.20)))
     ballast_cfg["ballast_weight"] = ballast_weight
 
+    # --- Step A — Load and reconcile frozen state ---
+    try:
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+        _manual_resumed: set[str] = set()
+        _frozen_pods_path = ROOT / "outputs" / "frozen_pods.json"
+        frozen_pods_data = {"as_of": None, "frozen_pods": {}}
+        if _frozen_pods_path.exists():
+            try:
+                with open(_frozen_pods_path, "r", encoding="utf-8") as _f:
+                    frozen_pods_data = json.load(_f) or frozen_pods_data
+            except Exception:
+                frozen_pods_data = {"as_of": None, "frozen_pods": {}}
+        current_frozen = frozen_pods_data.get("frozen_pods", {}) or {}
+
+        _strategy_params_path = ROOT / "config" / "strategy_params.yaml"
+        strategy_params = {}
+        if _strategy_params_path.exists():
+            try:
+                with open(_strategy_params_path, "r", encoding="utf-8") as _f:
+                    strategy_params = _yaml.safe_load(_f) or {}
+            except Exception:
+                strategy_params = {}
+        resume_list = (strategy_params.get("pod_overrides", {}) or {}).get("frozen_pods_resume", []) or []
+        for _pod_name in resume_list:
+            if _pod_name in current_frozen:
+                current_frozen.pop(_pod_name, None)
+                _manual_resumed.add(_pod_name)
+                log_incident("pod_unfrozen", {"pod": _pod_name, "manual_override": True})
+                _logger.info("[POD_FREEZE] %s manually unfrozen via strategy_params.yaml", _pod_name)
+        try:
+            _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
+            _frozen_pods_path.write_text(
+                json.dumps(
+                    {"as_of": datetime.now(timezone.utc).isoformat(), "frozen_pods": current_frozen},
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("[POD_FREEZE] Step A failed (fail-open): %s", _e)
+        current_frozen = {}
+        _manual_resumed = set()
+
+    # --- Step B — Assess breakdown and apply new freezes ---
+    try:
+        breakdown = None
+        _breakdown_path = ROOT / "outputs" / "structural_breakdown.json"
+        if _breakdown_path.exists():
+            try:
+                with open(_breakdown_path, "r", encoding="utf-8") as _f:
+                    breakdown = json.load(_f)
+            except Exception:
+                breakdown = None
+        if isinstance(breakdown, dict) and breakdown:
+            MANDATES = {"core": [0.8, 1.2], "extension": [-0.2, 0.6], "ballast": [0.0, 0.5]}
+            _now_iso = datetime.now(timezone.utc).isoformat()
+
+            if (
+                breakdown.get("ic_decay", {}).get("severity") == "critical"
+                and "extension" not in current_frozen
+                and "extension" not in _manual_resumed
+            ):
+                current_frozen["extension"] = {"reason": "IC decay CRITICAL", "frozen_at": _now_iso}
+                log_incident("pod_frozen", {"pod": "extension", "reason": "IC decay CRITICAL"})
+
+            if (
+                breakdown.get("residual_risk", {}).get("severity") == "critical"
+                and "extension" not in current_frozen
+                and "extension" not in _manual_resumed
+            ):
+                current_frozen["extension"] = {"reason": "Residual risk CRITICAL", "frozen_at": _now_iso}
+                log_incident("pod_frozen", {"pod": "extension", "reason": "Residual risk CRITICAL"})
+
+            if breakdown.get("regime_misalignment", {}).get("severity") == "critical":
+                pod_betas = (breakdown.get("regime_misalignment", {}) or {}).get("pod_betas", {}) or {}
+                worst_pod = None
+                worst_excess = 0.0
+                worst_beta = None
+                for _p in ("core", "extension", "ballast"):
+                    mandate = MANDATES.get(_p)
+                    if not mandate:
+                        continue
+                    beta = float(pod_betas.get(_p, 0) or 0)
+                    excess = max(0.0, float(mandate[0]) - beta, beta - float(mandate[1]))
+                    if excess > worst_excess:
+                        worst_excess = excess
+                        worst_pod = _p
+                        worst_beta = beta
+                if worst_pod is not None and worst_excess > 0 and worst_pod not in current_frozen:
+                    if worst_pod in _manual_resumed:
+                        worst_pod = None
+                if worst_pod is not None and worst_excess > 0 and worst_pod not in current_frozen:
+                    current_frozen[worst_pod] = {
+                        "reason": "Beta mandate breach CRITICAL",
+                        "frozen_at": _now_iso,
+                    }
+                    log_incident(
+                        "pod_frozen",
+                        {"pod": worst_pod, "reason": "Beta mandate breach CRITICAL", "beta": worst_beta},
+                    )
+
+            try:
+                _frozen_pods_path = ROOT / "outputs" / "frozen_pods.json"
+                _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
+                _frozen_pods_path.write_text(
+                    json.dumps(
+                        {"as_of": datetime.now(timezone.utc).isoformat(), "frozen_pods": current_frozen},
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+    except Exception as _e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("[POD_FREEZE] Step B failed (no new freezes applied): %s", _e)
+
     # 5. Instantiate and call pods with per-pod error isolation
     core = PodCore()
     ext = PodExtension()
@@ -266,22 +389,49 @@ def _run_pods(
     pod_weights: dict[str, pd.Series] = {}
 
     try:
-        w_core = core.generate_weights(scores_series, prices_sliced, regime_status, core_cfg)
-        pod_weights["core"] = w_core if isinstance(w_core, pd.Series) else pd.Series(dtype=float)
+        if "core" in current_frozen:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
+                "core",
+                (current_frozen.get("core") or {}).get("reason"),
+            )
+            pod_weights["core"] = pd.Series(dtype=float)
+        else:
+            w_core = core.generate_weights(scores_series, prices_sliced, regime_status, core_cfg)
+            pod_weights["core"] = w_core if isinstance(w_core, pd.Series) else pd.Series(dtype=float)
     except Exception as e:
         print(f"[POD_CORE] Error: {e}", flush=True)
         pod_weights["core"] = pd.Series(dtype=float)
 
     try:
-        w_ext = ext.generate_weights(scores_series, prices_sliced, regime_status, extension_cfg)
-        pod_weights["extension"] = w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
+        if "extension" in current_frozen:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
+                "extension",
+                (current_frozen.get("extension") or {}).get("reason"),
+            )
+            pod_weights["extension"] = pd.Series(dtype=float)
+        else:
+            w_ext = ext.generate_weights(scores_series, prices_sliced, regime_status, extension_cfg)
+            pod_weights["extension"] = w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
     except Exception as e:
         print(f"[POD_EXTENSION] Error: {e}", flush=True)
         pod_weights["extension"] = pd.Series(dtype=float)
 
     try:
-        w_ballast = ballast.generate_weights(scores_series, prices_sliced, regime_status, ballast_cfg)
-        pod_weights["ballast"] = w_ballast if isinstance(w_ballast, pd.Series) else pd.Series(dtype=float)
+        if "ballast" in current_frozen:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
+                "ballast",
+                (current_frozen.get("ballast") or {}).get("reason"),
+            )
+            pod_weights["ballast"] = pd.Series(dtype=float)
+        else:
+            w_ballast = ballast.generate_weights(scores_series, prices_sliced, regime_status, ballast_cfg)
+            pod_weights["ballast"] = w_ballast if isinstance(w_ballast, pd.Series) else pd.Series(dtype=float)
     except Exception as e:
         print(f"[POD_BALLAST] Error: {e}", flush=True)
         pod_weights["ballast"] = pd.Series(dtype=float)
@@ -305,9 +455,22 @@ def _run_pods(
     veto_threshold = float(cr_cfg.get("veto_threshold", 0.25))
     shrinkage_floor = float(cr_cfg.get("shrinkage_floor", 0.50))
 
+    active_pods = [
+        p
+        for p in meta_weights
+        if p not in current_frozen and not pod_weights.get(p, pd.Series(dtype=float)).empty
+    ]
+    active_total = float(sum(meta_weights.get(p, 0.0) for p in active_pods))
+    if active_total > 0 and active_pods:
+        effective_meta = {p: float(meta_weights[p]) / active_total for p in active_pods}
+    elif active_pods:
+        effective_meta = {p: 1.0 / len(active_pods) for p in active_pods}
+    else:
+        effective_meta = {}
+
     agg_weights = aggregate_pod_weights(
         pod_weights=pod_weights,
-        meta_weights=meta_weights,
+        meta_weights=effective_meta,
         universe_pillars=universe_pillars,
         sector_cap=sector_cap,
         gross_cap=gross_cap,
@@ -660,6 +823,62 @@ def main() -> tuple[int, list]:
             tracker["flatten_active"] = True
             _tracker_path.parent.mkdir(parents=True, exist_ok=True)
             _tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+            _is_live_executor = (
+                getattr(executor, "ib", None) is not None
+                and getattr(executor.ib, "isConnected", lambda: False)()
+            )
+            if _is_live_executor:
+                try:
+                    _cancelled_ids = executor.cancel_all_orders()
+                    _safe_result = executor.verify_safe_state()
+                    log_incident(
+                        "circuit_breaker_triggered",
+                        {
+                            "trigger": "global_stop_loss",
+                            "drawdown": tracker.get("drawdown"),
+                            "peak_nav": tracker.get("peak_nav"),
+                            "cancelled_order_ids": _cancelled_ids,
+                            "safe_state": _safe_result.get("safe_state"),
+                            "open_orders_remaining": _safe_result.get("open_orders_remaining"),
+                        },
+                    )
+                    log_incident("safe_state_verified", _safe_result)
+                    _status_path = ROOT / "outputs" / "execution_status.json"
+                    _status = {}
+                    if _status_path.exists():
+                        try:
+                            with open(_status_path, "r", encoding="utf-8") as _f:
+                                _status = json.load(_f)
+                        except Exception:
+                            pass
+                    _status.update(_safe_result)
+                    _status["cancelled_order_ids"] = _cancelled_ids
+                    try:
+                        _status_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_status_path, "w", encoding="utf-8") as _f:
+                            json.dump(_status, _f, indent=2)
+                    except Exception:
+                        pass
+                except Exception as _cancel_err:
+                    import logging
+                    logging.getLogger(__name__).error("[STOP_LOSS] Order cancellation failed: %s", _cancel_err)
+                    log_incident(
+                        "circuit_breaker_triggered",
+                        {
+                            "trigger": "global_stop_loss",
+                            "cancellation_error": str(_cancel_err),
+                            "drawdown": tracker.get("drawdown"),
+                        },
+                    )
+            else:
+                log_incident(
+                    "circuit_breaker_triggered",
+                    {
+                        "trigger": "global_stop_loss",
+                        "drawdown": tracker.get("drawdown"),
+                        "mode": "mock — no orders to cancel",
+                    },
+                )
             return (0, [])
 
         score_floor = _get_score_floor()
