@@ -82,3 +82,8 @@ risk_management:
   residual_risk_critical_multiple: 3.0
   beta_mandate_warning_buffer: 0.3
   beta_mandate_critical_buffer: 0.6
+  stop_loss_per_position: 0.08
+  ibkr_latency_threshold_ms: 500
+  ibkr_freeze_latency_ms: 2000
+  ibkr_freeze_timeout_seconds: 60
+  critical_data_sources: [prices, smh_benchmark, regime_status]

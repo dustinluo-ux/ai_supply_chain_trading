@@ -321,6 +321,43 @@ def _run_pods(
     return agg_weights
 
 
+def _write_execution_status(
+    report: "DataQualityReport | None",
+    ibkr_state: str = "UNKNOWN",
+    manual_intervention_required: bool = False,
+) -> None:
+    """Merge report and ibkr fields with existing outputs/execution_status.json and write. Silent fail on error."""
+    from datetime import datetime as _dt
+    path = ROOT / "outputs" / "execution_status.json"
+    data = {}
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["as_of"] = _dt.now(timezone.utc).isoformat()
+    data["ibkr_state"] = ibkr_state
+    data["manual_intervention_required"] = manual_intervention_required
+    if report is not None:
+        data["can_rebalance"] = report.can_rebalance
+        data["critical_missing"] = list(report.critical_missing)
+        data["degraded_missing"] = list(report.degraded_missing)
+        data["warnings"] = list(report.warnings)
+    else:
+        data["can_rebalance"] = True
+        data["critical_missing"] = []
+        data["degraded_missing"] = []
+        data["warnings"] = []
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Could not write execution_status.json: %s", e)
+
+
 def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
     """
     Read outputs/drawdown_tracker.json if it exists; update peak_nav, current_nav,
@@ -420,9 +457,34 @@ def main() -> tuple[int, list]:
     config = load_config()
     data_dir = config["data_dir"]
     prices_dict = load_prices(data_dir, tickers)
+
+    # Data quality check (RESILIENCE_SPEC Section 2)
+    from src.data.data_quality import DataQualityReport
+    critical_missing = []
+    degraded_missing = []
+    warnings_list = []
     if not prices_dict:
-        print("ERROR: No price data loaded.", flush=True)
+        critical_missing.append("prices")
+    smh_path = data_dir / "benchmarks" / "SMH.csv"
+    if not smh_path.exists() or smh_path.stat().st_size == 0:
+        critical_missing.append("smh_benchmark")
+    regime_path = ROOT / "outputs" / "regime_status.json"
+    if not regime_path.exists():
+        critical_missing.append("regime_status")
+    dq_report = DataQualityReport(critical_missing=critical_missing, degraded_missing=degraded_missing, warnings=warnings_list)
+    if not dq_report.can_rebalance:
+        _write_execution_status(dq_report, ibkr_state="UNKNOWN", manual_intervention_required=True)
+        for src in dq_report.critical_missing:
+            import logging
+            logging.getLogger(__name__).error("[DATA QUALITY] Critical source missing: %s", src)
+        print(f"[DATA QUALITY] Cannot rebalance — critical sources missing: {dq_report.critical_missing}", flush=True)
         return (1, [])
+    if dq_report.degraded_missing or dq_report.warnings:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[DATA QUALITY] Degraded or warnings (continuing): degraded_missing=%s warnings=%s",
+            dq_report.degraded_missing, dq_report.warnings,
+        )
 
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
     if not all_dates:
@@ -560,6 +622,10 @@ def main() -> tuple[int, list]:
         LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LAST_VALID_WEIGHTS_PATH, "w", encoding="utf-8") as f:
             json.dump({"as_of": str(as_of.date()), "weights": optimal_weights_series.to_dict()}, f, indent=2)
+
+    # Successful completion: write execution_status for dashboard (RESILIENCE_SPEC Section 2)
+    _ibkr_state = "CONNECTED" if args.mode == "paper" else "UNKNOWN"
+    _write_execution_status(DataQualityReport(), ibkr_state=_ibkr_state, manual_intervention_required=False)
 
     smh_short_shares = 0
     smh_hedge_row = None

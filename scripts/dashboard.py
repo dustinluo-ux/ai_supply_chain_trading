@@ -72,6 +72,53 @@ with st.sidebar:
         st.rerun()
     auto_refresh = st.toggle("Auto-refresh", value=True)
 
+# Connection Status (execution_status.json)
+exec_status = load_json("outputs/execution_status.json")
+ibkr_state = "UNKNOWN"
+can_rebalance = True
+as_of = None
+data_quality_issues = []
+if exec_status is not None:
+    ibkr_state = str(exec_status.get("ibkr_state", "UNKNOWN")).upper()
+    can_rebalance = bool(exec_status.get("can_rebalance", True))
+    as_of = exec_status.get("as_of")
+    data_quality_issues = exec_status.get("data_quality_issues")
+    if not isinstance(data_quality_issues, list):
+        data_quality_issues = []
+
+if ibkr_state in ("FROZEN", "DISCONNECTED"):
+    banner_color = "#c00000"
+    banner_text = f"⚠ IBKR: {ibkr_state} — Manual Intervention Required."
+    banner_style = "font-weight: bold;"
+elif ibkr_state == "DEGRADED":
+    banner_color = "#b8860b"
+    banner_text = "IBKR: DEGRADED — monitor latency."
+    banner_style = ""
+elif ibkr_state == "CONNECTED":
+    banner_color = "#1a7f37"
+    banner_text = "IBKR: CONNECTED"
+    banner_style = ""
+else:
+    banner_color = "#1a7f37"
+    banner_text = "IBKR: State unknown (no run yet)."
+    banner_style = ""
+
+st.markdown(
+    f'<div style="background: {banner_color}; color: white; padding: 0.6rem 1.2rem; border-radius: 6px; margin-bottom: 0.5rem; font-size: 1.1rem; {banner_style}">{banner_text}</div>',
+    unsafe_allow_html=True,
+)
+if not can_rebalance:
+    st.warning("Rebalancing BLOCKED — data quality gate failed. Check execution_status.json for details.")
+if data_quality_issues:
+    n = len(data_quality_issues)
+    with st.expander(f"Data Quality Issues ({n})"):
+        for issue in data_quality_issues:
+            st.markdown(f"- {issue}")
+if as_of is not None:
+    st.caption(f"Execution status as of: {as_of}")
+else:
+    st.caption("No execution run recorded yet.")
+
 # Panel 1 — Probabilistic Regime Assignment
 st.subheader("Probabilistic Regime Assignment")
 meta_weights_data = load_json("outputs/meta_weights.json")

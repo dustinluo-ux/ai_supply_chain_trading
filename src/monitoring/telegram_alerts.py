@@ -97,6 +97,17 @@ def send_alert(alert_type: str, payload: dict) -> None:
             "🚨 STOP-LOSS TRIGGERED — Portfolio drawdown "
             f"{drawdown:.1%} hit -10% floor. FLATTEN ALL initiated."
         )
+    elif alert_type == "connection_freeze":
+        state = payload.get("state", "—")
+        latency_ms = payload.get("latency_ms")
+        reason = payload.get("reason", "—")
+        lat_s = f"{latency_ms:.0f} ms" if latency_ms is not None else "N/A"
+        text = (
+            "⚠️ *Connection FROZEN*\n"
+            f"IBKR state: {state}\n"
+            f"Latency: {lat_s}\n"
+            f"Reason: {reason}"
+        )
     else:
         print(f"[telegram_alerts] Unknown alert_type={alert_type!r}; skipping.", file=sys.stderr)
         return

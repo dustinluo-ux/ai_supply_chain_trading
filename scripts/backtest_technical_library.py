@@ -351,7 +351,7 @@ def run_backtest_master_score(
     backtest_news_signals = _load_news_signals(news_dir, tickers) if news_dir else {}
     # Wire EODHD historical news (fills in where Marketaux flat files are absent)
     from src.data.eodhd_news_loader import load_eodhd_news_signals as _load_eodhd
-    _eodhd_signals = _load_eodhd(tickers, start_date=str(mondays[0].date()), end_date=str(mondays[-1].date()))
+    _eodhd_signals, _ = _load_eodhd(tickers, start_date=str(mondays[0].date()), end_date=str(mondays[-1].date()))
     for _t, _dates in _eodhd_signals.items():
         if _t not in backtest_news_signals:
             backtest_news_signals[_t] = {}
