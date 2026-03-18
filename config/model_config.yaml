@@ -74,6 +74,9 @@ pods:
   gross_cap: 1.60
   fitness_path: outputs/pod_fitness.json
   meta_weights_path: outputs/meta_weights.json
+  conflict_resolution:
+    veto_threshold: 0.25
+    shrinkage_floor: 0.50
 
 risk_management:
   ic_baseline: 0.0428

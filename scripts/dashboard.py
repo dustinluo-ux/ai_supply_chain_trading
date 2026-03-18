@@ -278,7 +278,58 @@ if alert_rows:
 else:
     st.caption("No alert data (structural_breakdown.json and/or drawdown_tracker.json missing).")
 
-# Panel 3 — Regime & Risk (formerly Panel 1)
+# Panel 3 — Aggregation Reconciliation
+aggregator_audit = load_json("outputs/aggregator_audit.json")
+if aggregator_audit is None:
+    st.caption("Aggregation audit unavailable (no execution run yet).")
+else:
+    st.subheader("Aggregation Reconciliation")
+    n_vetoed = int(aggregator_audit.get("n_vetoed", 0))
+    n_conflicts = int(aggregator_audit.get("n_conflicts", 0))
+    shrinkage_lambda = float(aggregator_audit.get("shrinkage_lambda", 0.0))
+    meta_entropy = float(aggregator_audit.get("meta_entropy", 0.0))
+    if n_vetoed == 0:
+        badge_color = "#1a7f37"
+    elif 1 <= n_vetoed <= 2:
+        badge_color = "#b8860b"
+    else:
+        badge_color = "#c00000"
+    badge_html = f'<span style="background: {badge_color}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold;">{n_vetoed} vetoed</span>'
+    summary_line = f"{badge_html} | {n_conflicts} conflicts detected | shrinkage λ = {shrinkage_lambda:.2f} | entropy = {meta_entropy:.3f}"
+    st.markdown(summary_line, unsafe_allow_html=True)
+    entries = [e for e in (aggregator_audit.get("conflict_details") or []) if e.get("action") != "none"]
+    if not entries:
+        st.caption("No conflicts on last run.")
+    else:
+        with st.expander(f"Conflict Details ({len(entries)})"):
+            hc = st.columns([1.5, 1.2, 1.2, 1, 1, 1])
+            hc[0].write("**Ticker**")
+            hc[1].write("**Action**")
+            hc[2].write("**Confidence**")
+            hc[3].write("**Core**")
+            hc[4].write("**Extension**")
+            hc[5].write("**Ballast**")
+            st.divider()
+            for e in entries:
+                ticker = e.get("ticker", "—")
+                action = e.get("action", "—")
+                confidence = e.get("confidence")
+                conf_str = f"{confidence:.1%}" if confidence is not None else "—"
+                pod_contribs = e.get("pod_contributions") or {}
+                core_str = f"{pod_contribs.get('core', 0):.4f}" if "core" in pod_contribs else "—"
+                ext_str = f"{pod_contribs.get('extension', 0):.4f}" if "extension" in pod_contribs else "—"
+                ballast_str = f"{pod_contribs.get('ballast', 0):.4f}" if "ballast" in pod_contribs else "—"
+                action_style = 'color: #c00000;' if action == "vetoed" else 'color: #b8860b;'
+                cols = st.columns([1.5, 1.2, 1.2, 1, 1, 1])
+                cols[0].write(ticker)
+                cols[1].markdown(f'<span style="{action_style}">{action}</span>', unsafe_allow_html=True)
+                cols[2].write(conf_str)
+                cols[3].write(core_str)
+                cols[4].write(ext_str)
+                cols[5].write(ballast_str)
+    st.caption(f"Audit as of: {aggregator_audit.get('as_of', '—')}")
+
+# Panel 4 — Regime & Risk (formerly Panel 1)
 regime_data = load_json("outputs/regime_status.json")
 if regime_data is None:
     st.info("⏳ outputs/regime_status.json not yet generated")
@@ -304,7 +355,7 @@ else:
         smh_ret = regime_data.get("smh_daily_return")
         st.metric("SMH 1d return", f"{smh_ret:.2%}" if smh_ret is not None else "—")
 
-# Panel 2 — Portfolio Summary
+# Panel 5 — Portfolio Summary
 ps = load_json("outputs/portfolio_state.json")
 if ps is None:
     st.info("⏳ outputs/portfolio_state.json not yet generated")
@@ -320,7 +371,7 @@ else:
         locked = wl.get("locked", False)
         st.metric("Weekly lock", "Locked" if locked else "Open")
 
-# Panel 3 — Target Weights & Holdings
+# Panel 6 — Target Weights & Holdings
 col_left, col_right = st.columns(2)
 with col_left:
     st.subheader("Target Weights")
@@ -347,7 +398,7 @@ with col_right:
         else:
             st.write("No holdings.")
 
-# Panel 4 — Signal Snapshot
+# Panel 7 — Signal Snapshot
 st.subheader("Signal Snapshot")
 ls = load_json("outputs/last_signal.json")
 if ls is None:
@@ -375,7 +426,7 @@ else:
     else:
         st.write("No signal data.")
 
-# Panel 5 — ML Status
+# Panel 8 — ML Status
 ml_col1, ml_col2 = st.columns(2)
 with ml_col1:
     st.subheader("Factory Winner")
@@ -413,7 +464,7 @@ with ml_col2:
         else:
             st.write("No IC history.")
 
-# Panel 6 — Fills
+# Panel 9 — Fills
 st.subheader("Fills")
 fills = load_jsonl("outputs/fills/fills.jsonl")
 if not fills:

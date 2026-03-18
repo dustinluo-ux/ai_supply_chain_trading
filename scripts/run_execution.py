@@ -301,6 +301,9 @@ def _run_pods(
     # 7. Aggregate with sector and gross caps from pods config
     sector_cap = float(pods_cfg.get("sector_cap", 0.40))
     gross_cap = float(pods_cfg.get("gross_cap", 1.60))
+    cr_cfg = pods_cfg.get("conflict_resolution", {})
+    veto_threshold = float(cr_cfg.get("veto_threshold", 0.25))
+    shrinkage_floor = float(cr_cfg.get("shrinkage_floor", 0.50))
 
     agg_weights = aggregate_pod_weights(
         pod_weights=pod_weights,
@@ -308,6 +311,9 @@ def _run_pods(
         universe_pillars=universe_pillars,
         sector_cap=sector_cap,
         gross_cap=gross_cap,
+        veto_threshold=veto_threshold,
+        shrinkage_floor=shrinkage_floor,
+        audit_path=ROOT / "outputs" / "aggregator_audit.json",
     )
 
     # 8. Print per-pod and final summary
