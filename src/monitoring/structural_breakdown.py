@@ -238,6 +238,8 @@ def _assess_regime_misalignment(
     try:
         if not weights_history or not prices_dict or smh_prices is None or smh_prices.empty:
             return result
+        if len(weights_history) < 3:
+            return result
 
         latest = weights_history[-1]
         weights = latest.get("weights") or {}

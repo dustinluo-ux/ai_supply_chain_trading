@@ -41,6 +41,7 @@ class SupplyChainManager:
         """Load database from JSON file."""
         if not self.db_path.exists():
             # Create empty database
+            logger.warning("[SupplyChainManager] relationships file not found at %s — supply chain propagation disabled", self.db_path)
             return {
                 'metadata': {
                     'last_updated': datetime.now().isoformat()[:10],

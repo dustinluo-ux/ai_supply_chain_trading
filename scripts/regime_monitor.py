@@ -147,11 +147,11 @@ def _main() -> int:
         "regime_stress": regime_stress,
         "reasons": emergency_reasons,
         "score_floor": score_floor,
-        "vix": vix,
-        "spy_close": spy_close,
-        "spy_sma200": spy_sma200,
+        "vix": vix if (vix is not None and math.isfinite(vix)) else None,
+        "spy_close": spy_close if (spy_close is not None and math.isfinite(spy_close)) else None,
+        "spy_sma200": spy_sma200 if (spy_sma200 is not None and math.isfinite(spy_sma200)) else None,
         "spy_below_sma": spy_below_sma,
-        "smh_daily_return": smh_daily,
+        "smh_daily_return": smh_daily if (smh_daily is not None and math.isfinite(smh_daily)) else None,
         "smh_shock": smh_shock,
         "thresholds": {
             "vix": vix_threshold,
@@ -296,11 +296,11 @@ def _main() -> int:
         print(f"[BREAKDOWN] skipped: {type(_e).__name__}: {_e}", flush=True)
 
     if regime == "NORMAL":
-        vix_s = f"{vix:.1f}" if vix is not None else "N/A"
-        spy_s = f"{spy_close:.1f}" if spy_close is not None else "N/A"
-        sma_s = f"{spy_sma200:.1f}" if spy_sma200 is not None else "N/A"
+        vix_s = f"{vix:.1f}" if (vix is not None and math.isfinite(vix)) else "N/A"
+        spy_s = f"{spy_close:.1f}" if (spy_close is not None and math.isfinite(spy_close)) else "N/A"
+        sma_s = f"{spy_sma200:.1f}" if (spy_sma200 is not None and math.isfinite(spy_sma200)) else "N/A"
         cmp = ">=" if not spy_below_sma else "<"
-        smh_s = f"{smh_daily:+.1%}" if smh_daily is not None else "N/A"
+        smh_s = f"{smh_daily:+.1%}" if (smh_daily is not None and math.isfinite(smh_daily)) else "N/A"
         print(f"[REGIME] NORMAL  -- VIX {vix_s} | SPY {spy_s} {cmp} SMA200 {sma_s} | SMH {smh_s} | score_floor={score_floor} | stress={regime_stress:.3f}", flush=True)
     else:
         reasons_str = " | ".join(emergency_reasons)
