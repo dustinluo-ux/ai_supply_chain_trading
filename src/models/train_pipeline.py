@@ -371,7 +371,10 @@ class ModelTrainingPipeline:
         
         # Save model (caller may skip if IC gate fails)
         if self.config['training']['save_models']:
-            save_dir = Path(self.config['training']['model_save_dir'])
+            _ROOT = Path(__file__).resolve().parent.parent.parent
+            save_dir_cfg = str(self.config['training']['model_save_dir'])
+            _save_dir_raw = Path(save_dir_cfg)
+            save_dir = _save_dir_raw if _save_dir_raw.is_absolute() else (_ROOT / _save_dir_raw)
             save_dir.mkdir(parents=True, exist_ok=True)
             
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

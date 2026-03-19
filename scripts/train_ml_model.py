@@ -104,13 +104,23 @@ def main() -> int:
     print(f"[GATE] IC={ic:.4f} — {msg}", flush=True)
 
     if passed:
-        save_dir = Path(pipeline.config["training"]["model_save_dir"])
-        save_dir.mkdir(parents=True, exist_ok=True)
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = save_dir / f"{pipeline.active_model_type}_{timestamp}.pkl"
-        model.save_model(str(save_path))
-        print(f"[Pipeline] Model saved to {save_path}", flush=True)
+        save_dir_cfg = str(pipeline.config["training"]["model_save_dir"])
+        _save_dir_raw = Path(save_dir_cfg)
+        save_dir = _save_dir_raw if _save_dir_raw.is_absolute() else (ROOT / _save_dir_raw)
+
+        try:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = save_dir / f"{pipeline.active_model_type}_{timestamp}.pkl"
+            model.save_model(str(save_path))
+            if not save_path.exists():
+                print(f"[ERROR] Save failed — file not found at {save_path}", flush=True)
+                return 1
+            print(f"[Pipeline] Model saved to {save_path}", flush=True)
+        except Exception as e:
+            print(f"[ERROR] Could not save model: {e}", flush=True)
+            return 1
         # Update tracks.A.model_path in config so backtest/live use new model
         config_path = ROOT / CONFIG_PATH
         with open(config_path, "r", encoding="utf-8") as f:
