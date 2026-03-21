@@ -35,6 +35,7 @@ universe_selection:
   - 6861.T
   - 9988.HK
   - ALAB
+  - AMAT
   - AMD
   - AMZN
   - ANET
@@ -47,10 +48,13 @@ universe_selection:
   - CEG
   - CLS
   - CRDO
+  - CSCO
+  - DELL
   - EME
   - FIX
   - GEV
   - GOOGL
+  - IBM
   - INTC
   - ISRG
   - LEU
@@ -59,6 +63,7 @@ universe_selection:
   - MOD
   - MRVL
   - MSFT
+  - MU
   - NVDA
   - NVT
   - OKLO
@@ -66,12 +71,15 @@ universe_selection:
   - ORSTED.CO
   - PATH
   - PLTR
+  - QCOM
   - SAP.DE
+  - SMCI
   - SMR
   - SNPS
   - TEAM
   - TER
   - TSM
+  - TXN
   - UUUU
   - VRT
   - VST

@@ -161,6 +161,7 @@ class SignalEngine:
         atr_norms: dict[str, float] = {}
         buzz_by_ticker: dict[str, bool] = {}
         enriched_composites: dict[str, float] = {}
+        category_sub_scores_by_ticker: dict[str, dict[str, float]] = {}
 
         # ==============================================================
         # Phase 1: Compute indicators + base news composites
@@ -331,15 +332,76 @@ class SignalEngine:
             news_composite_val = enriched_composites.get(t, entry.get("news_composite"))
 
             try:
-                score, _ = compute_signal_strength(
+                score, score_meta = compute_signal_strength(
                     entry["row"],
                     category_weights_override=resolved_category_weights,
                     news_composite=news_composite_val,
                     news_weight_override=news_weight_used if news_dir else None,
                 )
                 week_scores[t] = score
+                sub = (score_meta or {}).get("category_sub_scores", {}) or {}
+                category_sub_scores_by_ticker[t] = {
+                    "trend": float(sub.get("trend", 0.5)),
+                    "momentum": float(sub.get("momentum", 0.5)),
+                    "volume": float(sub.get("volume", 0.5)),
+                    "volatility": float(sub.get("volatility", 0.5)),
+                }
             except Exception:
                 week_scores[t] = 0.5
+
+        # Cross-sectional exchange normalization (volume + volatility only)
+        if category_sub_scores_by_ticker:
+            def _exchange_group(ticker: str) -> str:
+                t = str(ticker).upper()
+                if t.endswith(".HK"):
+                    return "HK"
+                if t.endswith(".T"):
+                    return "JP"
+                if t.endswith(".DE"):
+                    return "DE"
+                if t.endswith(".CO"):
+                    return "CO"
+                return "US"
+
+            # Same category weights context used for signal construction
+            if resolved_category_weights is not None:
+                c_weights = dict(resolved_category_weights)
+            else:
+                c_weights = cfg.get_param(
+                    "technical_master_score.category_weights",
+                    {"trend": 0.40, "momentum": 0.30, "volume": 0.20, "volatility": 0.10},
+                ) or {"trend": 0.40, "momentum": 0.30, "volume": 0.20, "volatility": 0.10}
+
+            sub_df = pd.DataFrame.from_dict(category_sub_scores_by_ticker, orient="index")
+            for col in ("trend", "momentum", "volume", "volatility"):
+                if col not in sub_df.columns:
+                    sub_df[col] = 0.5
+            sub_df = sub_df[["trend", "momentum", "volume", "volatility"]].fillna(0.5)
+            sub_df["exchange_group"] = [_exchange_group(t) for t in sub_df.index]
+
+            vol_adj = sub_df["volume"].copy()
+            vola_adj = sub_df["volatility"].copy()
+            for _, grp in sub_df.groupby("exchange_group"):
+                idxs = grp.index
+                vol_adj.loc[idxs] = grp["volume"].rank(method="average", pct=True)
+                vola_adj.loc[idxs] = grp["volatility"].rank(method="average", pct=True)
+
+            w_trend = float(c_weights.get("trend", 0.40))
+            w_momentum = float(c_weights.get("momentum", 0.30))
+            w_volume = float(c_weights.get("volume", 0.20))
+            w_volatility = float(c_weights.get("volatility", 0.10))
+            w_sum = w_trend + w_momentum + w_volume + w_volatility
+            if w_sum <= 0:
+                w_sum = 1.0
+            for t in sub_df.index:
+                trend = float(sub_df.at[t, "trend"])
+                momentum = float(sub_df.at[t, "momentum"])
+                volume = float(vol_adj.at[t])
+                volatility = float(vola_adj.at[t])
+                week_scores[t] = round(
+                    (w_trend * trend + w_momentum * momentum + w_volume * volume + w_volatility * volatility) / w_sum,
+                    4,
+                )
 
         # Expose indicator rows so backtest can pass precomputed_indicators to apply_ml_blend (avoids double calculate_all_indicators)
         indicator_rows = {}

@@ -29,12 +29,18 @@ FRICTION_BPS = 15  # 0.15% per trade (slippage + commission)
 BENCHMARK_TICKER = "SPY"
 SMA_KILL_SWITCH_DAYS = 200
 KILL_SWITCH_MODE = "cash"  # "cash" = 100% cash when SPY < 200 SMA; "half" = 50% position size
+MAX_GLOBAL_POSITIONS = 1
 # Daily risk check: exit position same day if single-day return <= this (e.g. -0.05 = -5%)
 DAILY_EXIT_PCT = -0.05
 
 # First date of valid (post-SPAC-merger) price data for known SPAC-origin tickers
 SPAC_IPO_DATES = {
     "OKLO": "2024-05-10",   # AltC Acquisition Corp merger closed ~May 2024
+    "GEV": "2024-04-02",    # GE Vernova spun off from GE on 2024-04-02
+    "ARM": "2023-09-14",    # Arm Holdings IPO 2023-09-14
+    "ALAB": "2024-03-20",   # Astera Labs IPO 2024-03-20
+    "SMR": "2022-05-02",    # NuScale Power SPAC merger closed ~2022-05-02
+    "CEG": "2022-02-02",    # Constellation Energy spun off from Exelon 2022-02-02
 }
 
 BACKTEST_EXCLUDE = {
@@ -259,6 +265,7 @@ def run_backtest_master_score(
     model_path_override: str | None = None,
     use_ml_override: bool | None = None,
     track: str | None = None,
+    max_global_positions: int = MAX_GLOBAL_POSITIONS,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -289,6 +296,8 @@ def run_backtest_master_score(
     config_d: dict = {}
     scores_buffer: list[tuple] = []
     gross_exposure_per_week: list[float] = []
+    fsm_states_per_week: list[str] = []
+    fsm_triggers_per_week: list[str] = []
     if track == "D":
         _mcfg_path = ROOT / "config" / "model_config.yaml"
         if _mcfg_path.exists():
@@ -312,6 +321,7 @@ def run_backtest_master_score(
                   f"clamping top_n to {len(tickers)}", flush=True)
         top_n = len(tickers)
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
+    all_dates = [d for d in all_dates if d.weekday() < 5]
     start = min(df.index.min() for df in prices_dict.values())
     end = max(df.index.max() for df in prices_dict.values())
     if start_date:
@@ -497,7 +507,7 @@ def run_backtest_master_score(
             )
             _prices_sliced = {t: df.loc[df.index <= monday].copy() for t, df in prices_dict.items() if df is not None and not df.empty}
             regime_status = {"vix_z": 0.0}
-            weights_result = rebalance_alpha_sleeve(scores, scores_df, _prices_sliced, regime_status, config_d)
+            weights_result, fsm_state = rebalance_alpha_sleeve(scores, scores_df, _prices_sliced, regime_status, config_d)
             intent = SimpleNamespace(
                 tickers=[t for t in weights_result.index if weights_result.get(t, 0) != 0],
                 weights=weights_result.to_dict(),
@@ -505,6 +515,10 @@ def run_backtest_master_score(
             for t in tickers:
                 signals_df.loc[monday, t] = float(weights_result.get(t, 0.0))
             gross_exposure_per_week.append(float(weights_result.abs().sum()))
+            fsm_states_per_week.append(str(fsm_state))
+            fsm_triggers_per_week.append(config_d.pop("_last_fsm_trigger", "none"))
+            # Maintain rolling FSM history for hysteresis (last 3 weeks)
+            config_d["fsm_state_history"] = (config_d.get("fsm_state_history", []) + [fsm_state])[-3:]
             config_d["prior_weights"] = weights_result.to_dict()
         else:
             policy_context = {
@@ -516,6 +530,31 @@ def run_backtest_master_score(
             }
             gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
             action = flags.get("action", "Trade")
+
+            # Cap how many non-US tickers can survive in gated_scores before top-N selection.
+            NON_US_SUFFIXES = (".HK", ".T", ".DE", ".CO", ".AS", ".PA", ".L", ".TO")
+            sorted_scores = sorted(gated_scores.items(), key=lambda x: -x[1])
+            accepted_scores: dict[str, float] = {}
+            dropped_non_us: list[str] = []
+            non_us_count = 0
+            for _tk, _sc in sorted_scores:
+                _tk_up = str(_tk).upper()
+                is_non_us = any(_tk_up.endswith(sfx) for sfx in NON_US_SUFFIXES)
+                if is_non_us and non_us_count >= int(max_global_positions):
+                    dropped_non_us.append(_tk)
+                    continue
+                accepted_scores[_tk] = _sc
+                if is_non_us:
+                    non_us_count += 1
+            gated_scores = accepted_scores
+            if dropped_non_us:
+                import logging as _logging
+                _logging.getLogger(__name__).debug(
+                    "[GLOBAL_CAP] %s dropped_non_us=%s max_global_positions=%s",
+                    monday.strftime("%Y-%m-%d") if hasattr(monday, "strftime") else monday,
+                    dropped_non_us,
+                    int(max_global_positions),
+                )
 
             # Build a filtered prices_dict for HRP: only top candidate tickers, sliced to monday.
             _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[: top_n * 2]
@@ -636,6 +675,7 @@ def run_backtest_master_score(
                 positions_df.iloc[start_idx:end_idx, positions_df.columns.get_loc(t)] = w
     
     returns = prices_df.pct_change()
+    returns = returns.clip(-0.25, 0.25)
     for d in first_day_of_period:
         if d in returns.index:
             for t in tickers:
@@ -715,10 +755,17 @@ def run_backtest_master_score(
         "last_regime": last_regime,
         "active_strategy_id": active_strategy_id,
         "weekly_returns": weekly_returns_all,
+        "aggregator_audit_summary": {
+            "n_weeks": len(weekly_returns_all),
+            "note": "aggregator not wired into backtest loop — stub for future wiring",
+        },
     }
     if track == "D":
+        from collections import Counter
         out["track"] = "D"
         out["gross_exposure_avg"] = float(np.mean(gross_exposure_per_week)) if gross_exposure_per_week else 0.0
+        out["fsm_states_per_week"] = fsm_states_per_week
+        out["fsm_trigger_counts"] = dict(Counter(fsm_triggers_per_week))
     return out
 
 
@@ -754,6 +801,7 @@ def main():
     parser.add_argument("--no-ml", action="store_true", default=False, help="Disable ML blend (Technical+News only; use_ml_override=False)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
     parser.add_argument("--track", choices=["A", "B", "D"], default=None, help="Model track override: A=absolute, B=residual, D=Dynamic Alpha-Sleeve 130/30 long/short. Reads path from config/model_config.yaml tracks section.")
+    parser.add_argument("--max-global-positions", type=int, default=MAX_GLOBAL_POSITIONS, help="Maximum number of non-US tickers allowed in gated_scores before top-N selection")
     args = parser.parse_args()
 
     # Resolve model path override from --track flag (A/B only; D uses rebalance_alpha_sleeve, not model path)
@@ -894,6 +942,10 @@ def main():
     # When --no-llm, force news_weight 0 so overlay is off; else use CLI or default (None → 0.20 in loop)
     news_weight_fixed_resolved = 0.0 if args.no_llm else args.news_weight
 
+    # When news_weight is 0 (e.g. --no-llm), suppress news_dir entirely so FinBERT is never loaded
+    if news_weight_fixed_resolved == 0.0:
+        news_dir_resolved = None
+
     run_kw: dict = {
         "prices_dict": prices_dict,
         "data_dir": data_dir,
@@ -908,6 +960,7 @@ def main():
         "model_path_override": _track_model_path_override,
         "use_ml_override": False if args.no_ml else None,
         "track": args.track,
+        "max_global_positions": args.max_global_positions,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days
@@ -918,12 +971,14 @@ def main():
     if args.out_json is not None:
         _json_subset = {
             k: result[k]
-            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers", "weekly_returns")
+            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers", "weekly_returns", "aggregator_audit_summary")
             if k in result
         }
         if args.track == "D":
             _json_subset["track"] = result.get("track", "D")
             _json_subset["gross_exposure_avg"] = result.get("gross_exposure_avg", 0.0)
+            _json_subset["fsm_states_per_week"] = result.get("fsm_states_per_week", [])
+            _json_subset["fsm_trigger_counts"] = result.get("fsm_trigger_counts", {})
         _out_path = Path(args.out_json)
         _out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(_out_path, "w", encoding="utf-8") as _f:

@@ -404,6 +404,7 @@ def _run_pods(
         print(f"[POD_CORE] Error: {e}", flush=True)
         pod_weights["core"] = pd.Series(dtype=float)
 
+    _fsm_audit: dict | None = None
     try:
         if "extension" in current_frozen:
             import logging as _logging
@@ -416,6 +417,12 @@ def _run_pods(
         else:
             w_ext = ext.generate_weights(scores_series, prices_sliced, regime_status, extension_cfg)
             pod_weights["extension"] = w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
+            # Capture FSM audit fields written as side-channel by rebalance_alpha_sleeve
+            _fsm_audit = {
+                "state": extension_cfg.pop("_last_fsm_state", "unknown"),
+                "trigger": extension_cfg.pop("_last_fsm_trigger", "none"),
+                "reason": extension_cfg.pop("_last_fsm_reason", ""),
+            }
     except Exception as e:
         print(f"[POD_EXTENSION] Error: {e}", flush=True)
         pod_weights["extension"] = pd.Series(dtype=float)
@@ -477,6 +484,7 @@ def _run_pods(
         veto_threshold=veto_threshold,
         shrinkage_floor=shrinkage_floor,
         audit_path=ROOT / "outputs" / "aggregator_audit.json",
+        fsm_audit=_fsm_audit,
     )
 
     # 8. Print per-pod and final summary

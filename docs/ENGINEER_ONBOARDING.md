@@ -152,7 +152,7 @@ Not in git — lives on a separate drive.
 - `fastparquet` — required for all parquet ops (pyarrow crashes on Windows/Anaconda)
 - `PyPortfolioOpt` — HRP optimizer
 - `catboost` — active ML model (not in requirements.txt; install separately)
-- `scikit-learn` — currently broken in `wealth` env (blocks training scripts)
+- `scikit-learn` — v1.7.2 installed and confirmed working in `wealth` env (2026-03-19)
 
 **API keys needed** (in `.env`): `GOOGLE_API_KEY`, `MARKETAUX_API_KEY`, `TIINGO_API_KEY`, `EODHD_API_KEY`
 
@@ -196,7 +196,7 @@ Not in git — lives on a separate drive.
 ## 8. RISKS / GAPS
 
 **Blocking:**
-- `sklearn ImportError` in `wealth` env — blocks `train_ml_model.py` and Final Truth backtest runs
+- _None currently._
 
 **Fragile:**
 - `except Exception: return {}` pattern in `eodhd_news_loader.py` and `news_fetcher_factory.py` — errors silently swallowed
@@ -204,9 +204,7 @@ Not in git — lives on a separate drive.
 - `target_vol` in `config/model_config.yaml` was silently reverted by linter twice — watch this value
 
 **Structural gaps:**
-- Track D individual-stock shorts are structurally unsuitable for a sector-concentrated bull universe
-  - 2023 backtest: Sharpe=-0.102, return=-71.9%, MDD=-90.3%
-  - 2024 backtest: Sharpe=+0.206, return=+133.5%, MDD=-23.3%
+- Track D 3-State FSM implemented (2026-03-19): State B collapses to SMH ETF hedge in bull regime; State C exits shorts entirely when IC < 0. Pre-FSM baseline (for reference): 2023 Sharpe=-0.102, return=-71.9%, MDD=-90.3%
   - In bull years, even bottom-ranked AI/semi names go up — short book consistently loses
 - No automatic model retraining schedule — manual only
 - Supply chain `relationships.json` not in repo — propagation silently disabled if missing

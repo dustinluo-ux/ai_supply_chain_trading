@@ -41,6 +41,18 @@ def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DataFrame has standard OHLCV columns (lowercase)."""
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
+    if df.columns.duplicated().any():
+        # Some vendor CSVs (notably HK/global) can produce duplicate names after lowercasing.
+        # Keep, per column name, the duplicate with fewer NaN values.
+        selected: dict[str, pd.Series] = {}
+        for col in pd.unique(df.columns):
+            matches = np.where(df.columns == col)[0]
+            if len(matches) == 1:
+                selected[col] = df.iloc[:, matches[0]]
+                continue
+            best_idx = min(matches, key=lambda i: int(df.iloc[:, i].isna().sum()))
+            selected[col] = df.iloc[:, best_idx]
+        df = pd.DataFrame(selected, index=df.index)
     missing = [c for c in OHLCV_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"DataFrame missing required columns: {missing}. Found: {list(df.columns)}")
@@ -194,22 +206,22 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # except Exception as e:
     #     logger.debug("Aroon: %s", e)
 
-    # ---- Volatility ---- (P0: commented)
-    # try:
-    #     bb = ta.bbands(c, length=20, std=2.0)
-    #     if bb is not None and not bb.empty:
-    #         for col in bb.columns:
-    #             out[f"bb_{col}"] = _safe_series(bb[col], idx)
-    #         bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get("bb_BBL_20_2.0", pd.Series(0.0, index=idx))
-    #         out["bb_position"] = ((c - bl) / (bu - bl + 1e-8)).clip(0, 1).fillna(0.5)
-    # except Exception as e:
-    #     logger.debug("Bollinger: %s", e)
-    # try:
-    #     atr = ta.atr(h, l, c, length=14)
-    #     if atr is not None:
-    #         out["atr"] = _safe_series(atr, idx)
-    # except Exception as e:
-    #     logger.debug("ATR: %s", e)
+    # ---- Volatility ----
+    try:
+        bb = ta.bbands(c, length=20, std=2.0)
+        if bb is not None and not bb.empty:
+            for col in bb.columns:
+                out[f"bb_{col}"] = _safe_series(bb[col], idx)
+            bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get("bb_BBL_20_2.0", pd.Series(0.0, index=idx))
+            out["bb_position"] = ((c - bl) / (bu - bl + 1e-8)).clip(0, 1).fillna(0.5)
+    except Exception as e:
+        logger.debug("Bollinger: %s", e)
+    try:
+        atr = ta.atr(h, l, c, length=14)
+        if atr is not None:
+            out["atr"] = _safe_series(atr, idx)
+    except Exception as e:
+        logger.debug("ATR: %s", e)
     # try:
     #     kc = ta.kc(h, l, c, length=20)
     #     if kc is not None and not kc.empty:
@@ -218,7 +230,7 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # except Exception as e:
     #     logger.debug("Keltner: %s", e)
 
-    # ---- Momentum ---- (P0: only RSI active)
+    # ---- Momentum ---- (RSI + ROC + momentum horizons active)
     # try:
     #     stoch = ta.stoch(h, l, c, k=14, d=3)
     #     if stoch is not None and not stoch.empty:
@@ -238,42 +250,42 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     #         out["willr"] = _safe_series(willr, idx)
     # except Exception as e:
     #     logger.debug("Williams %%R: %s", e)
-    # try:
-    #     roc = ta.roc(c, length=10)
-    #     if roc is not None:
-    #         out["roc"] = _safe_series(roc, idx)
-    # except Exception as e:
-    #     logger.debug("ROC: %s", e)
+    try:
+        roc = ta.roc(c, length=10)
+        if roc is not None:
+            out["roc"] = _safe_series(roc, idx)
+    except Exception as e:
+        logger.debug("ROC: %s", e)
     try:
         rsi = ta.rsi(c, length=14)
         if rsi is not None:
             out["rsi"] = _safe_series(rsi, idx)
     except Exception as e:
         logger.debug("RSI: %s", e)
-    # # Momentum 5d/20d (P0: commented)
-    # try:
-    #     mom5 = ta.roc(c, length=5)
-    #     mom20 = ta.roc(c, length=20)
-    #     if mom5 is not None:
-    #         out["momentum_5d"] = _safe_series(mom5, idx)
-    #     if mom20 is not None:
-    #         out["momentum_20d"] = _safe_series(mom20, idx)
-    # except Exception as e:
-    #     logger.debug("Momentum ROC: %s", e)
+    # Momentum 5d/20d
+    try:
+        mom5 = ta.roc(c, length=5)
+        mom20 = ta.roc(c, length=20)
+        if mom5 is not None:
+            out["momentum_5d"] = _safe_series(mom5, idx)
+        if mom20 is not None:
+            out["momentum_20d"] = _safe_series(mom20, idx)
+    except Exception as e:
+        logger.debug("Momentum ROC: %s", e)
 
-    # ---- Volume ---- (P0: commented)
-    # try:
-    #     obv = ta.obv(c, v)
-    #     if obv is not None:
-    #         out["obv"] = _safe_series(obv, idx)
-    # except Exception as e:
-    #     logger.debug("OBV: %s", e)
-    # try:
-    #     cmf = ta.cmf(h, l, c, v, length=20)
-    #     if cmf is not None:
-    #         out["cmf"] = _safe_series(cmf, idx)
-    # except Exception as e:
-    #     logger.debug("CMF: %s", e)
+    # ---- Volume ----
+    try:
+        obv = ta.obv(c, v)
+        if obv is not None:
+            out["obv"] = _safe_series(obv, idx)
+    except Exception as e:
+        logger.debug("OBV: %s", e)
+    try:
+        cmf = ta.cmf(h, l, c, v, length=20)
+        if cmf is not None:
+            out["cmf"] = _safe_series(cmf, idx)
+    except Exception as e:
+        logger.debug("CMF: %s", e)
     # try:
     #     vwap_ = ta.vwap(h, l, c, v)
     #     if vwap_ is not None:
@@ -284,12 +296,12 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # except Exception as e:
     #     typical = (h + l + c) / 3.0
     #     out["vwap"] = (typical * v).cumsum() / (v.cumsum().replace(0, np.nan)).bfill().fillna(c)
-    # try:
-    #     vol_ma = v.rolling(30, min_periods=1).mean()
-    #     out["volume_ratio"] = (v / (vol_ma + 1e-8)).fillna(1.0)
-    # except Exception as e:
-    #     logger.debug("Volume ratio: %s", e)
-    #     out["volume_ratio"] = 1.0
+    try:
+        vol_ma = v.rolling(30, min_periods=1).mean()
+        out["volume_ratio"] = (v / (vol_ma + 1e-8)).fillna(1.0)
+    except Exception as e:
+        logger.debug("Volume ratio: %s", e)
+        out["volume_ratio"] = 1.0
 
     # ---- Moving Averages ---- (P0: commented)
     # for period in [8, 12, 26, 50]:
@@ -326,15 +338,15 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     #     if c.startswith("stoch_") and not c.endswith("_norm") and f"{c}_norm" not in out.columns:
     #         out[f"{c}_norm"] = (out[c].clip(0, 100).fillna(50) / 100.0)
 
-    # Rolling min-max for unbounded (P0: commented; only RSI norm above)
-    # _unbounded = [
-    #     "atr", "cci", "roc", "momentum_5d", "momentum_20d",
-    #     "cmf", "volume_ratio", "bb_position", "obv",
-    # ]
-    # for col in _unbounded:
-    #     if col in out.columns and f"{col}_norm" not in out.columns:
-    #         s = out[col].replace([np.inf, -np.inf], np.nan)
-    #         out[f"{col}_norm"] = _rolling_minmax(s, window=_rolling_window)
+    # Rolling min-max for unbounded indicators
+    _unbounded = [
+        "atr", "roc", "momentum_5d", "momentum_20d",
+        "cmf", "volume_ratio", "obv",
+    ]
+    for col in _unbounded:
+        if col in out.columns and f"{col}_norm" not in out.columns:
+            s = out[col].replace([np.inf, -np.inf], np.nan)
+            out[f"{col}_norm"] = _rolling_minmax(s, window=_rolling_window)
     adx_cols = [c for c in out.columns if c.startswith("adx_") and not c.endswith("_norm")]
     if adx_cols and "adx_norm" not in out.columns:
         s = out[adx_cols[0]].replace([np.inf, -np.inf], np.nan)

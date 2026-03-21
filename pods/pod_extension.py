@@ -22,7 +22,8 @@ class PodExtension:
         try:
             from src.portfolio.long_short_optimizer import rebalance_alpha_sleeve
 
-            return rebalance_alpha_sleeve(scores, scores_df, prices_dict, regime_status, config)
+            weights, _ = rebalance_alpha_sleeve(scores, scores_df, prices_dict, regime_status, config)
+            return weights
         except Exception as e:
             print(f"[POD_EXTENSION] Error: {e}", flush=True)
             return pd.Series(dtype=float)

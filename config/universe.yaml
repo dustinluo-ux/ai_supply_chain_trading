@@ -1,4 +1,4 @@
-# Canonical 47-ticker global universe. Edit here, then run
+# Canonical 54-ticker global universe. Edit here, then run
 # scripts/sync_universe.py to propagate to data_config.yaml.
 
 pillars:
@@ -13,6 +13,10 @@ pillars:
     - INTC
     - SNPS
     - CDNS
+    - MU
+    - QCOM
+    - AMAT
+    - TXN
   energy:
     - CEG
     - VST
@@ -34,6 +38,9 @@ pillars:
     - NVT
     - FIX
     - EME
+    - SMCI
+    - CSCO
+    - DELL
   adoption:
     - PLTR
     - PATH
@@ -45,6 +52,7 @@ pillars:
     - TER
     - TEAM
     - ORCL
+    - IBM
   global:
     - 9988.HK   # Alibaba
     - 0700.HK   # Tencent

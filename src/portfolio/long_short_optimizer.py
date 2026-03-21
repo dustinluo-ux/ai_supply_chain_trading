@@ -160,28 +160,78 @@ def _compute_rolling_ic(
 def _determine_fsm_state(
     thesis_result: dict,
     rolling_ic: float | None,
+    current_drawdown: float,
     regime_status: dict,
     config: dict,
 ) -> dict[str, str]:
-    """Returns dict with state ('A', 'B', or 'C') and reason."""
+    """FSM priority hierarchy (expert-revised 2026-03-21):
+      1. State B  (Bull Hedge):   rho >= 0.50 AND SPY > 200-SMA → zero single-name shorts, SMH ETF hedge
+      2. State A- (Short-Light):  rho in [0.45, 0.50) → single-name shorts capped at -1% per name
+      3. State C  (Long-Only):    rolling_IC < 0 AND drawdown > 1.5 × design_max_drawdown
+      4. State A  (Normal):       default — full short book active
+    Hysteresis: B exits at rho < 0.45 (5pp buffer); C exits at IC >= 0.03.
+    Returns dict with 'state', 'reason', and 'trigger' keys.
+    """
     rho = thesis_result.get("rho")
+    # SPY > 200-SMA is the operational proxy for "SMH in bull regime"
     spy_below_sma = regime_status.get("spy_below_sma", regime_status.get("spy_below_sma200", False)) is True
+    smh_in_bull = not spy_below_sma
 
-    # State C: IC negative
-    if rolling_ic is not None and rolling_ic < 0.0:
-        return {"state": "C", "reason": f"IC negative: {rolling_ic:.4f}"}
+    design_max_dd = config.get("design_max_drawdown", 0.15)
+    fsm_history = config.get("fsm_state_history", [])
+    prev_state = fsm_history[-1] if fsm_history else "A"
 
-    # State B: any of three sub-conditions
-    rho_threshold = 0.65 if not spy_below_sma else 0.80
-    if rho is not None and rho > rho_threshold:
-        reason = f"thesis_alert rho={rho:.3f} (bull_prior)" if not spy_below_sma else f"thesis_alert rho={rho:.3f}"
-        return {"state": "B", "reason": reason}
-    if rho is not None and rho > 0.70:
-        return {"state": "B", "reason": f"cross_sectional_rho={rho:.3f} > 0.70"}
-    if not spy_below_sma and rolling_ic is not None and rolling_ic < 0.01:
-        return {"state": "B", "reason": f"near_zero_IC={rolling_ic:.4f} in bull regime"}
+    # --- Priority 1: State B — full bull hedge (rho >= 0.50, lowered from 0.60) ---
+    b_triggered = rho is not None and rho >= 0.50 and smh_in_bull
 
-    return {"state": "A", "reason": "normal"}
+    # --- Priority 2: State A- — short-light band (0.45 <= rho < 0.50) ---
+    a_minus_triggered = rho is not None and 0.45 <= rho < 0.50
+
+    # --- Priority 3: State C — alpha model fundamentally broken ---
+    # Only fires when IC is negative AND drawdown exceeds 1.5 × design threshold
+    c_triggered = (
+        rolling_ic is not None
+        and rolling_ic < 0.0
+        and abs(current_drawdown) > 1.5 * design_max_dd
+    )
+
+    # --- Determine proposed state (priority order: B > A- > C > A) ---
+    if b_triggered:
+        proposed = "B"
+        reason = f"rho={rho:.3f}>=0.50 AND bull_regime (SPY>200-SMA)"
+        trigger = "sector_correlation+SMH_bull"
+    elif a_minus_triggered:
+        proposed = "A-"
+        reason = f"rho={rho:.3f} in [0.45,0.50) — short-light band"
+        trigger = "short_light_band"
+    elif c_triggered:
+        proposed = "C"
+        reason = f"IC={rolling_ic:.4f}<0 AND dd={current_drawdown:.3f}>1.5x{design_max_dd:.2f}"
+        trigger = "IC_negative+drawdown"
+    else:
+        proposed = "A"
+        reason = "normal"
+        trigger = "none"
+
+    # --- Hysteresis: buffer thresholds before exiting B or C ---
+    if prev_state == "B" and proposed != "B":
+        # Exit B only when rho drops clearly below entry threshold (5pp buffer below 0.50)
+        if rho is not None and rho >= 0.45:
+            return {
+                "state": "B",
+                "reason": f"hysteresis: rho={rho:.3f} within exit buffer (need <0.45)",
+                "trigger": "hysteresis_B",
+            }
+    if prev_state == "C" and proposed != "C":
+        # Exit C only when IC is clearly positive (3pp buffer — relaxed from 0.01 to prevent lock-in)
+        if rolling_ic is not None and rolling_ic < 0.03:
+            return {
+                "state": "C",
+                "reason": f"hysteresis: IC={rolling_ic:.4f} within exit buffer (need >=0.03)",
+                "trigger": "hysteresis_C",
+            }
+
+    return {"state": proposed, "reason": reason, "trigger": trigger}
 
 
 def build_long_short_weights(
@@ -462,7 +512,7 @@ def rebalance_alpha_sleeve(
     prices_dict: dict,
     regime_status: dict,
     config: dict,
-) -> pd.Series:
+) -> tuple[pd.Series, str]:
     """
     Orchestrator for Dynamic Alpha-Sleeve. Dynamic short size S from dispersion and correlation;
     long book L = 1.0 base, short book S in [0, 0.30]. Effective multiplier ceiling shared when S > 0.
@@ -479,7 +529,7 @@ def rebalance_alpha_sleeve(
 
     scores_clean = scores.dropna()
     if scores_clean.empty:
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float), "A"
     sorted_tickers = scores_clean.sort_values(ascending=False)
     long_candidates = sorted_tickers.head(top_n).index.tolist()
     short_candidates = sorted_tickers.tail(bottom_n).index.tolist()
@@ -541,13 +591,32 @@ def rebalance_alpha_sleeve(
     # Step 2: rolling IC
     rolling_ic = _compute_rolling_ic(scores_df, prices_dict, window=60)
 
-    # Step 3: FSM state
-    fsm = _determine_fsm_state(thesis_result, rolling_ic, regime_status, config)
-    logger.info("[TRACK_D_FSM] state=%s | reason=%s", fsm["state"], fsm["reason"])
+    # Step 2b: current drawdown from portfolio returns (used by State C threshold)
+    _dd_ret = portfolio_returns.dropna()
+    if len(_dd_ret) >= 5:
+        _cum = (1 + _dd_ret).cumprod()
+        _peak = _cum.cummax()
+        current_drawdown = float(((_cum - _peak) / _peak).iloc[-1])
+    else:
+        current_drawdown = 0.0
 
-    # Step 4: leverage multiplier (State A: 1.6/(1+S); B/C: max_leverage)
+    # Step 3: FSM state
+    fsm = _determine_fsm_state(thesis_result, rolling_ic, current_drawdown, regime_status, config)
+    logger.info(
+        "[TRACK_D_FSM] state=%s | trigger=%s | reason=%s | ic=%.4f | dd=%.3f | rho=%s",
+        fsm["state"], fsm.get("trigger", "?"), fsm["reason"],
+        rolling_ic if rolling_ic is not None else float("nan"),
+        current_drawdown,
+        f"{rho:.3f}" if rho is not None else "None",
+    )
+    # Side-channel: expose FSM result for aggregator audit (live execution path)
+    config["_last_fsm_trigger"] = fsm.get("trigger", "none")
+    config["_last_fsm_state"] = fsm.get("state", "A")
+    config["_last_fsm_reason"] = fsm.get("reason", "")
+
+    # Step 4: leverage multiplier (A/A-: 1.6/(1+S); B/C: max_leverage)
     S = get_short_exposure(short_candidates, scores, prices_dict, rho, top_n, dispersion_anchor=dispersion_anchor)
-    if fsm["state"] == "A":
+    if fsm["state"] in ("A", "A-"):
         effective_max_lev = (1.6 / (1.0 + S)) if S > 0 else 1.6
     else:
         effective_max_lev = max_leverage
@@ -604,6 +673,7 @@ def rebalance_alpha_sleeve(
 
     # Step 6: short weights by FSM state
     short_light_cap = config.get("short_light_cap", 0.12)
+    a_minus_per_name_cap = config.get("a_minus_per_name_cap", 0.01)  # 1% per name cap for Short-Light
     if fsm["state"] == "A":
         if S > 0 and short_candidates:
             for t in short_candidates:
@@ -612,6 +682,17 @@ def rebalance_alpha_sleeve(
             for t in short_candidates:
                 weights[t] = 0.0
         target_short_sum = -S * multiplier if S > 0 else 0.0
+    elif fsm["state"] == "A-":
+        # Short-Light: retain single-name shorts but cap each at -1% per name
+        if S > 0 and short_candidates:
+            for t in short_candidates:
+                raw = -(S / len(short_candidates)) * multiplier
+                weights[t] = max(raw, -a_minus_per_name_cap)  # cap: weight must not exceed -1%
+        else:
+            for t in short_candidates:
+                weights[t] = 0.0
+        target_short_sum = -min(S * multiplier, a_minus_per_name_cap * len(short_candidates)) if S > 0 else 0.0
+        logger.info("[TRACK_D_FSM] State A-: short book capped at %.1f%% per name", a_minus_per_name_cap * 100)
     elif fsm["state"] == "B":
         for t in short_candidates:
             weights[t] = 0.0
@@ -621,6 +702,7 @@ def rebalance_alpha_sleeve(
             logger.warning("[TRACK_D_FSM] State B: SMH not in prices_dict, skipping SMH short")
         target_short_sum = -short_light_cap
     else:
+        # State C: long-only, all shorts zeroed
         for t in short_candidates:
             weights[t] = 0.0
         target_short_sum = 0.0
@@ -684,4 +766,4 @@ def rebalance_alpha_sleeve(
         send_alert("thesis_collapse", {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]})
 
     # Step 9
-    return pd.Series(weights)
+    return pd.Series(weights), str(fsm.get("state", "A"))

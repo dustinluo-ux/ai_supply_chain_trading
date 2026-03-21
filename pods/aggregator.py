@@ -24,6 +24,7 @@ def aggregate_pod_weights(
     veto_threshold: float = 0.25,
     shrinkage_floor: float = 0.50,
     audit_path: Path | str | None = None,
+    fsm_audit: dict | None = None,
 ) -> pd.Series:
     """Weighted sum of pod weights with conflict veto, Bayesian shrinkage, sector/gross caps, and optional audit."""
     # Step 1 — Weighted sum
@@ -123,6 +124,8 @@ def aggregate_pod_weights(
                 "meta_entropy": H,
                 "conflict_details": conflict_details_audit,
             }
+            if fsm_audit:
+                audit_dict["fsm_track_d"] = fsm_audit
             audit_path.parent.mkdir(parents=True, exist_ok=True)
             audit_path.write_text(json.dumps(audit_dict, indent=2), encoding="utf-8")
         except Exception as e:

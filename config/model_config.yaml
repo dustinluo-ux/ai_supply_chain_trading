@@ -47,41 +47,41 @@ logging:
   log_dir: logs/models/
 tracks:
   A:
-    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260308_103404.pkl
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260319_094446.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
   D:
     mode: long_short_130_30
     top_n: 15
     bottom_n: 8
-    target_vol: 0.40
+    target_vol: 0.4
     max_leverage: 1.6
-    max_position: 0.10
+    max_position: 0.1
     thesis_alert_rho: 0.8
     borrow_cost_threshold: 0.05
-    dispersion_anchor: 0.40   # 40% annualised vol = full short exposure (S=0.30)
+    dispersion_anchor: 0.4
     short_light_cap: 0.12
-
+    design_max_drawdown: 0.15   # State C fires only when dd exceeds 1.5× this value (22.5%)
+    a_minus_per_name_cap: 0.01  # State A-minus: max short weight per single name (1%)
 pods:
   meta_allocator:
     temperature: 0.5
-    ballast_floor: 0.20
+    ballast_floor: 0.2
     prior:
-      core: 0.50
-      extension: 0.30
-      ballast: 0.20
-  sector_cap: 0.40
-  gross_cap: 1.60
+      core: 0.5
+      extension: 0.3
+      ballast: 0.2
+  sector_cap: 0.4
+  gross_cap: 1.6
   fitness_path: outputs/pod_fitness.json
   meta_weights_path: outputs/meta_weights.json
   conflict_resolution:
     veto_threshold: 0.25
-    shrinkage_floor: 0.50
-
+    shrinkage_floor: 0.5
 risk_management:
   ic_baseline: 0.0428
   ic_decay_window: 20
-  stop_loss_threshold: -0.10
+  stop_loss_threshold: -0.1
   residual_risk_warning_multiple: 2.0
   residual_risk_critical_multiple: 3.0
   beta_mandate_warning_buffer: 0.3
@@ -90,4 +90,7 @@ risk_management:
   ibkr_latency_threshold_ms: 500
   ibkr_freeze_latency_ms: 2000
   ibkr_freeze_timeout_seconds: 60
-  critical_data_sources: [prices, smh_benchmark, regime_status]
+  critical_data_sources:
+  - prices
+  - smh_benchmark
+  - regime_status
