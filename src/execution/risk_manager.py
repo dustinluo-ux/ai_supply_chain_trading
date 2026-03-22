@@ -194,6 +194,7 @@ class RiskOverlay:
         bdir = benchmarks_dir or DEFAULT_BENCHMARKS_DIR
         spy_path = bdir / "SPY.csv"
         vix_path = bdir / "VIX.csv"
+        smh_path = bdir / "SMH.csv"
 
         self._spy = spy_series
         self._vix = vix_series
