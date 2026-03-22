@@ -83,7 +83,15 @@ def _rolling_minmax(series: pd.Series, window: int = 252) -> pd.Series:
     Prevents look-ahead bias: each value is scaled only against its past year of data.
     Inf/NaN replaced with 0.5 (neutral) after scaling.
     """
-    s = series.replace([np.inf, -np.inf], np.nan)
+    s = series
+    if isinstance(s, pd.DataFrame):
+        s = s.squeeze()
+    if isinstance(s, pd.DataFrame):
+        raise ValueError(
+            "_rolling_minmax expects a single column or Series; got multiple columns: "
+            f"{list(s.columns)}"
+        )
+    s = s.replace([np.inf, -np.inf], np.nan)
     rolling_min = s.rolling(window=window, min_periods=1).min()
     rolling_max = s.rolling(window=window, min_periods=1).max()
     spread = rolling_max - rolling_min

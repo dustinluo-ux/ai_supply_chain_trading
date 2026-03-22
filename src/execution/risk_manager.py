@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_BENCHMARKS_DIR = Path(r"C:\ai_supply_chain_trading\trading_data\benchmarks")
 SPY_CSV = DEFAULT_BENCHMARKS_DIR / "SPY.csv"
 VIX_CSV = DEFAULT_BENCHMARKS_DIR / "VIX.csv"
+SMH_CSV = DEFAULT_BENCHMARKS_DIR / "SMH.csv"
 STRATEGY_PARAMS_PATH = ROOT / "config" / "strategy_params.yaml"
 
 
@@ -80,6 +81,22 @@ def _ensure_vix_csv_subprocess() -> None:
         )
     except Exception as e:
         logger.warning("[RiskOverlay] VIX download subprocess failed: %s", e)
+
+
+def _ensure_smh_csv_subprocess() -> None:
+    script = ROOT / "scripts" / "download_smh.py"
+    if not script.exists():
+        logger.warning("[RiskOverlay] download_smh.py not found at %s", script)
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(ROOT),
+            timeout=120,
+            check=False,
+        )
+    except Exception as e:
+        logger.warning("[RiskOverlay] SMH download subprocess failed: %s", e)
 
 
 def _load_risk_overlay_config() -> dict[str, Any]:
@@ -194,6 +211,9 @@ class RiskOverlay:
             self._vix = _load_benchmark_close(vix_path)
             if self._vix is None:
                 self._vix = pd.Series(dtype=float)
+
+        if not smh_path.exists():
+            _ensure_smh_csv_subprocess()
 
     def evaluate(self, as_of_date: Any) -> dict[str, Any]:
         """Return tier metadata and sizing hints (observational)."""

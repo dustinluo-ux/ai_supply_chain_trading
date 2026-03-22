@@ -17,6 +17,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -27,6 +28,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import update_news_data
 import update_price_data
 from src.utils.audit_logger import log_audit_record
+
+
+def _as_of_capped_for_overlay(ts) -> "pd.Timestamp":
+    """Clamp signal date to calendar today so forward-dated price rows do not skew RiskOverlay."""
+    import pandas as pd
+
+    cap = pd.Timestamp(date.today())
+    t = pd.Timestamp(ts).normalize()
+    return t if t <= cap else cap
 
 
 def _get_watchlist() -> list[str]:
@@ -192,7 +202,7 @@ def main() -> int:
         from src.execution.risk_manager import RiskOverlay
         from src.portfolio.long_short_optimizer import rebalance_long_short
         _risk_ov_d = RiskOverlay(prices_dict=prices_dict)
-        _risk_eval_d = _risk_ov_d.evaluate(as_of)
+        _risk_eval_d = _risk_ov_d.evaluate(_as_of_capped_for_overlay(as_of))
         _bottom_n_d = 0 if _risk_eval_d["tier1_trend"] == "BULL" else 3
         print(
             f"[TRACK D] Regime={_risk_eval_d['tier1_trend']} → n_shorts={_bottom_n_d}",
@@ -254,7 +264,7 @@ def main() -> int:
             else:
                 _as_o = pd.Timestamp.today().normalize()
             _ov = RiskOverlay(prices_dict=_prices_o or {})
-            _ev = _ov.evaluate(_as_o)
+            _ev = _ov.evaluate(_as_of_capped_for_overlay(_as_o))
             append_risk_metadata_csv(_ev)
             _mp = _ev["max_positions_override"]
             _mp_s = "None" if _mp is None else str(int(_mp))

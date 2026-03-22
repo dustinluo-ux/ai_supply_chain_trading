@@ -47,7 +47,7 @@ logging:
   log_dir: logs/models/
 tracks:
   A:
-    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260319_094446.pkl
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_20260322_191021.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
   D:
@@ -61,8 +61,8 @@ tracks:
     borrow_cost_threshold: 0.05
     dispersion_anchor: 0.4
     short_light_cap: 0.12
-    design_max_drawdown: 0.15   # State C fires only when dd exceeds 1.5× this value (22.5%)
-    a_minus_per_name_cap: 0.01  # State A-minus: max short weight per single name (1%)
+    design_max_drawdown: 0.15
+    a_minus_per_name_cap: 0.01
 pods:
   meta_allocator:
     temperature: 0.5
