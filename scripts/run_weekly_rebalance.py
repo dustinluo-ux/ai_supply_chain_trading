@@ -189,8 +189,19 @@ def main() -> int:
         )
         scores = pd.Series(aux.get("scores", {}))
         scores_df = pd.DataFrame([aux.get("scores", {})], index=[as_of]) if scores.size else pd.DataFrame()
+        from src.execution.risk_manager import RiskOverlay
         from src.portfolio.long_short_optimizer import rebalance_long_short
-        weights_result = rebalance_long_short(scores, scores_df, prices_dict, regime_status, config_d)
+        _risk_ov_d = RiskOverlay(prices_dict=prices_dict)
+        _risk_eval_d = _risk_ov_d.evaluate(as_of)
+        _bottom_n_d = 0 if _risk_eval_d["tier1_trend"] == "BULL" else 3
+        print(
+            f"[TRACK D] Regime={_risk_eval_d['tier1_trend']} → n_shorts={_bottom_n_d}",
+            flush=True,
+        )
+        config_d_run = {**config_d, "bottom_n": _bottom_n_d}
+        weights_result = rebalance_long_short(
+            scores, scores_df, prices_dict, regime_status, config_d_run,
+        )
         out_dir = ROOT / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(out_dir / "last_valid_weights.json", "w", encoding="utf-8") as f:
@@ -221,6 +232,41 @@ def main() -> int:
         result = run_execution.main()
         _exit_code = result[0] if isinstance(result, tuple) else result
         _fill_records = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+        # Additive risk overlay: metadata only (no order impact)
+        try:
+            import pandas as pd
+            from src.execution.risk_manager import RiskOverlay, append_risk_metadata_csv
+
+            _cfg_exec = run_execution.load_config()
+            _data_dir_o = _cfg_exec["data_dir"]
+            _tick_o = [t.strip() for t in tickers.split(",") if t.strip()]
+            _prices_o = run_execution.load_prices(_data_dir_o, _tick_o)
+            if args.date:
+                _as_o = pd.to_datetime(args.date).normalize()
+            elif _prices_o:
+                _all_d = sorted(
+                    set().union(
+                        *[df.index for df in _prices_o.values() if df is not None and not df.empty]
+                    )
+                )
+                _mons = pd.date_range(min(_all_d), max(_all_d), freq="W-MON")
+                _as_o = _mons[-1] if len(_mons) else pd.Timestamp(_all_d[-1])
+            else:
+                _as_o = pd.Timestamp.today().normalize()
+            _ov = RiskOverlay(prices_dict=_prices_o or {})
+            _ev = _ov.evaluate(_as_o)
+            append_risk_metadata_csv(_ev)
+            _mp = _ev["max_positions_override"]
+            _mp_s = "None" if _mp is None else str(int(_mp))
+            print(
+                f"[RISK OVERLAY] {_ev['as_of']} | Tier1={_ev['tier1_trend']} | "
+                f"Tier2={_ev['tier2_vix']} | Tier3={_ev['tier3_corr']:.2f} | "
+                f"multiplier={_ev['allocation_multiplier']} | max_pos={_mp_s}",
+                flush=True,
+            )
+        except Exception as _risk_e:
+            print(f"[RISK OVERLAY][WARN] {_risk_e}", flush=True)
+
         _rebalance_config = {
             "tickers": tickers,
             "top_n": args.top_n,

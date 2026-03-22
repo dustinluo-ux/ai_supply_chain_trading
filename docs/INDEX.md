@@ -40,6 +40,8 @@ These are the **only** authoritative sources. All located in **`docs/`** directo
 
 **Stage 4 (Position Sizing):** `src/portfolio/position_sizer.py` — ATR-based sizing; config: `config/trading_config.yaml` → `position_sizing`; regime BEAR → 0 exposure. See SYSTEM_MAP.md § Stage 5.
 
+**Additive risk overlay (live metadata):** `src/execution/risk_manager.py` (`RiskOverlay`), thresholds in `config/strategy_params.yaml` → `risk_overlay`; weekly hook appends `outputs/risk_metadata_history.csv` from `scripts/run_weekly_rebalance.py` (observational; Track D `bottom_n` regime cap).
+
 ### **For Decisions & Results**
 
 | Doc | Purpose | Read When |

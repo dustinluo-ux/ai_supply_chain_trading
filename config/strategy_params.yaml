@@ -64,3 +64,11 @@ circuit_breaker:
 
 pod_overrides:
   frozen_pods_resume: []
+
+# Additive risk overlay (SPY trend, VIX, correlation) — observational + future sizing hooks
+risk_overlay:
+  vix_elevated_threshold: 28
+  spy_sma_window: 200
+  sector_corr_threshold: 0.85
+  corr_lookback_days: 60
+  vix_multiplier: 0.6
