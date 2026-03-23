@@ -257,7 +257,14 @@ def _run_pods(
     except Exception as e:
         print(f"[PODS] Could not load meta_weights.json: {e}", flush=True)
         meta_weights = default_meta.copy()
-    ballast_weight = max(0.20, min(0.50, meta_weights.get("ballast", 0.20)))
+    meta_weights_override = regime_status.get("meta_weights_override")
+    if isinstance(meta_weights_override, dict):
+        meta_weights = default_meta.copy()
+        for k in default_meta:
+            if k in meta_weights_override:
+                meta_weights[k] = float(meta_weights_override[k])
+    ballast_cap = 0.60 if str(regime_status.get("regime_state", "")) == "Contraction" else 0.50
+    ballast_weight = max(0.20, min(ballast_cap, meta_weights.get("ballast", 0.20)))
     ballast_cfg["ballast_weight"] = ballast_weight
 
     # --- Step A — Load and reconcile frozen state ---
@@ -641,6 +648,7 @@ def main() -> tuple[int, list]:
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
     parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
     parser.add_argument("--reset-stop-loss", action="store_true", help="Clear flatten_active in drawdown_tracker and continue normal execution")
+    parser.add_argument("--regime-multiplier", type=float, default=1.0, help="De-gross effective NAV multiplier from regime controller")
     args = parser.parse_args()
 
     run_start_ts = datetime.now(timezone.utc).isoformat()
@@ -697,7 +705,7 @@ def main() -> tuple[int, list]:
     warnings_list = []
     if not prices_dict:
         critical_missing.append("prices")
-    smh_path = data_dir / "benchmarks" / "SMH.csv"
+    smh_path = data_dir.parent / "benchmarks" / "SMH.csv"
     if not smh_path.exists() or smh_path.stat().st_size == 0:
         critical_missing.append("smh_benchmark")
     regime_path = ROOT / "outputs" / "regime_status.json"
@@ -765,6 +773,8 @@ def main() -> tuple[int, list]:
         with open(trading_config_path, "r", encoding="utf-8") as f:
             tc = yaml.safe_load(f)
         account_value = float(tc.get("trading", {}).get("initial_capital", 100_000))
+    account_value *= float(args.regime_multiplier)
+    print(f"[REGIME] multiplier={args.regime_multiplier} effective_nav={account_value}", flush=True)
 
     if args.rebalance:
         # Rebalance mode: pull last valid weights from cache (no fresh signal generation)

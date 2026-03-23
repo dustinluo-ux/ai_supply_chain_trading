@@ -73,6 +73,25 @@ def main() -> int:
     if _news_code != 0:
         print("WARNING: News data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
 
+    try:
+        from download_spy import ensure_spy_csv
+
+        ensure_spy_csv()
+    except Exception as _be_spy:
+        print(f"WARNING: Could not ensure SPY benchmark CSV: {_be_spy}", file=sys.stderr, flush=True)
+    try:
+        from download_vix import ensure_vix_csv
+
+        ensure_vix_csv()
+    except Exception as _be_vix:
+        print(f"WARNING: Could not ensure VIX benchmark CSV: {_be_vix}", file=sys.stderr, flush=True)
+    try:
+        from download_smh import ensure_smh_csv
+
+        ensure_smh_csv()
+    except Exception as _be_smh:
+        print(f"WARNING: Could not ensure SMH benchmark CSV: {_be_smh}", file=sys.stderr, flush=True)
+
     import datetime as _dt
     _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"
     parser = argparse.ArgumentParser(
@@ -100,6 +119,38 @@ def main() -> int:
     if not tickers:
         print("ERROR: No tickers provided.", flush=True)
         return 1
+
+    regime_state = {
+        "regime_state": "Expansion",
+        "multiplier": 1.0,
+        "score_floor": 0.50,
+        "max_longs": int(args.top_n),
+        "n_shorts": 0,
+        "meta_weights": {"core": 0.50, "extension": 0.30, "ballast": 0.20},
+    }
+    try:
+        import pandas as pd
+        import run_execution
+        from src.execution.regime_controller import RegimeController
+
+        _cfg_reg = run_execution.load_config()
+        _data_dir_reg = _cfg_reg["data_dir"]
+        _tick_reg = [t.strip() for t in tickers.split(",") if t.strip()]
+        _prices_reg = run_execution.load_prices(_data_dir_reg, _tick_reg)
+        if args.date:
+            _as_reg = pd.to_datetime(args.date).normalize()
+        elif _prices_reg:
+            _all_d_reg = sorted(set().union(*[df.index for df in _prices_reg.values() if df is not None and not df.empty]))
+            _mons_reg = pd.date_range(min(_all_d_reg), max(_all_d_reg), freq="W-MON")
+            _as_reg = _mons_reg[-1] if len(_mons_reg) else pd.Timestamp(_all_d_reg[-1])
+        else:
+            _as_reg = pd.Timestamp.today().normalize()
+        _as_reg_cap = _as_of_capped_for_overlay(_as_reg)
+        _reg_ctrl = RegimeController(prices_dict=_prices_reg or {}, as_of=_as_reg_cap)
+        regime_state = _reg_ctrl.compute(_as_reg_cap)
+        _reg_ctrl.write_regime_status(regime_state, ROOT / "outputs" / "regime_status.json")
+    except Exception as _reg_e:
+        print(f"[REGIME][WARN] {str(_reg_e)}", flush=True)
 
     # Factory evaluation: ensure a winner is cached; only run expensive tournament if cache stale/missing
     _factory_cache_path = ROOT / "models" / "factory_winner.json"
@@ -199,13 +250,10 @@ def main() -> int:
         )
         scores = pd.Series(aux.get("scores", {}))
         scores_df = pd.DataFrame([aux.get("scores", {})], index=[as_of]) if scores.size else pd.DataFrame()
-        from src.execution.risk_manager import RiskOverlay
         from src.portfolio.long_short_optimizer import rebalance_long_short
-        _risk_ov_d = RiskOverlay(prices_dict=prices_dict)
-        _risk_eval_d = _risk_ov_d.evaluate(_as_of_capped_for_overlay(as_of))
-        _bottom_n_d = 0 if _risk_eval_d["tier1_trend"] == "BULL" else 3
+        _bottom_n_d = int(regime_state.get("n_shorts", 0))
         print(
-            f"[TRACK D] Regime={_risk_eval_d['tier1_trend']} → n_shorts={_bottom_n_d}",
+            f"[TRACK D] Regime={regime_state.get('regime_state', 'Expansion')} → n_shorts={_bottom_n_d}",
             flush=True,
         )
         config_d_run = {**config_d, "bottom_n": _bottom_n_d}
@@ -221,7 +269,8 @@ def main() -> int:
     argv = [
         "run_execution",
         "--tickers", tickers,
-        "--top-n", str(args.top_n),
+        "--top-n", str(int(regime_state.get("max_longs", args.top_n))),
+        "--regime-multiplier", str(float(regime_state.get("multiplier", 1.0))),
     ]
     if args.date:
         argv.extend(["--date", args.date])
@@ -283,6 +332,13 @@ def main() -> int:
             "date": args.date,
             "dry_run": not args.live,
             "mode": "paper" if args.live else "mock",
+            "risk_regime": {
+                "regime_state": regime_state.get("regime_state"),
+                "multiplier": regime_state.get("multiplier"),
+                "score_floor": regime_state.get("score_floor"),
+                "n_shorts": regime_state.get("n_shorts"),
+                "meta_weights": regime_state.get("meta_weights"),
+            },
         }
         log_audit_record(
             run_id=_run_id,
