@@ -13,6 +13,7 @@ import os
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -55,6 +56,74 @@ from src.data.csv_provider import (
     ensure_ohlcv,
 )
 from src.utils.audit_logger import log_audit_record
+
+
+def _preflight_data_check(
+    tickers: list[str],
+    data_dir: Path,
+    start_date: str | None,
+    end_date: str | None,
+) -> None:
+    """
+    Ensure each ticker has >= 60 rows between requested start/end bounds.
+    If insufficient, refresh only those tickers via scripts/refresh_stale_tickers.py.
+    """
+    start_ts = pd.to_datetime(start_date).normalize() if start_date else None
+    end_ts = pd.to_datetime(end_date).normalize() if end_date else None
+
+    def _rows_in_window(ticker: str) -> tuple[bool, int, str]:
+        path = find_csv_path(str(data_dir), ticker)
+        if not path:
+            return False, 0, "csv_not_found"
+        try:
+            df = pd.read_csv(path, index_col=0, parse_dates=False)
+            idx = pd.to_datetime(df.index, format="mixed", dayfirst=True, errors="coerce")
+            idx = pd.to_datetime(idx, utc=True, errors="coerce").tz_localize(None)
+            idx = pd.DatetimeIndex(idx).dropna()
+            if len(idx) == 0:
+                return False, 0, "no_valid_dates"
+            mask = pd.Series(True, index=idx)
+            if start_ts is not None:
+                mask &= idx >= start_ts
+            if end_ts is not None:
+                mask &= idx <= end_ts
+            rows = int(mask.sum())
+            return rows >= 60, rows, str(path)
+        except Exception:
+            return False, 0, f"read_error:{path}"
+
+    passed: list[str] = []
+    refresh_needed: list[str] = []
+    failed_after_refresh: list[str] = []
+
+    for t in tickers:
+        ok, rows, _meta = _rows_in_window(t)
+        if ok:
+            passed.append(t)
+        else:
+            refresh_needed.append(t)
+            print(f"[PREFLIGHT] {t}: insufficient rows={rows} in requested window; marked for refresh", flush=True)
+
+    refreshed: list[str] = []
+    if refresh_needed:
+        script = ROOT / "scripts" / "refresh_stale_tickers.py"
+        cmd = [sys.executable, str(script), "--tickers", *refresh_needed]
+        try:
+            subprocess.run(cmd, cwd=str(ROOT), check=False)
+        except Exception as e:
+            print(f"[PREFLIGHT][WARN] Refresh invocation failed: {e}", flush=True)
+        for t in refresh_needed:
+            ok, rows, _meta = _rows_in_window(t)
+            if ok:
+                refreshed.append(t)
+            else:
+                failed_after_refresh.append(t)
+                print(f"[PREFLIGHT][WARN] {t}: still insufficient rows={rows} after refresh", flush=True)
+
+    print("[PREFLIGHT] Data coverage report", flush=True)
+    print(f"  passed:    {passed if passed else []}", flush=True)
+    print(f"  refreshed: {refreshed if refreshed else []}", flush=True)
+    print(f"  failed:    {failed_after_refresh if failed_after_refresh else []}", flush=True)
 
 
 def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
@@ -837,6 +906,7 @@ def main():
         config = load_config()
         data_dir = config["data_dir"]
     data_dir = Path(data_dir)
+    _preflight_data_check(raw_tickers, data_dir, args.start, args.end)
 
     tickers = []
     for t in raw_tickers:
