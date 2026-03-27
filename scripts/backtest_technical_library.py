@@ -209,7 +209,7 @@ def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
     return out
 
 
-def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
+def _spy_benchmark_series(data_dir: Path, sma_window: int = 200) -> tuple[pd.Series, pd.Series] | None:
     """Load SPY; return (close, sma200) aligned to SPY index. None if SPY not found."""
     path = find_csv_path(data_dir, BENCHMARK_TICKER)
     if not path:
@@ -219,12 +219,12 @@ def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
         df.index = pd.to_datetime(df.index, format="mixed", dayfirst=True)
         df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
         df.columns = [c.lower() for c in df.columns]
-        if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:
+        if "close" not in df.columns or len(df) < int(sma_window):
             return None
         close = df["close"]
         if isinstance(close, pd.DataFrame):
             close = close.iloc[:, 0]
-        sma = close.rolling(SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS).mean()
+        sma = close.rolling(int(sma_window), min_periods=int(sma_window)).mean()
         return (close, sma)
     except Exception:
         return None
@@ -335,6 +335,9 @@ def run_backtest_master_score(
     use_ml_override: bool | None = None,
     track: str | None = None,
     max_global_positions: int = MAX_GLOBAL_POSITIONS,
+    sma_window: int = 200,
+    score_floor: float | None = None,
+    regime_multiplier: float = 0.5,
 ) -> dict:
     from src.signals.technical_library import (
         calculate_all_indicators,
@@ -402,7 +405,7 @@ def run_backtest_master_score(
         return {"sharpe": 0.0, "total_return": 0.0, "max_drawdown": 0.0, "weekly_returns": [], "error": "Not enough weeks"}
 
     # Market Kill-Switch: SPY 200-day SMA (optional)
-    spy_bench = _spy_benchmark_series(data_dir) if data_dir else None
+    spy_bench = _spy_benchmark_series(data_dir, sma_window=sma_window) if data_dir else None
     spy_close_native = None  # Raw SPY close for HMM (no reindex)
     if spy_bench is not None:
         spy_close_series, spy_sma_series = spy_bench
@@ -426,7 +429,7 @@ def run_backtest_master_score(
             print(f"  DynamicSelector: ON (regime_ledger) | override news_weight + sideways_risk_scale from winning profile", flush=True)
     signals_df = pd.DataFrame(0.0, index=mondays, columns=tickers)
     if not llm_enabled and verbose:
-        print("  [CONFIG] Backtest running with LLM disabled (--no-llm); Gemini will not be called.", flush=True)
+        print("  [CONFIG] Backtest running with LLM disabled; Gemini will not be called.", flush=True)
     backtest_news_signals = _load_news_signals(news_dir, tickers) if news_dir else {}
     # Wire EODHD historical news (fills in where Marketaux flat files are absent)
     from src.data.eodhd_news_loader import load_eodhd_news_signals as _load_eodhd
@@ -598,6 +601,8 @@ def run_backtest_master_score(
                 "kill_switch_active": kill_switch_active,
             }
             gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
+            if score_floor is not None:
+                gated_scores = {k: v for k, v in gated_scores.items() if float(v) >= float(score_floor)}
             action = flags.get("action", "Trade")
 
             # Cap how many non-US tickers can survive in gated_scores before top-N selection.
@@ -645,7 +650,7 @@ def run_backtest_master_score(
 
             if effective_regime_state == "BEAR":
                 for t in tickers:
-                    intent.weights[t] = float(intent.weights.get(t, 0.0)) * 0.5
+                    intent.weights[t] = float(intent.weights.get(t, 0.0)) * float(regime_multiplier)
             if effective_regime_state != "BEAR" and intent.tickers and not use_hrp_sizing:
                 atr_per_share: dict[str, float] = {}
                 prices_at_monday: dict[str, float] = {}
@@ -684,18 +689,18 @@ def run_backtest_master_score(
             if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
                 for t in tickers:
                     signals_df.loc[monday, t] *= 1.0 / _ws
-            elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - 0.5) > 1e-5:
+            elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - float(regime_multiplier)) > 1e-5:
                 # Dynamic propagated tickers (not in `tickers`) may absorb part of the BEAR-halved
-                # weight; renormalize the tracked subset to the intended 0.5 exposure target.
+                # weight; renormalize the tracked subset to the intended fractional exposure target.
                 for t in tickers:
-                    signals_df.loc[monday, t] *= 0.5 / _ws
+                    signals_df.loc[monday, t] *= float(regime_multiplier) / _ws
             weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
             if action == "Cash":
                 assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
             elif effective_regime_state == "BEAR":
                 # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
-                assert abs(weight_sum - 0.5) < 1e-5 or abs(weight_sum) < 1e-6, \
-                    f"Expected sum(weights)≈0.5 (or 0) when BEAR (fractional), got {weight_sum}"
+                assert abs(weight_sum - float(regime_multiplier)) < 1e-5 or abs(weight_sum) < 1e-6, \
+                    f"Expected sum(weights)≈{float(regime_multiplier)} (or 0) when BEAR (fractional), got {weight_sum}"
             else:
                 # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
                 assert abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6, \
@@ -866,11 +871,15 @@ def main():
     parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
     parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
+    parser.add_argument("--sentiment-engine", choices=["none", "finbert", "gemini"], default="none", help="Sentiment mode: none, finbert, or gemini")
     parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
     parser.add_argument("--no-ml", action="store_true", default=False, help="Disable ML blend (Technical+News only; use_ml_override=False)")
     parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
     parser.add_argument("--track", choices=["A", "B", "D"], default=None, help="Model track override: A=absolute, B=residual, D=Dynamic Alpha-Sleeve 130/30 long/short. Reads path from config/model_config.yaml tracks section.")
     parser.add_argument("--max-global-positions", type=int, default=MAX_GLOBAL_POSITIONS, help="Maximum number of non-US tickers allowed in gated_scores before top-N selection")
+    parser.add_argument("--sma-window", type=int, default=200, help="Kill-switch SMA lookback window")
+    parser.add_argument("--score-floor", type=float, default=None, help="Minimum score threshold after policy gating")
+    parser.add_argument("--regime-multiplier", type=float, default=0.5, help="Exposure multiplier when SPY is below SMA")
     args = parser.parse_args()
 
     # Resolve model path override from --track flag (A/B only; D uses rebalance_alpha_sleeve, not model path)
@@ -988,6 +997,10 @@ def main():
             print("ERROR: No tickers with price data on or after window start.")
             return 1
 
+    sentiment_engine = args.sentiment_engine
+    if args.no_llm:
+        sentiment_engine = "none"
+
     # Resolve news_dir: CLI override, else config/config.yaml (news.enabled + news.data_dir)
     news_dir_resolved: Path | str | None = None
     if args.news_dir is not None:
@@ -1009,12 +1022,16 @@ def main():
         except Exception:
             pass
 
-    # When --no-llm, force news_weight 0 so overlay is off; else use CLI or default (None → 0.20 in loop)
-    news_weight_fixed_resolved = 0.0 if args.no_llm else args.news_weight
-
-    # When news_weight is 0 (e.g. --no-llm), suppress news_dir entirely so FinBERT is never loaded
-    if news_weight_fixed_resolved == 0.0:
+    if sentiment_engine == "none":
+        llm_enabled_resolved = False
+        news_weight_fixed_resolved = 0.0
         news_dir_resolved = None
+    elif sentiment_engine == "finbert":
+        llm_enabled_resolved = False
+        news_weight_fixed_resolved = args.news_weight
+    else:
+        llm_enabled_resolved = True
+        news_weight_fixed_resolved = args.news_weight
 
     run_kw: dict = {
         "prices_dict": prices_dict,
@@ -1026,11 +1043,14 @@ def main():
         "weight_mode": args.weight_mode,
         "rolling_method": args.rolling_method,
         "news_weight_fixed": news_weight_fixed_resolved,
-        "llm_enabled": not args.no_llm,
+        "llm_enabled": llm_enabled_resolved,
         "model_path_override": _track_model_path_override,
         "use_ml_override": False if args.no_ml else None,
         "track": args.track,
         "max_global_positions": args.max_global_positions,
+        "sma_window": args.sma_window,
+        "score_floor": args.score_floor,
+        "regime_multiplier": args.regime_multiplier,
     }
     if args.signal_horizon_days is not None:
         run_kw["signal_horizon_days"] = args.signal_horizon_days
@@ -1067,6 +1087,7 @@ def main():
         "start": args.start,
         "end": args.end,
         "weight_mode": args.weight_mode,
+        "sentiment_engine": sentiment_engine,
         "news_dir": str(news_dir_resolved) if news_dir_resolved is not None else None,
         "news_weight": news_weight_fixed_resolved,
     }

@@ -6,13 +6,11 @@ import json
 import os
 import subprocess
 import sys
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import pandas as pd
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_SCRIPT = ROOT / "scripts" / "backtest_technical_library.py"
@@ -25,6 +23,7 @@ SMA_WINDOWS = [100, 150, 200]
 SCORE_FLOORS = [0.50, 0.55, 0.60, 0.65]
 REGIME_MULTIPLIERS = [0.5, 0.6, 0.7, 1.0]
 TOP_NS = [3, 5, 7]
+SENTIMENT_ENGINES = ["none", "finbert"]
 
 IS_START = "2022-01-01"
 IS_END = "2023-12-31"
@@ -38,6 +37,7 @@ class ParamSet:
     score_floor: float
     regime_multiplier: float
     top_n: int
+    sentiment_engine: str
 
 
 def _annualized_return(total_return: float, start_date: str, end_date: str) -> float:
@@ -70,6 +70,12 @@ def _run_backtest_for_params(
             str(BACKTEST_SCRIPT),
             "--top-n",
             str(p.top_n),
+            "--sma-window",
+            str(p.sma_window),
+            "--score-floor",
+            str(p.score_floor),
+            "--sentiment-engine",
+            str(p.sentiment_engine),
             "--start",
             start_date,
             "--end",
@@ -78,13 +84,13 @@ def _run_backtest_for_params(
             str(out_json),
             "--no-safety-report",
         ]
+        cmd.extend(["--regime-multiplier", str(p.regime_multiplier)])
         if no_llm:
             cmd.append("--no-llm")
         if no_ml:
             cmd.append("--no-ml")
         env = os.environ.copy()
-        with _temporary_strategy_params_override(p):
-            proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
+        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
         if proc.returncode != 0:
             return {
                 "sharpe": 0.0,
@@ -108,48 +114,10 @@ def _run_backtest_for_params(
             pass
 
 
-@contextmanager
-def _temporary_strategy_params_override(p: ParamSet):
-    """
-    Temporarily apply optimization params to config/strategy_params.yaml so each
-    subprocess run actually evaluates this parameter set.
-    """
-    cfg_path = ROOT / "config" / "strategy_params.yaml"
-    original_text: str | None = None
-    if cfg_path.exists():
-        original_text = cfg_path.read_text(encoding="utf-8")
-    try:
-        data: dict = {}
-        if original_text:
-            data = yaml.safe_load(original_text) or {}
-        risk_overlay = data.get("risk_overlay") or {}
-        regime = data.get("regime") or {}
-        risk_overlay["spy_sma_window"] = int(p.sma_window)
-        regime["score_floor_contraction"] = float(p.score_floor)
-        risk_overlay["vix_multiplier"] = float(p.regime_multiplier)
-        data["risk_overlay"] = risk_overlay
-        data["regime"] = regime
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False)
-        yield
-    finally:
-        if original_text is None:
-            try:
-                cfg_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        else:
-            try:
-                cfg_path.write_text(original_text, encoding="utf-8")
-            except Exception:
-                pass
-
-
 def _all_param_sets() -> list[ParamSet]:
     out: list[ParamSet] = []
-    for sma_window, score_floor, regime_multiplier, top_n in itertools.product(
-        SMA_WINDOWS, SCORE_FLOORS, REGIME_MULTIPLIERS, TOP_NS
+    for sma_window, score_floor, regime_multiplier, top_n, sentiment_engine in itertools.product(
+        SMA_WINDOWS, SCORE_FLOORS, REGIME_MULTIPLIERS, TOP_NS, SENTIMENT_ENGINES
     ):
         out.append(
             ParamSet(
@@ -157,6 +125,7 @@ def _all_param_sets() -> list[ParamSet]:
                 score_floor=float(score_floor),
                 regime_multiplier=float(regime_multiplier),
                 top_n=int(top_n),
+                sentiment_engine=str(sentiment_engine),
             )
         )
     return out
@@ -172,6 +141,7 @@ def _rows_from_results(params: list[ParamSet], start_date: str, end_date: str, n
             "score_floor": p.score_floor,
             "regime_multiplier": p.regime_multiplier,
             "top_n": p.top_n,
+            "sentiment_engine": p.sentiment_engine,
             "sharpe": metrics["sharpe"],
             "total_return": metrics["total_return"],
             "max_drawdown": metrics["max_drawdown"],
@@ -180,13 +150,15 @@ def _rows_from_results(params: list[ParamSet], start_date: str, end_date: str, n
         rows.append(row)
         print(
             f"[{i}/{len(params)}] sma={p.sma_window} floor={p.score_floor:.2f} "
-            f"mult={p.regime_multiplier:.2f} top_n={p.top_n} calmar={calmar:.4f}",
+            f"mult={p.regime_multiplier:.2f} top_n={p.top_n} sentiment={p.sentiment_engine} calmar={calmar:.4f}",
             flush=True,
         )
     return rows
 
 
 def _apply_best_params(best: dict) -> None:
+    import yaml
+
     cfg_path = ROOT / "config" / "strategy_params.yaml"
     data: dict = {}
     if cfg_path.exists():
@@ -233,6 +205,7 @@ def main() -> int:
             score_floor=float(row["score_floor"]),
             regime_multiplier=float(row["regime_multiplier"]),
             top_n=int(row["top_n"]),
+            sentiment_engine=str(row["sentiment_engine"]),
         )
         metrics = _run_backtest_for_params(p, OOS_START, OOS_END, no_llm=args.no_llm, no_ml=args.no_ml)
         calmar = _calmar(metrics["total_return"], metrics["max_drawdown"], OOS_START, OOS_END)
@@ -242,6 +215,7 @@ def main() -> int:
                 "score_floor": p.score_floor,
                 "regime_multiplier": p.regime_multiplier,
                 "top_n": p.top_n,
+                "sentiment_engine": p.sentiment_engine,
                 "sharpe": metrics["sharpe"],
                 "total_return": metrics["total_return"],
                 "max_drawdown": metrics["max_drawdown"],
@@ -251,7 +225,7 @@ def main() -> int:
         )
         print(
             f"[OOS {i+1}/{len(top5)}] sma={p.sma_window} floor={p.score_floor:.2f} "
-            f"mult={p.regime_multiplier:.2f} top_n={p.top_n} calmar={calmar:.4f}",
+            f"mult={p.regime_multiplier:.2f} top_n={p.top_n} sentiment={p.sentiment_engine} calmar={calmar:.4f}",
             flush=True,
         )
 
@@ -262,7 +236,7 @@ def main() -> int:
     print("\nTop-5 Summary (In-sample vs Out-of-sample Calmar)", flush=True)
     print(
         oos_df[
-            ["sma_window", "score_floor", "regime_multiplier", "top_n", "insample_calmar", "calmar"]
+            ["sma_window", "score_floor", "regime_multiplier", "top_n", "sentiment_engine", "insample_calmar", "calmar"]
         ].to_string(index=False),
         flush=True,
     )
