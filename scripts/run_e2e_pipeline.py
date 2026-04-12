@@ -280,6 +280,32 @@ def main() -> int:
             except Exception:
                 pass
 
+    # --- Stage 3.5: Skeptic Gate ---
+    _weights_path = ROOT / "outputs" / "last_valid_weights.json"
+    _gate_weights: dict[str, float] = {}
+    if _weights_path.exists():
+        try:
+            with open(_weights_path, encoding="utf-8") as _wf:
+                _lw = json.load(_wf)
+            _wmap = _lw.get("weights") if isinstance(_lw, dict) else {}
+            _gate_weights = {k: float(v) for k, v in _wmap.items()}
+        except Exception as _we:
+            print(f"WARNING: Could not read last_valid_weights.json for gate: {_we}", flush=True)
+    if not _gate_weights:
+        _n = max(len(ticker_list), 1)
+        _gate_weights = {t: 1.0 / _n for t in ticker_list}
+    from src.agents.skeptic_gate import run_gate as _run_gate
+
+    _gate_result = _run_gate(_gate_weights, ticker_list)
+    print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} — {_gate_result.reason}", flush=True)
+    if _gate_result.verdict == "FAIL":
+        print(
+            f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
     # --- Stage 4 ---
     import run_execution
 
