@@ -1,3 +1,4 @@
+# Staged: not yet wired into active pipelines. Entry point is get_prices(). Do not delete — tests pass, future integration planned.
 """
 Price fetch with vendor fallback: local CSV → Marketaux → YFinance → Alpha Vantage.
 """

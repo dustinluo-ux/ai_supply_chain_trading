@@ -23,6 +23,12 @@ sys.path.insert(0, str(ROOT))
 
 from src.monitoring.incident_logger import log_incident
 from src.core.portfolio_engine import _load_futures_multipliers
+from src.data.csv_provider import (
+    load_data_config,
+    find_csv_path,
+    load_prices,
+    ensure_ohlcv,
+)
 
 # Cache for --rebalance: last valid weights from last non-rebalance run
 LAST_VALID_WEIGHTS_PATH = ROOT / "outputs" / "last_valid_weights.json"
@@ -56,60 +62,7 @@ def _instrument_type(symbol: str) -> str:
     return "equity"
 
 
-def load_config():
-    path = ROOT / "config" / "data_config.yaml"
-    if not path.exists():
-        return {"data_dir": ROOT / "data" / "stock_market_data"}
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    ds = data.get("data_sources", {})
-    data_dir = Path(ds.get("data_dir", str(ROOT / "data" / "stock_market_data")))
-    return {"data_dir": data_dir}
-
-
-def find_csv_path(data_dir: Path, ticker: str) -> Path | None:
-    for sub in ["nasdaq/csv", "sp500/csv", "nyse/csv", "forbes2000/csv"]:
-        p = data_dir / sub / f"{ticker}.csv"
-        if p.exists():
-            return p
-    return None
-
-
-def load_prices(data_dir: Path, tickers: list[str]) -> dict[str, pd.DataFrame]:
-    out = {}
-    for t in tickers:
-        path = find_csv_path(data_dir, t)
-        if not path:
-            continue
-        try:
-            df = pd.read_csv(path, index_col=0, parse_dates=False)
-            df.index = pd.to_datetime(df.index, format="mixed", dayfirst=True)
-            df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
-            df.columns = [c.lower() for c in df.columns]
-            if "close" not in df.columns:
-                continue
-            for c in ["open", "high", "low"]:
-                if c not in df.columns:
-                    df[c] = df["close"]
-            if "volume" not in df.columns:
-                df["volume"] = 0.0
-            if df.empty or len(df) < 60:
-                continue
-            out[t] = df
-        except Exception:
-            continue
-    return out
-
-
-def ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.lower() for c in df.columns]
-    for c in ["open", "high", "low"]:
-        if c not in df.columns and "close" in df.columns:
-            df[c] = df["close"]
-    if "volume" not in df.columns:
-        df["volume"] = 0.0
-    return df
+# load_config, find_csv_path, load_prices, ensure_ohlcv imported from src.data.csv_provider above
 
 
 def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
@@ -719,7 +672,7 @@ def main() -> tuple[int, list]:
         print("ERROR: No tickers provided.", flush=True)
         return (1, [])
 
-    config = load_config()
+    config = load_data_config()
     data_dir = config["data_dir"]
     prices_dict = load_prices(data_dir, tickers)
 

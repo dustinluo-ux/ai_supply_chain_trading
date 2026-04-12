@@ -47,7 +47,7 @@ logging:
   log_dir: logs/models/
 tracks:
   A:
-    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_20260322_191021.pkl
+    model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\catboost_20260412_001533.pkl
   B:
     model_path: C:\Users\dusro\OneDrive\Programming\ai_supply_chain_trading\models\saved\ridge_optimized_20260227_230227.pkl
   D:
