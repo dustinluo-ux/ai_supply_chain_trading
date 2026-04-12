@@ -41,6 +41,15 @@ def main() -> int:
     with open(results_path, encoding="utf-8") as f:
         data = json.load(f)
     winner = data.get("winner") or {}
+    composite = winner.get("composite", -999.0)
+    exit_code = winner.get("exit_code", 1)
+    if composite <= -998.0 or exit_code != 0:
+        print(
+            f"[PROMOTER] Skipping promotion -- no valid winner "
+            f"(composite={composite}, exit_code={exit_code})",
+            flush=True,
+        )
+        return 0
     params = winner.get("params")
     if not isinstance(params, dict) or not params:
         print("[PROMOTER] ERROR: winner.params missing or empty in results file.", flush=True)

@@ -46,16 +46,14 @@ pod_overrides:
   frozen_pods_resume: []
 risk_overlay:
   vix_elevated_threshold: 28
-  spy_sma_window: 200
+  spy_sma_window: 100
   sector_corr_threshold: 0.85
   corr_lookback_days: 60
   vix_multiplier: 0.6
+regime:
+  score_floor_contraction: 0.65
 optimizer_promotion:
-  top_n: 5
-  score_floor: 0.2
-  no_llm: true
-  track: A
-  no_hedge: false
-  train_years: 4
-  promoted_at: '2026-04-12T10:17:21.667591+00:00'
-  source_results: C:/Users/dusro/OneDrive/Programming/ai_supply_chain_trading/outputs/optimizer_results.json
+  top_n: 3
+  score_floor: 0.65
+  sma_window: 100
+  source: optimize_params.py
