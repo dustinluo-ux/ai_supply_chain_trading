@@ -145,7 +145,7 @@ def main() -> int:
                 yaml.dump(main_cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             print(f"[Config] Updated tracks.{args.track}.model_path to {save_path}", flush=True)
         else:
-            print(f"[FAIL] IC={ic:.4f} below gate — keeping existing model", flush=True)
+            print(f"[FAIL] IC={ic:.4f} below gate - keeping existing model", flush=True)
 
         entry = {
             "date": today.isoformat(),

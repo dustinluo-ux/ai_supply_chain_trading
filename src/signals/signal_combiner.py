@@ -395,7 +395,7 @@ if __name__ == "__main__":
     top_stocks = combiner.get_top_stocks(date="2024-01-15", top_n=10)
     
     if not top_stocks.empty:
-        print(f"\n✅ Top {len(top_stocks)} stocks:")
+        print(f"\n[OK] Top {len(top_stocks)} stocks:")
         print(top_stocks[['ticker', 'composite_signal', 'rank']].head())
     else:
         print("No signals available. Run previous pipeline steps first.")

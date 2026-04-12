@@ -25,7 +25,7 @@ if __name__ == "__main__":
         fetcher = NewsFetcher()  # Reads from config.yaml
         test_tickers = ['NVDA', 'AMD', 'MU']
         results = fetcher.fetch_all_tickers(test_tickers, "2024-01-01", "2024-01-31")
-        print(f"\n✅ Fetched news for {len(results)} tickers")
+        print(f"\n[OK] Fetched news for {len(results)} tickers")
     except Exception as e:
         print(f"ERROR: {e}")
         print("\nAvailable sources:", NewsFetcherFactory.list_available_sources())

@@ -506,7 +506,7 @@ def _render_command_center(
         # ── Plain text fallback ───────────────────────────────────────────────
         sep = "=" * 80
         print(sep)
-        print(f"  COMMAND CENTER — {today_str}")
+        print(f"  COMMAND CENTER - {today_str}")
         print(sep)
         print(f"  Symlink  : {'OK' if symlink_ok else 'FAIL'}  {symlink_str}")
         print(f"  Model    : {'OK' if model_ok else 'FAIL'}  {model_str}")
@@ -518,9 +518,9 @@ def _render_command_center(
             f"  News     : {news_today} articles today  "
             f"{news_tickers_count} tickers covered"
         )
-        print(f"  Fills    : {fills_detail}  {'✓' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}")
-        print(f"  PnL      : {pnl_detail}  {'✓' if pnl_icon == '[green]✓[/]' else ('✗' if pnl_icon == '[red]✗[/]' else '-')}")
-        print(f"  Risk     : {risk_detail}  {'✓' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}")
+        print(f"  Fills    : {fills_detail}  {'OK' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}")
+        print(f"  PnL      : {pnl_detail}  {'OK' if pnl_icon == '[green]✓[/]' else ('FAIL' if pnl_icon == '[red]✗[/]' else '-')}")
+        print(f"  Risk     : {risk_detail}  {'OK' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}")
         print(f"  Regime   : {regime_detail}")
         print()
         if last_signal:
@@ -551,7 +551,7 @@ def _render_command_center(
             )
         for t in signal_tickers:
             if stale_flags.get(t):
-                print(f"WARNING: {t} — news stale (last article >7 days ago)")
+                print(f"WARNING: {t} - news stale (last article >7 days ago)")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

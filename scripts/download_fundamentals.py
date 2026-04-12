@@ -29,7 +29,7 @@ load_dotenv(ROOT / ".env")
 
 TOKEN = os.getenv("EODHD_API_KEY", "")
 if not TOKEN:
-    print("[ERROR] EODHD_API_KEY not found in .env — aborting.", flush=True)
+    print("[ERROR] EODHD_API_KEY not found in .env - aborting.", flush=True)
     sys.exit(1)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
@@ -123,7 +123,7 @@ FIELDNAMES = [
 
 
 def main():
-    print(f"[DOWNLOAD] EODHD Bulk Fundamentals — PIT Scouting Data", flush=True)
+    print(f"[DOWNLOAD] EODHD Bulk Fundamentals - PIT Scouting Data", flush=True)
     print(f"[DOWNLOAD] Output: {OUT_CSV}", flush=True)
     print(f"[DOWNLOAD] Started: {datetime.now().isoformat()}", flush=True)
     print("=" * 60, flush=True)
@@ -145,7 +145,7 @@ def main():
                 page = fetch_page(ex_code, offset)
 
                 if not page:
-                    print("empty — done.", flush=True)
+                    print("empty - done.", flush=True)
                     break
 
                 written_this_page = 0

@@ -77,7 +77,7 @@ def _train_eval_and_save(
     )
     passed = ic >= IC_GATE
     msg = "PASS: proceed to Phase 3 wiring" if passed else "FAIL: do not wire ML model"
-    print(f"[GATE][{model_type}] IC={ic:.4f} — {msg}", flush=True)
+    print(f"[GATE][{model_type}] IC={ic:.4f} - {msg}", flush=True)
 
     if passed:
         save_dir_cfg = str(pipeline.config["training"]["model_save_dir"])
@@ -91,7 +91,7 @@ def _train_eval_and_save(
             save_path = save_dir / f"{model_type}_{timestamp}.pkl"
             model.save_model(str(save_path))
             if not save_path.exists():
-                print(f"[ERROR] Save failed — file not found at {save_path}", flush=True)
+                print(f"[ERROR] Save failed - file not found at {save_path}", flush=True)
                 return ic, False, None
             ic_json_path = save_path.with_suffix(".json")
             tmp_json = ic_json_path.with_name(ic_json_path.name + ".tmp")

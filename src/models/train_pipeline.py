@@ -443,7 +443,7 @@ class ModelTrainingPipeline:
             ic, _ = spearmanr(pred, y_test)
             ic_f = float(ic) if not np.isnan(ic) else 0.0
             ic_list.append(ic_f)
-            print(f"[IC] fold {len(ic_list)} (test {fold_start.date()}–{test_end_fold.date()}) Spearman IC = {ic_f:.4f} (n={len(y_test)})")
+            print(f"[IC] fold {len(ic_list)} (test {fold_start.date()} - {test_end_fold.date()}) Spearman IC = {ic_f:.4f} (n={len(y_test)})")
             fold_start = test_end_fold
 
         if not ic_list:

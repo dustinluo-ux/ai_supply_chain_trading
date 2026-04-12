@@ -223,7 +223,7 @@ def main() -> int:
                 config_path=_model_cfg_path,
             )
             if _winner_type != "tech_only":
-                print(f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} — model active", flush=True)
+                print(f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} - model active", flush=True)
             else:
                 print("[REBALANCE] Factory returned tech_only (no ML model passed IC gate)", flush=True)
         except Exception as _e:

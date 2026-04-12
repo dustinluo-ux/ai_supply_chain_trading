@@ -114,9 +114,9 @@ class BaseReturnPredictor(ABC):
             self.test_metrics = self._calculate_metrics(y_val, y_pred_val, "validation")
         
         print(f"[{self.model_name}] Training complete.")
-        print(f"  Train R²: {self.train_metrics['r2']:.4f}")
+        print(f"  Train R^2: {self.train_metrics['r2']:.4f}")
         if self.test_metrics:
-            print(f"  Val R²: {self.test_metrics['r2']:.4f}")
+            print(f"  Val R^2: {self.test_metrics['r2']:.4f}")
         
         return {
             'train': self.train_metrics,

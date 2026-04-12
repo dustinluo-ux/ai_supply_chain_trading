@@ -362,4 +362,4 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     fetcher = PriceFetcher()
     results = fetcher.run()
-    print(f"\n✅ Fetched data for {len(results)} tickers")
+    print(f"\n[OK] Fetched data for {len(results)} tickers")

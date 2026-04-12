@@ -744,7 +744,7 @@ def main() -> tuple[int, list]:
         for src in dq_report.critical_missing:
             import logging
             logging.getLogger(__name__).error("[DATA QUALITY] Critical source missing: %s", src)
-        print(f"[DATA QUALITY] Cannot rebalance — critical sources missing: {dq_report.critical_missing}", flush=True)
+        print(f"[DATA QUALITY] Cannot rebalance - critical sources missing: {dq_report.critical_missing}", flush=True)
         return (1, [])
     if dq_report.degraded_missing or dq_report.warnings:
         import logging
@@ -875,7 +875,7 @@ def main() -> tuple[int, list]:
                 pass
         if tracker["drawdown"] <= stop_threshold or tracker.get("flatten_active"):
             print(
-                f"[STOP-LOSS] Drawdown {tracker['drawdown']:.1%} hit threshold {stop_threshold:.0%} — FLATTEN ALL. Skipping weight generation.",
+                f"[STOP-LOSS] Drawdown {tracker['drawdown']:.1%} hit threshold {stop_threshold:.0%} - FLATTEN ALL. Skipping weight generation.",
                 flush=True,
             )
             optimal_weights_series = pd.Series(0.0, index=tickers)

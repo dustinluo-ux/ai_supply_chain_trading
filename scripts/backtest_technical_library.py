@@ -498,7 +498,7 @@ def run_backtest_master_score(
                 if ml_weights is not None:
                     category_weights_override = ml_weights
                 if verbose and ml_cv_r2 is not None:
-                    print(f"  [ML] CV R²: {ml_cv_r2:.4f}", flush=True)
+                    print(f"  [ML] CV R^2: {ml_cv_r2:.4f}", flush=True)
 
         signal_horizon_days_this_week = signal_horizon_days
         sideways_risk_scale_this_week = sideways_risk_scale
