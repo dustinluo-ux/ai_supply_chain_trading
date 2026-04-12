@@ -47,7 +47,7 @@ def analyze_tail_risk(prices_df: pd.DataFrame) -> dict[str, Any]:
         score += 1
         reasoning.append(f"Moderate fat tails (kurtosis {kurt:.1f})")
     else:
-        reasoning.append(f"Near-Gaussian tails (kurtosis {kurt:.1f}) — suspiciously thin")
+        reasoning.append(f"Near-Gaussian tails (kurtosis {kurt:.1f}) - suspiciously thin")
 
     # Skewness
     if len(returns) >= 63:
@@ -62,7 +62,7 @@ def analyze_tail_risk(prices_df: pd.DataFrame) -> dict[str, Any]:
         score += 1
         reasoning.append(f"Symmetric distribution (skew {skew:.2f})")
     else:
-        reasoning.append(f"Negative skew ({skew:.2f}) — crash-prone")
+        reasoning.append(f"Negative skew ({skew:.2f}) - crash-prone")
 
     # Tail ratio (95th percentile gains / abs(5th percentile losses))
     positive_returns = returns[returns > 0]
@@ -97,7 +97,7 @@ def analyze_tail_risk(prices_df: pd.DataFrame) -> dict[str, Any]:
         score += 1
         reasoning.append(f"Moderate drawdown ({max_dd:.1%})")
     else:
-        reasoning.append(f"Severe drawdown ({max_dd:.1%}) — fragile")
+        reasoning.append(f"Severe drawdown ({max_dd:.1%}) - fragile")
 
     return {"score": score, "max_score": 8, "details": "; ".join(reasoning)}
 
@@ -131,19 +131,19 @@ def analyze_volatility_regime(prices_df: pd.DataFrame) -> dict[str, Any]:
 
     # Vol regime scoring (max 4)
     if vol_regime < 0.7:
-        reasoning.append(f"Dangerously low vol (regime {vol_regime:.2f}) — turkey problem")
+        reasoning.append(f"Dangerously low vol (regime {vol_regime:.2f}) - turkey problem")
     elif vol_regime < 0.9:
         score += 1
-        reasoning.append(f"Below-average vol (regime {vol_regime:.2f}) — approaching complacency")
+        reasoning.append(f"Below-average vol (regime {vol_regime:.2f}) - approaching complacency")
     elif vol_regime <= 1.3:
         score += 3
-        reasoning.append(f"Normal vol regime ({vol_regime:.2f}) — fair pricing")
+        reasoning.append(f"Normal vol regime ({vol_regime:.2f}) - fair pricing")
     elif vol_regime <= 2.0:
         score += 4
-        reasoning.append(f"Elevated vol (regime {vol_regime:.2f}) — opportunity for the antifragile")
+        reasoning.append(f"Elevated vol (regime {vol_regime:.2f}) - opportunity for the antifragile")
     else:
         score += 2
-        reasoning.append(f"Extreme vol (regime {vol_regime:.2f}) — crisis mode")
+        reasoning.append(f"Extreme vol (regime {vol_regime:.2f}) - crisis mode")
 
     # Vol-of-vol scoring (max 2)
     if len(hist_vol.dropna()) >= 42:
@@ -156,7 +156,7 @@ def analyze_volatility_regime(prices_df: pd.DataFrame) -> dict[str, Any]:
                 if current_vov > 2 * median_vov:
                     score += 2
                     reasoning.append(
-                        f"Highly unstable vol (vol-of-vol {current_vov:.4f} vs median {median_vov:.4f}) — regime change likely"
+                        f"Highly unstable vol (vol-of-vol {current_vov:.4f} vs median {median_vov:.4f}) - regime change likely"
                     )
                 elif current_vov > median_vov:
                     score += 1
@@ -164,7 +164,7 @@ def analyze_volatility_regime(prices_df: pd.DataFrame) -> dict[str, Any]:
                 else:
                     reasoning.append(f"Stable vol-of-vol ({current_vov:.4f})")
             else:
-                reasoning.append("Vol-of-vol median is zero — unusual")
+                reasoning.append("Vol-of-vol median is zero - unusual")
         else:
             reasoning.append("Insufficient vol-of-vol data")
     else:
@@ -202,7 +202,7 @@ def analyze_black_swan_sentinel(news: list, prices_df: pd.DataFrame) -> dict[str
     # Scoring
     if neg_ratio > 0.7 and volume_spike > 2.0:
         score = 0
-        reasoning.append(f"Black swan warning — {neg_ratio:.0%} negative news, {volume_spike:.1f}x volume spike")
+        reasoning.append(f"Black swan warning - {neg_ratio:.0%} negative news, {volume_spike:.1f}x volume spike")
     elif neg_ratio > 0.5 or volume_spike > 2.5:
         score = 1
         reasoning.append(f"Elevated stress signals (neg news {neg_ratio:.0%}, volume {volume_spike:.1f}x)")
@@ -220,7 +220,7 @@ def analyze_black_swan_sentinel(news: list, prices_df: pd.DataFrame) -> dict[str
     # Contrarian bonus: high negative news but no volume panic could be opportunity
     if neg_ratio > 0.4 and volume_spike < 1.5 and score < 4:
         score = min(score + 1, 4)
-        reasoning.append("Contrarian opportunity — negative sentiment without panic selling")
+        reasoning.append("Contrarian opportunity - negative sentiment without panic selling")
 
     return {"score": score, "max_score": 4, "details": "; ".join(reasoning)}
 
@@ -247,7 +247,7 @@ def analyze_fragility(metrics: list, line_items: list) -> dict[str, Any]:
             reasoning.append(f"Moderate leverage (D/E {debt_to_equity:.2f})")
         else:
             score += 3
-            reasoning.append(f"Low leverage (D/E {debt_to_equity:.2f}) — not fragile")
+            reasoning.append(f"Low leverage (D/E {debt_to_equity:.2f}) - not fragile")
     else:
         reasoning.append("Debt-to-equity data not available")
 
@@ -256,12 +256,12 @@ def analyze_fragility(metrics: list, line_items: list) -> dict[str, Any]:
     if interest_coverage is not None:
         if interest_coverage > 10:
             score += 2
-            reasoning.append(f"Interest coverage {interest_coverage:.1f}x — debt is irrelevant")
+            reasoning.append(f"Interest coverage {interest_coverage:.1f}x - debt is irrelevant")
         elif interest_coverage > 5:
             score += 1
             reasoning.append(f"Comfortable interest coverage ({interest_coverage:.1f}x)")
         else:
-            reasoning.append(f"Low interest coverage ({interest_coverage:.1f}x) — fragile to rate changes")
+            reasoning.append(f"Low interest coverage ({interest_coverage:.1f}x) - fragile to rate changes")
     else:
         reasoning.append("Interest coverage data not available")
 
@@ -274,12 +274,12 @@ def analyze_fragility(metrics: list, line_items: list) -> dict[str, Any]:
 
         if std_eg < 0.20:
             score += 2
-            reasoning.append(f"Stable earnings (growth std {std_eg:.2f}) — robust")
+            reasoning.append(f"Stable earnings (growth std {std_eg:.2f}) - robust")
         elif std_eg < 0.50:
             score += 1
             reasoning.append(f"Moderate earnings volatility (growth std {std_eg:.2f})")
         else:
-            reasoning.append(f"Highly volatile earnings (growth std {std_eg:.2f}) — fragile")
+            reasoning.append(f"Highly volatile earnings (growth std {std_eg:.2f}) - fragile")
     else:
         reasoning.append("Insufficient earnings history for volatility analysis")
 
@@ -292,7 +292,7 @@ def analyze_fragility(metrics: list, line_items: list) -> dict[str, Any]:
         elif net_margin >= 0.05:
             reasoning.append(f"Moderate margins ({net_margin:.1%})")
         else:
-            reasoning.append(f"Paper-thin margins ({net_margin:.1%}) — one shock away from loss")
+            reasoning.append(f"Paper-thin margins ({net_margin:.1%}) - one shock away from loss")
     else:
         reasoning.append("Net margin data not available")
 
@@ -305,7 +305,7 @@ def analyze_fragility(metrics: list, line_items: list) -> dict[str, Any]:
 def analyze_skin_in_game(insider_trades: list) -> dict[str, Any]:
     """Assess insider alignment: net insider buying signals trust."""
     if not insider_trades:
-        return {"score": 1, "max_score": 4, "details": "No insider trade data — neutral assumption"}
+        return {"score": 1, "max_score": 4, "details": "No insider trade data - neutral assumption"}
 
     score = 0
     reasoning = []
@@ -319,16 +319,16 @@ def analyze_skin_in_game(insider_trades: list) -> dict[str, Any]:
         if buy_sell_ratio > 2.0:
             score = 4
             reasoning.append(
-                f"Strong skin in the game — net insider buying {net:,} shares (ratio {buy_sell_ratio:.1f}x)"
+                f"Strong skin in the game - net insider buying {net:,} shares (ratio {buy_sell_ratio:.1f}x)"
             )
         elif buy_sell_ratio > 0.5:
             score = 3
-            reasoning.append(f"Moderate insider conviction — net buying {net:,} shares")
+            reasoning.append(f"Moderate insider conviction - net buying {net:,} shares")
         else:
             score = 2
             reasoning.append(f"Net insider buying of {net:,} shares")
     else:
-        reasoning.append(f"Insiders selling — no skin in the game (net {net:,} shares)")
+        reasoning.append(f"Insiders selling - no skin in the game (net {net:,} shares)")
 
     return {"score": score, "max_score": 4, "details": "; ".join(reasoning)}
 
@@ -386,7 +386,7 @@ def analyze_antifragility(
             score += 1
             reasoning.append("Net debt but manageable relative to assets")
         else:
-            reasoning.append("Leveraged position — not antifragile")
+            reasoning.append("Leveraged position - not antifragile")
     else:
         reasoning.append("Cash/debt data not available")
 
@@ -401,7 +401,7 @@ def analyze_antifragility(
             score += 1
             reasoning.append(f"Moderate leverage (D/E {debt_to_equity:.2f})")
         else:
-            reasoning.append(f"High leverage (D/E {debt_to_equity:.2f}) — fragile")
+            reasoning.append(f"High leverage (D/E {debt_to_equity:.2f}) - fragile")
     else:
         reasoning.append("Debt-to-equity data not available")
 
@@ -414,7 +414,7 @@ def analyze_antifragility(
 
         if cv < 0.15 and mean_margin > 0.15:
             score += 3
-            reasoning.append(f"Stable high margins (avg {mean_margin:.1%}, CV {cv:.2f}) — antifragile pricing power")
+            reasoning.append(f"Stable high margins (avg {mean_margin:.1%}, CV {cv:.2f}) - antifragile pricing power")
         elif cv < 0.30 and mean_margin > 0.10:
             score += 2
             reasoning.append(f"Reasonable margin stability (avg {mean_margin:.1%}, CV {cv:.2f})")
@@ -422,7 +422,7 @@ def analyze_antifragility(
             score += 1
             reasoning.append(f"Margins somewhat stable (CV {cv:.2f}) but low (avg {mean_margin:.1%})")
         else:
-            reasoning.append(f"Volatile margins (CV {cv:.2f}) — fragile pricing power")
+            reasoning.append(f"Volatile margins (CV {cv:.2f}) - fragile pricing power")
     else:
         reasoning.append("Insufficient margin history for stability analysis")
 
@@ -478,7 +478,7 @@ def analyze_convexity(
         else:
             reasoning.append(f"Minimal R&D ({rd_ratio:.1%} of revenue)")
     else:
-        reasoning.append("R&D data not available — no penalty for non-R&D sectors")
+        reasoning.append("R&D data not available - no penalty for non-R&D sectors")
 
     if not prices_df.empty and len(prices_df) >= 20:
         returns = prices_df["close"].pct_change().dropna()
@@ -497,7 +497,7 @@ def analyze_convexity(
                 score += 1
                 reasoning.append(f"Slight positive asymmetry (up/down ratio {up_down_ratio:.2f})")
             else:
-                reasoning.append(f"Concave returns (up/down ratio {up_down_ratio:.2f}) — unfavorable")
+                reasoning.append(f"Concave returns (up/down ratio {up_down_ratio:.2f}) - unfavorable")
         else:
             reasoning.append("Insufficient return data for asymmetry analysis")
     else:

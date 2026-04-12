@@ -23,7 +23,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def estimate_cost_of_equity(beta: float | None) -> float:
-    """CAPM: r_e = r_f + β × ERP (Damodaran-style long-run averages)."""
+    """CAPM: r_e = r_f + beta x ERP (Damodaran-style long-run averages)."""
     risk_free = 0.04
     erp = 0.05
     b = beta if beta is not None else 1.0
@@ -86,7 +86,7 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, Any]:
     Risk score (0-3):
       +1  Beta < 1.3
       +1  Debt/Equity < 1
-      +1  Interest coverage > 3×
+      +1  Interest coverage > 3x
     """
     max_score = 3
     if not metrics:
@@ -121,9 +121,9 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, Any]:
         coverage = ebit / abs(interest)
         if coverage > 3:
             score += 1
-            details.append(f"Interest coverage × {coverage:.1f}")
+            details.append(f"Interest coverage x {coverage:.1f}")
         else:
-            details.append(f"Weak coverage × {coverage:.1f}")
+            details.append(f"Weak coverage x {coverage:.1f}")
     else:
         details.append("Interest coverage NA")
 
@@ -169,7 +169,7 @@ def analyze_relative_valuation(metrics: list) -> dict[str, Any]:
 
 def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis: dict) -> dict[str, Any]:
     """
-    FCFF DCF (equity value ≈ firm value here); base FCFF and equity_value stored as Decimal in output.
+    FCFF DCF (equity value ~ firm value here); base FCFF and equity_value stored as Decimal in output.
     """
     if not metrics or len(metrics) < 2 or not line_items:
         return {
