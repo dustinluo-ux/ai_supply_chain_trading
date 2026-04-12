@@ -12,6 +12,7 @@ No wiring into signal_engine — research/validation only.
 """
 from __future__ import annotations
 
+import json
 import sys
 import yaml
 from pathlib import Path
@@ -84,13 +85,29 @@ def _train_eval_and_save(
         save_dir = _save_dir_raw if _save_dir_raw.is_absolute() else (ROOT / _save_dir_raw)
         try:
             save_dir.mkdir(parents=True, exist_ok=True)
-            from datetime import datetime
+            from datetime import datetime, timezone
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             save_path = save_dir / f"{model_type}_{timestamp}.pkl"
             model.save_model(str(save_path))
             if not save_path.exists():
                 print(f"[ERROR] Save failed — file not found at {save_path}", flush=True)
                 return ic, False, None
+            ic_json_path = save_path.with_suffix(".json")
+            tmp_json = ic_json_path.with_name(ic_json_path.name + ".tmp")
+            sidecar = {
+                "ic": round(float(ic), 4),
+                "model_type": model_type,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "test_start": str(test_start),
+                "test_end": str(test_end),
+            }
+            try:
+                with open(tmp_json, "w", encoding="utf-8") as _jf:
+                    json.dump(sidecar, _jf, indent=2)
+                tmp_json.replace(ic_json_path)
+            except Exception as _e_ic:
+                print(f"[ERROR][{model_type}] IC sidecar JSON write failed: {_e_ic}", flush=True)
             print(f"[Pipeline][{model_type}] Model saved to {save_path}", flush=True)
             return ic, True, save_path
         except Exception as e:

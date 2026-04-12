@@ -52,10 +52,10 @@ risk_overlay:
   vix_multiplier: 0.6
 optimizer_promotion:
   top_n: 5
-  score_floor: 0.3
+  score_floor: 0.2
   no_llm: true
   track: A
-  no_hedge: true
-  train_years: 3
-  promoted_at: '2026-04-12T02:43:29.988712+00:00'
+  no_hedge: false
+  train_years: 4
+  promoted_at: '2026-04-12T10:17:21.667591+00:00'
   source_results: C:/Users/dusro/OneDrive/Programming/ai_supply_chain_trading/outputs/optimizer_results.json

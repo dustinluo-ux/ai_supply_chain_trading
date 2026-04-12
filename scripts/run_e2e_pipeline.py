@@ -1,5 +1,5 @@
 """
-E2E pipeline: data updates → factory (rolling window) → OOS backtest → mock execution summary.
+E2E pipeline: data updates -> factory (rolling window) -> OOS backtest -> mock execution summary.
 
 Single entry point; does not modify other scripts. See docs/INDEX.md for canonical docs.
 """
@@ -66,7 +66,7 @@ def _json_subset_from_backtest(result: dict) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="End-to-end: data → factory → OOS backtest → execution summary.")
+    parser = argparse.ArgumentParser(description="End-to-end: data -> factory -> OOS backtest -> execution summary.")
     parser.add_argument("--skip-data", action="store_true", help="Skip Stage 1 (price + news updates).")
     parser.add_argument("--skip-model", action="store_true", help="Skip Stage 2 (use cached factory winner).")
     parser.add_argument("--force-retrain", action="store_true", help="Stage 2: delete factory cache before factory run.")
@@ -297,7 +297,7 @@ def main() -> int:
     from src.agents.skeptic_gate import run_gate as _run_gate
 
     _gate_result = _run_gate(_gate_weights, ticker_list)
-    print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} — {_gate_result.reason}", flush=True)
+    print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
     if _gate_result.verdict == "FAIL":
         print(
             f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
@@ -305,6 +305,62 @@ def main() -> int:
             flush=True,
         )
         return 1
+
+    # --- Stage 3.6: Taleb + Damodaran Audit (advisory) ---
+    try:
+        import pandas as pd
+
+        from src.agents.damodaran_anchor import anchor_ticker as _anchor_ticker
+        from src.agents.taleb_auditor import audit_ticker as _audit_ticker
+        from src.data.csv_provider import load_data_config, load_prices
+
+        _agent_audit_path = ROOT / "outputs" / "agent_audit.json"
+        _agent_audit_path.parent.mkdir(parents=True, exist_ok=True)
+        _stage36_dir = load_data_config()["data_dir"]
+        _stage36_date = str(oos_end or "")
+
+        taleb_json: dict[str, dict] = {}
+        damodaran_json: dict[str, dict] = {}
+
+        for _sym in sorted(_gate_weights.keys()):
+            _u = str(_sym).upper().strip()
+            if not _u:
+                continue
+            _pd36 = load_prices(_stage36_dir, [_u])
+            _df36 = _pd36.get(_u) if _pd36 else None
+            if _df36 is None or getattr(_df36, "empty", True):
+                _df36 = pd.DataFrame(columns=["close"])
+
+            _taleb_res = _audit_ticker(_u, _df36, _stage36_date)
+            taleb_json[_u] = {
+                **_taleb_res.details,
+                "verdict": _taleb_res.verdict,
+                "normalized_score": round(float(_taleb_res.normalized_score), 4),
+            }
+
+            _dmr_res = _anchor_ticker(_u, _stage36_date)
+            damodaran_json[_u] = {
+                "signal": _dmr_res.signal,
+                "margin_of_safety": (
+                    None
+                    if _dmr_res.margin_of_safety is None
+                    else round(float(_dmr_res.margin_of_safety), 6)
+                ),
+            }
+
+            _mos_disp = "N/A" if _dmr_res.margin_of_safety is None else f"{_dmr_res.margin_of_safety:+.0%}"
+            _taleb_disp = f"{_taleb_res.verdict}({_taleb_res.normalized_score:.2f})"
+            print(
+                f"[STAGE 3.6] {_u}: Taleb={_taleb_disp} Damodaran={_dmr_res.signal}(MOS={_mos_disp})",
+                flush=True,
+            )
+
+        _tmp_audit = _agent_audit_path.with_name(_agent_audit_path.name + ".tmp")
+        with open(_tmp_audit, "w", encoding="utf-8") as _aj:
+            json.dump({"taleb": taleb_json, "damodaran": damodaran_json}, _aj, indent=2)
+        _tmp_audit.replace(_agent_audit_path)
+    except Exception as _e36:
+        print(f"WARNING: Stage 3.6 agent audit skipped: {_e36}", file=sys.stderr, flush=True)
 
     # --- Stage 4 ---
     import run_execution

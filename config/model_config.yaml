@@ -27,8 +27,8 @@ features:
   - rsi_norm
   - sentiment_velocity
   - news_sentiment
-  - cmf_norm
-  - macd_norm
+  - willr_norm
+  - cci_norm
 training:
   train_start: '2022-01-01'
   train_end: '2023-12-31'

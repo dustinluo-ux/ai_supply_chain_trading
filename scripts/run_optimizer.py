@@ -57,14 +57,14 @@ def _run_trial(trial_params: dict, skip_data: bool, n_trial: int, n_total: int) 
             argv,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=2400,
             cwd=str(ROOT),
         )
         stdout = proc.stdout
         stderr = proc.stderr
         exit_code = proc.returncode
     except subprocess.TimeoutExpired:
-        print(f"  [WARN] Trial {n_trial} timed out (600s)", flush=True)
+        print(f"  [WARN] Trial {n_trial} timed out (2400s)", flush=True)
         return {"params": trial_params, "oos_sharpe": None, "oos_cagr": None,
                 "oos_maxdd": None, "status": "TIMEOUT", "exit_code": -1, "stdout": ""}
 

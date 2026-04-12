@@ -62,9 +62,6 @@ def _instrument_type(symbol: str) -> str:
     return "equity"
 
 
-# load_config, find_csv_path, load_prices, ensure_ohlcv imported from src.data.csv_provider above
-
-
 def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
     path = find_csv_path(data_dir, BENCHMARK_TICKER)
     if not path:
