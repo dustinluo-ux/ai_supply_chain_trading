@@ -40,6 +40,7 @@ def _run_trial(trial_params: dict, skip_data: bool, n_trial: int, n_total: int) 
         sys.executable,
         str(ROOT / "scripts" / "run_e2e_pipeline.py"),
         "--skip-model",         # optimizer varies portfolio params, not the model per trial
+        "--skip-gate",          # gate uses live fundamentals; not valid for historical optimization
         "--top-n", str(trial_params.get("top_n", 5)),
         "--score-floor", str(trial_params.get("score_floor", 0.0)),
         "--track", str(trial_params.get("track", "A")),

@@ -80,6 +80,8 @@ def main() -> int:
                         help="Strategy track: A = ML blend, D = 130/30 long/short.")
     parser.add_argument("--no-hedge", action="store_true", default=False, dest="no_hedge",
                         help="Stage 4: disable SMH hedge.")
+    parser.add_argument("--skip-gate", action="store_true", default=False, dest="skip_gate",
+                        help="Stage 3.5: skip Skeptic Gate (use for optimizer/backtest-only runs).")
     parser.add_argument(
         "--dry-run",
         default=True,
@@ -296,15 +298,18 @@ def main() -> int:
         _gate_weights = {t: 1.0 / _n for t in ticker_list}
     from src.agents.skeptic_gate import run_gate as _run_gate
 
-    _gate_result = _run_gate(_gate_weights, ticker_list)
-    print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
-    if _gate_result.verdict == "FAIL":
-        print(
-            f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 1
+    if args.skip_gate:
+        print("[STAGE 3.5] Skeptic Gate: SKIPPED (--skip-gate)", flush=True)
+    else:
+        _gate_result = _run_gate(_gate_weights, ticker_list)
+        print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
+        if _gate_result.verdict == "FAIL":
+            print(
+                f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
 
     # --- Stage 3.6: Taleb + Damodaran Audit (advisory) ---
     try:
