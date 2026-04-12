@@ -122,7 +122,7 @@ def run_gate(weights: dict[str, float], ticker_list: list[str]) -> GateResult:
                 verdict="FAIL",
                 triggered_tickers=triggered,
                 bear_findings=bear_findings,
-                reason=f"≥2 bear flags on concentrated tickers: {', '.join(fatal_tickers)}",
+                reason=f">=2 bear flags on concentrated tickers: {', '.join(fatal_tickers)}",
                 fatal_tickers=sorted(set(fatal_tickers)),
             )
         return GateResult(
