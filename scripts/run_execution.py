@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.monitoring.incident_logger import log_incident
+from src.core.portfolio_engine import _load_futures_multipliers
 
 # Cache for --rebalance: last valid weights from last non-rebalance run
 LAST_VALID_WEIGHTS_PATH = ROOT / "outputs" / "last_valid_weights.json"
@@ -36,6 +37,23 @@ REQUIRED_REGIME_KEYS = (
     "sideways_risk_scale",
     "kill_switch_mode",
 )
+
+
+def _instrument_type(symbol: str) -> str:
+    """Read config/instruments.yaml; return 'future', 'option', or 'equity'."""
+    _cfg_path = ROOT / "config" / "instruments.yaml"
+    if not _cfg_path.exists():
+        return "equity"
+    try:
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _icfg = yaml.safe_load(_f) or {}
+        if symbol in (_icfg.get("futures") or {}):
+            return "future"
+        if symbol in (_icfg.get("options") or {}):
+            return "option"
+    except Exception:
+        pass
+    return "equity"
 
 
 def load_config():
@@ -646,9 +664,16 @@ def main() -> tuple[int, list]:
     parser.add_argument("--rebalance", action="store_true", help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)")
     parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
+    parser.add_argument(
+        "--no-hedge",
+        action="store_true",
+        help="Disable SMH hedge for this run (ignore trading_config hedge_enabled).",
+    )
     parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
     parser.add_argument("--reset-stop-loss", action="store_true", help="Clear flatten_active in drawdown_tracker and continue normal execution")
     parser.add_argument("--regime-multiplier", type=float, default=1.0, help="De-gross effective NAV multiplier from regime controller")
+    parser.add_argument("--ibkr-host", type=str, default="127.0.0.1")
+    parser.add_argument("--ibkr-port", type=int, default=7497)
     args = parser.parse_args()
 
     run_start_ts = datetime.now(timezone.utc).isoformat()
@@ -698,6 +723,58 @@ def main() -> tuple[int, list]:
     data_dir = config["data_dir"]
     prices_dict = load_prices(data_dir, tickers)
 
+    _live_px: dict = {}
+    _acct: dict = {}
+    _contract_map: dict = {}
+    if args.mode == "paper":
+        try:
+            from src.data import ibkr_live_provider as _ibkr
+            from src.data.contract_resolver import resolve as _resolve_contract
+
+            _live_client_id = 10 + (int(time.time()) % 89)  # 10–98; avoids reuse across rapid restarts
+            _ib = _ibkr.connect(args.ibkr_host, args.ibkr_port, client_id=_live_client_id)
+            try:
+                _contracts = []
+                _contract_map = {}
+                for _t in tickers:
+                    try:
+                        _itype = _instrument_type(_t)
+                        _c = _resolve_contract(_t, _itype, _ib)
+                        _contracts.append(_c)
+                        _contract_map[_t] = _c
+                    except Exception as _ce:
+                        print(
+                            f"[IBKR][WARN] contract_resolver failed for {_t}: {_ce}; skipping.",
+                            flush=True,
+                        )
+                _live_px = _ibkr.get_live_prices(_ib, _contracts) if _contracts else {}
+                _acct = _ibkr.get_account_summary(_ib)
+            finally:
+                _ib.disconnect()
+        except Exception as _e:
+            print(
+                f"[IBKR][WARN] Live price/account fetch failed: {_e}; "
+                f"falling back to CSV prices and config NAV.",
+                flush=True,
+            )
+            _live_px = {}
+            _acct = {}
+            _contract_map = {}
+
+    # Overlay live prices as the last bar in prices_dict (paper mode only).
+    # Keeps full CSV history intact for signal computation.
+    # Only updates close (and open/high/low to same value) for the as_of bar.
+    if args.mode == "paper" and _live_px:
+        for ticker, px in _live_px.items():
+            if ticker in prices_dict and px and px > 0:
+                df = prices_dict[ticker]
+                last_idx = df.index[-1]
+                for col in ["close", "open", "high", "low"]:
+                    if col in df.columns:
+                        df[col] = df[col].astype(float)
+                        df.loc[last_idx, col] = float(px)
+                prices_dict[ticker] = df
+
     # Data quality check (RESILIENCE_SPEC Section 2)
     from src.data.data_quality import DataQualityReport
     critical_missing = []
@@ -738,7 +815,9 @@ def main() -> tuple[int, list]:
             mondays = mondays[mondays <= as_of]
             as_of = mondays[-1] if len(mondays) else pd.Timestamp(all_dates[-1])
     else:
+        _today = pd.Timestamp.today().normalize()
         mondays = pd.date_range(min(all_dates), max(all_dates), freq="W-MON")
+        mondays = mondays[mondays <= _today]   # cap at today — prevents future-dated CSV rows driving as_of
         as_of = mondays[-1] if len(mondays) else pd.Timestamp(all_dates[-1])
 
     # Resolve executor, position_manager, and account_value before weight computation (stop-loss gate needs NAV).
@@ -754,12 +833,32 @@ def main() -> tuple[int, list]:
                 "Use --mode paper for IB paper."
             )
     else:
-        executor = _create_paper_executor()
+        try:
+            executor = _create_paper_executor()
+        except (ConnectionError, Exception) as _pe:
+            print(
+                f"[IBKR][WARN] Paper executor connection failed: {_pe}\n"
+                f"  Continuing in read-only paper mode (live prices/account from ibkr_live_provider; "
+                f"no order submission until --confirm-paper with live TWS connection).",
+                flush=True,
+            )
+            executor = ExecutorFactory.from_config_file()
     position_manager = PositionManager(executor)
     current_positions = position_manager.get_current_positions()
     current_weights = position_manager.positions_to_weights(current_positions)
     account_value = position_manager.get_account_value()
-    if args.mode == "paper" and hasattr(executor, "ib_provider"):
+    if args.mode == "paper" and _acct:
+        live_nav = _acct.get("net_liquidation", 0.0)
+        if live_nav > 0:
+            account_value = live_nav
+        print(
+            f"[IBKR] Account — NAV={live_nav:,.0f}  "
+            f"AvailFunds={_acct.get('available_funds', 0):,.0f}  "
+            f"MaintMargin={_acct.get('maint_margin_req', 0):,.0f}  "
+            f"InitMargin={_acct.get('init_margin_req', 0):,.0f}",
+            flush=True,
+        )
+    elif args.mode == "paper" and hasattr(executor, "ib_provider"):
         try:
             from src.execution.ibkr_bridge import AccountMonitor
             monitor_for_nav = AccountMonitor(executor.ib_provider)
@@ -776,6 +875,8 @@ def main() -> tuple[int, list]:
     account_value *= float(args.regime_multiplier)
     print(f"[REGIME] multiplier={args.regime_multiplier} effective_nav={account_value}", flush=True)
 
+    _futures_mults = _load_futures_multipliers()
+
     if args.rebalance:
         # Rebalance mode: pull last valid weights from cache (no fresh signal generation)
         if not LAST_VALID_WEIGHTS_PATH.exists():
@@ -790,7 +891,11 @@ def main() -> tuple[int, list]:
         optimal_weights_series = pd.Series(target_weights_dict).reindex(tickers, fill_value=0.0).fillna(0.0)
         intent_tickers = [t for t, w in target_weights_dict.items()
                           if float(w) != 0 and t in set(tickers)]
-        intent = SimpleNamespace(tickers=intent_tickers, weights=dict(optimal_weights_series))
+        intent = SimpleNamespace(
+            tickers=intent_tickers,
+            weights=dict(optimal_weights_series),
+            futures_multipliers=_futures_mults,
+        )
     else:
         # --reset-stop-loss: clear flatten_active before any other logic
         if args.reset_stop_loss:
@@ -825,7 +930,7 @@ def main() -> tuple[int, list]:
             )
             optimal_weights_series = pd.Series(0.0, index=tickers)
             intent_tickers = []
-            intent = SimpleNamespace(tickers=[], weights={})
+            intent = SimpleNamespace(tickers=[], weights={}, futures_multipliers=_futures_mults)
             try:
                 from src.monitoring.telegram_alerts import send_alert
                 send_alert(
@@ -917,7 +1022,11 @@ def main() -> tuple[int, list]:
             print("No target tickers from portfolio engine.", flush=True)
             return (0, [])
         intent_tickers = [t for t, w in optimal_weights_series.items() if float(w) != 0]
-        intent = SimpleNamespace(tickers=intent_tickers, weights=optimal_weights_series.to_dict())
+        intent = SimpleNamespace(
+            tickers=intent_tickers,
+            weights=optimal_weights_series.to_dict(),
+            futures_multipliers=_futures_mults,
+        )
         # Persist for next --rebalance
         LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LAST_VALID_WEIGHTS_PATH, "w", encoding="utf-8") as f:
@@ -934,7 +1043,10 @@ def main() -> tuple[int, list]:
             with open(trading_config_path, "r", encoding="utf-8") as f:
                 tc_hedge = yaml.safe_load(f) or {}
             hedge_cfg = tc_hedge.get("trading", {}).get("hedge", {})
-            if hedge_cfg.get("hedge_enabled", False):
+            _hedge_on = bool(hedge_cfg.get("hedge_enabled", False)) and not bool(
+                getattr(args, "no_hedge", False)
+            )
+            if _hedge_on:
                 hedge_ratio = float(hedge_cfg.get("hedge_ratio", 1.0))
                 annual_borrow_rate = float(hedge_cfg.get("annual_borrow_rate", 0.05))
                 beta_lookback_days = int(hedge_cfg.get("beta_lookback_days", 60))
@@ -1006,6 +1118,10 @@ def main() -> tuple[int, list]:
             close = up_to["close"].iloc[-1]
             if pd.notna(close):
                 prices_last[sym] = float(close)
+        # Overlay live prices for instruments without CSV data (e.g. futures like MNQ)
+        for sym, px in _live_px.items():
+            if sym not in prices_last and px and float(px) > 0:
+                prices_last[sym] = float(px)
         rebalance_logic = RebalanceLogic()
         rebalance_orders = rebalance_logic.calculate_rebalance_orders(
             target_weights=intent.weights,
@@ -1045,6 +1161,10 @@ def main() -> tuple[int, list]:
             close_val = up_to["close"].iloc[-1]
             if pd.notna(close_val) and float(close_val) > 0:
                 prices_last[sym] = float(close_val)
+        # Overlay live prices for instruments without CSV data (e.g. futures like MNQ)
+        for sym, px in _live_px.items():
+            if sym not in prices_last and px and float(px) > 0:
+                prices_last[sym] = float(px)
         prices_series = pd.Series(prices_last) if prices_last else None
 
         delta_trades = position_manager.calculate_delta_trades(
@@ -1054,6 +1174,7 @@ def main() -> tuple[int, list]:
             prices=prices_series,
             min_trade_size=0.005,
             significance_threshold=0.02,
+            futures_multipliers=getattr(intent, "futures_multipliers", {}),
         )
         executable = delta_trades[delta_trades["should_trade"] & (delta_trades["quantity"] > 0)]
         if smh_short_shares > 0 and smh_hedge_row is not None:

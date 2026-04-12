@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -198,10 +198,29 @@ def main() -> int:
                             }
             except Exception:
                 pass
+            _model_cfg_path = ROOT / "config" / "model_config.yaml"
+            _train_years = 4
+            _today = date.today()
+            try:
+                _train_start = _today.replace(year=_today.year - _train_years)
+            except ValueError:
+                _train_start = _today.replace(month=2, day=28, year=_today.year - _train_years)
+            _train_end = _today - timedelta(days=365)
+            _test_start = _train_end
+            _test_end = _today
+            with open(_model_cfg_path, "r", encoding="utf-8") as _f_mc:
+                _mc = yaml.safe_load(_f_mc) or {}
+            _mc.setdefault("training", {})
+            _mc["training"]["train_start"] = str(_train_start)
+            _mc["training"]["train_end"] = str(_train_end)
+            _mc["training"]["test_start"] = str(_test_start)
+            _mc["training"]["test_end"] = str(_test_end)
+            with open(_model_cfg_path, "w", encoding="utf-8") as _f_mc:
+                yaml.dump(_mc, _f_mc, default_flow_style=False, sort_keys=False, allow_unicode=True)
             _winner_model, _winner_type, _winner_ic = get_best_model(
                 prices_dict=_prices_dict,
                 news_signals=_news_signals if _news_signals else None,
-                config_path=ROOT / "config" / "model_config.yaml",
+                config_path=_model_cfg_path,
             )
             if _winner_type != "tech_only":
                 print(f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} — model active", flush=True)

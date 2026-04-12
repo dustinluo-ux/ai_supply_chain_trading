@@ -100,6 +100,7 @@ class PositionManager:
         prices: Optional[pd.Series] = None,
         min_trade_size: float = 0.01,
         significance_threshold: float = 0.02,
+        futures_multipliers: Optional[dict[str, float]] = None,
     ) -> pd.DataFrame:
         """
         Delta trades to rebalance from current_weights to optimal_weights.
@@ -113,6 +114,7 @@ class PositionManager:
         optimal_aligned = optimal_weights.reindex(all_symbols, fill_value=0.0)
         delta_weights = optimal_aligned - current_aligned
         delta_dollars = delta_weights * account_value
+        futm = futures_multipliers or {}
 
         trades = []
         for symbol in all_symbols:
@@ -134,7 +136,11 @@ class PositionManager:
                     row = pos_df[pos_df["symbol"] == symbol].iloc[0]
                     current_price = row.get("current_price", 0) or row.get("avg_cost", 0)
 
-            qty = int(round(abs(delta_d) / current_price)) if current_price > 0 else 0
+            if symbol in futm and futm[symbol] and float(futm[symbol]) > 0 and current_price > 0:
+                denom = current_price * float(futm[symbol])
+            else:
+                denom = current_price
+            qty = int(round(abs(delta_d) / denom)) if denom > 0 else 0
             side = "BUY" if delta_w > 0 else "SELL" if delta_w < 0 else "HOLD"
             trades.append({
                 "symbol": symbol,

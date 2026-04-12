@@ -1,0 +1,47 @@
+{
+  "title": "GaN Power Semiconductor Supply Bottleneck — EV and AI Tailwinds",
+  "thesis_claim": "Gallium nitride power semiconductor demand will outpace fab capacity through 2027 due to simultaneous EV charger proliferation and AI data center PDU upgrades, creating structural margin expansion for sub-$50B tier-2 GaN producers.",
+  "summary": "Three independent supply chain analyses confirm GaN substrate capacity utilization exceeds 90% globally. Two tier-2 fabs have filed provisional patents on new substrate deposition techniques. SEC 10-K filings from major hyperscalers show GaN-specific supplier clauses added in FY2025.",
+  "confidence": 0.74,
+  "critical_disagreement": "Silicon carbide may substitute GaN in some EV applications above 800V, reducing the addressable market by approximately 20%.",
+  "research_risks": "• Silicon carbide substitution risk in high-voltage EV applications\n• Geopolitical risk: approximately 60% of GaN substrates sourced from China\n• Timeline uncertainty for widespread data center PDU GaN adoption",
+  "supporting_findings": [
+    {
+      "url": "https://arxiv.org/abs/2501.12345",
+      "title": "GaN Substrate Capacity Constraints in High-Power Applications",
+      "snippet": "Current fab utilization exceeds 92% in top-5 GaN producers, with lead times extending to 52 weeks for MOCVD reactor slots.",
+      "source_domain": "arxiv.org",
+      "published_date": "2025-11-14T00:00:00Z",
+      "key_quote": "Fab utilization exceeds 92% in top-5 GaN producers.",
+      "relevance_score": 0.88,
+      "novelty_score": 0.81,
+      "evidence_quality": 0.85,
+      "composite_score": 0.85
+    },
+    {
+      "url": "https://ieeexplore.ieee.org/document/9876543",
+      "title": "Power Density Roadmap for Next-Generation GaN HEMTs",
+      "snippet": "GaN HEMT power density requirements for 400V EV chargers have increased 3.2x over 2022 baselines, straining existing epitaxial deposition capacity.",
+      "source_domain": "ieee.org",
+      "published_date": "2025-09-20T00:00:00Z",
+      "key_quote": "GaN HEMT power density requirements have increased 3.2x over 2022 baselines.",
+      "relevance_score": 0.85,
+      "novelty_score": 0.78,
+      "evidence_quality": 0.82,
+      "composite_score": 0.82
+    },
+    {
+      "url": "https://www.ft.com/content/gan-supply-chain-2026",
+      "title": "GaN Supply Chain Under Strain as EV and AI Demand Converge",
+      "snippet": "Financial Times analysis of five hyperscaler 10-K filings reveals new GaN-specific supplier qualification clauses, signalling a structural demand shift.",
+      "source_domain": "ft.com",
+      "published_date": "2025-12-01T00:00:00Z",
+      "key_quote": "Five hyperscaler 10-K filings contain new GaN-specific supplier qualification clauses.",
+      "relevance_score": 0.82,
+      "novelty_score": 0.72,
+      "evidence_quality": 0.80,
+      "composite_score": 0.79
+    }
+  ],
+  "generated_at": "2026-03-08T14:08:08.000000+00:00"
+}

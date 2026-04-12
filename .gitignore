@@ -44,6 +44,7 @@ output.txt
 
 # --- Repo-specific generated / data-heavy (do not scan or commit) ---
 /data/
+data/tes_scores.json
 outputs/
 backtests/
 artifacts/

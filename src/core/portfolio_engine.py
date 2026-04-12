@@ -4,9 +4,16 @@ Uses HRP + Alpha Tilt when prices_dict and as_of are in context; else inverse-AT
 """
 from __future__ import annotations
 
+import json
+import logging
 import math
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.core.intent import Intent
 from src.core.types import Context
@@ -16,6 +23,83 @@ EWMA_SPAN = 38
 BASE_CAP, CAP_FLOOR, CAP_CEIL = 0.20, 0.10, 0.40
 LOOKBACK_DAYS = 60
 MIN_OBS = 30
+
+logger = logging.getLogger(__name__)
+
+
+def _load_auditor_config_for_tes() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[2] / "config" / "auditor_config.yaml"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _load_tes_multipliers(config: dict[str, Any]) -> dict[str, float]:
+    """
+    Load precomputed TES multipliers from data/tes_scores.json.
+    Returns {ticker: multiplier} with float values in [tes_min_mult, 1.0].
+    Returns {} (all neutral) if tes_enabled=False or file missing.
+    Logs a WARNING if audited_at is older than 14 days for any ticker.
+    """
+    if not config.get("tes_enabled", False):
+        return {}
+    path = Path(config.get("tes_scores_path", "data/tes_scores.json"))
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[2] / path
+    if not path.exists():
+        logger.warning("TES scores file not found at %s — all multipliers neutral", path)
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        out: dict[str, float] = {}
+        now = datetime.now(timezone.utc)
+        for ticker, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            mult = entry.get("multiplier")
+            if mult is None:
+                continue
+            tkey = str(ticker).upper()
+            out[tkey] = float(mult)
+            audited_at = entry.get("audited_at")
+            if audited_at:
+                try:
+                    age_days = (
+                        now
+                        - datetime.fromisoformat(
+                            str(audited_at).replace("Z", "+00:00")
+                        )
+                    ).days
+                    if age_days > 14:
+                        logger.warning(
+                            "TES score for %s is %d days old — consider refreshing",
+                            tkey,
+                            age_days,
+                        )
+                except (ValueError, TypeError):
+                    pass
+        return out
+    except Exception as exc:
+        logger.warning("Failed to load TES scores: %s — all multipliers neutral", exc)
+        return {}
+
+
+def _load_futures_multipliers() -> dict[str, float]:
+    """Return {symbol: multiplier} from config/instruments.yaml futures block."""
+    path = Path(__file__).resolve().parents[2] / "config" / "instruments.yaml"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return {
+            sym: float(spec.get("multiplier", 1.0))
+            for sym, spec in (cfg.get("futures") or {}).items()
+            if isinstance(spec, dict)
+        }
+    except Exception:
+        return {}
 
 
 def _slice_to_as_of(df: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
@@ -133,6 +217,8 @@ def hrp_alpha_tilt(
     as_of: pd.Timestamp,
     top_n: int,
     score_floor: float = 0.0,
+    tes_multipliers: dict[str, float] | None = None,
+    max_single_weight: float = 0.40,
 ) -> dict[str, float]:
     """
     HRP + Alpha Tilt allocation: filter by score > score_floor and sufficient history,
@@ -272,6 +358,12 @@ def hrp_alpha_tilt(
     # Iterative cap at liquidity — bounded to prevent infinite oscillation when
     # sum(caps) < 1.0 (infeasible: excess can never be fully absorbed).
     cap_t = {t: liquidity_cap.get(t, BASE_CAP) for t in w}
+    # TES position-cap tilt (D023): scale liquidity cap down for low-TES tickers
+    tes = tes_multipliers or {}
+    if tes:
+        cap_t = {
+            t: cap_t[t] * tes.get(str(t).upper(), 1.0) for t in cap_t
+        }
     for _cap_iter in range(50):
         capped = {t for t in w if w[t] > cap_t[t] + 1e-9}
         uncapped = {t for t in w if t not in capped}
@@ -291,6 +383,12 @@ def hrp_alpha_tilt(
     total_after = sum(w.values())
     if total_after > 0:
         w = {t: w[t] / total_after for t in w}
+    # Hard single-position ceiling (config-driven, post-TES post-liquidity guardrail)
+    if max_single_weight < 1.0:
+        w = {t: min(v, max_single_weight) for t, v in w.items()}
+        _total_hard = sum(w.values())
+        if _total_hard > 0:
+            w = {t: v / _total_hard for t, v in w.items()}
     for t in w:
         out[t] = w[t]
     return out
@@ -316,6 +414,20 @@ class PortfolioEngine:
             as_of_ts = as_of_date
         else:
             as_of_ts = pd.to_datetime(as_of_date)
+        max_single_w = 0.40
+        _tc_path = Path(__file__).resolve().parents[2] / "config" / "trading_config.yaml"
+        if _tc_path.exists():
+            try:
+                with open(_tc_path, encoding="utf-8") as _f_tc:
+                    _tc = yaml.safe_load(_f_tc) or {}
+                max_single_w = float(
+                    (_tc.get("risk") or {}).get("max_single_position_weight", max_single_w)
+                )
+            except Exception:
+                pass
+        auditor_cfg = _load_auditor_config_for_tes()
+        tes_m = _load_tes_multipliers(auditor_cfg)
+        fut_m = _load_futures_multipliers()
         intent: Intent
         try:
             if prices_dict and len(prices_dict) > 0:
@@ -325,6 +437,8 @@ class PortfolioEngine:
                     as_of_ts,
                     top_n=context.get("top_n", 3),
                     score_floor=float(context.get("score_floor", 0.0)),
+                    tes_multipliers=tes_m,
+                    max_single_weight=max_single_w,
                 )
                 tickers_universe = context.get("tickers") or list(gated_scores.keys())
                 for t in tickers_universe:
@@ -332,31 +446,68 @@ class PortfolioEngine:
                         weights[t] = 0.0
                 tickers_ordered = [t for t in weights if weights.get(t, 0.0) > 0]
                 tickers_ordered = sorted(tickers_ordered, key=lambda t: -weights[t])
-                intent = Intent(tickers=tickers_ordered, weights=weights, mode="backtest")
+                intent = Intent(
+                    tickers=tickers_ordered,
+                    weights=weights,
+                    mode="backtest",
+                    futures_multipliers=fut_m,
+                )
             else:
-                intent = self._build_inverse_atr(gated_scores, context)
+                intent = self._build_inverse_atr(
+                    gated_scores,
+                    context,
+                    tes_multipliers=tes_m,
+                    max_single_weight=max_single_w,
+                    futures_multipliers=fut_m,
+                )
         except Exception:
-            intent = self._build_inverse_atr(gated_scores, context)
+            intent = self._build_inverse_atr(
+                gated_scores,
+                context,
+                tes_multipliers=tes_m,
+                max_single_weight=max_single_w,
+                futures_multipliers=fut_m,
+            )
         if context.get("path") == "weekly":
-            intent = Intent(tickers=intent.tickers, weights=intent.weights, mode="execution", metadata=getattr(intent, "metadata", None))
+            intent = Intent(
+                tickers=intent.tickers,
+                weights=intent.weights,
+                mode="execution",
+                metadata=getattr(intent, "metadata", None),
+                futures_multipliers=intent.futures_multipliers,
+            )
         return intent
 
     def _build_inverse_atr(
         self,
         gated_scores: dict[str, float],
         context: Context,
+        tes_multipliers: dict[str, float] | None = None,
+        max_single_weight: float = 0.40,
+        futures_multipliers: dict[str, float] | None = None,
     ) -> Intent:
         """Rank by gated_scores, take top_n, inverse-vol weights using atr_norms (fallback)."""
+        fut_m = futures_multipliers or {}
         top_n = context.get("top_n", 3)
         atr_norms = context.get("atr_norms") or {}
         tickers_universe = context.get("tickers") or list(gated_scores.keys())
 
         if all(v == 0.0 for v in gated_scores.values()):
-            return Intent(tickers=[], weights={t: 0.0 for t in tickers_universe}, mode="backtest")
+            return Intent(
+                tickers=[],
+                weights={t: 0.0 for t in tickers_universe},
+                mode="backtest",
+                futures_multipliers=fut_m,
+            )
         ranked = sorted(gated_scores.items(), key=lambda x: -x[1])[:top_n]
         if not ranked:
             weights_dict = {t: 0.0 for t in tickers_universe}
-            return Intent(tickers=[], weights=weights_dict, mode="backtest")
+            return Intent(
+                tickers=[],
+                weights=weights_dict,
+                mode="backtest",
+                futures_multipliers=fut_m,
+            )
 
         inv_vol = [1.0 / (max(atr_norms.get(t, 0.5), 1e-6)) for t, _ in ranked]
         total_inv = sum(inv_vol)
@@ -364,11 +515,37 @@ class PortfolioEngine:
         intent_tickers = [t for t, _ in ranked]
         intent_weights = {t: w for (t, _), w in zip(ranked, weights_list)}
 
+        tes = tes_multipliers or {}
+        if tes:
+            max_w = 1.0 / max(len(intent_tickers), 1)
+            for t in list(intent_weights.keys()):
+                mult = tes.get(str(t).upper(), 1.0)
+                intent_weights[t] = min(intent_weights[t], max_w * mult)
+            total = sum(intent_weights.values())
+            if total > 0:
+                intent_weights = {t: w / total for t, w in intent_weights.items()}
+
+        # Hard single-position ceiling (config-driven, post-TES guardrail)
+        if max_single_weight < 1.0:
+            intent_weights = {
+                t: min(v, max_single_weight) for t, v in intent_weights.items()
+            }
+            _total_hard = sum(intent_weights.values())
+            if _total_hard > 0:
+                intent_weights = {
+                    t: v / _total_hard for t, v in intent_weights.items()
+                }
+
         for t in tickers_universe:
             if t not in intent_weights:
                 intent_weights[t] = 0.0
 
-        return Intent(tickers=intent_tickers, weights=intent_weights, mode="backtest")
+        return Intent(
+            tickers=intent_tickers,
+            weights=intent_weights,
+            mode="backtest",
+            futures_multipliers=fut_m,
+        )
 
     def _build_backtest(
         self,
@@ -387,7 +564,12 @@ class PortfolioEngine:
         top_n = context.get("top_n", 10)
         tickers = list(gated_scores.keys())[:top_n]
         if not tickers:
-            return Intent(tickers=[], weights={}, mode="execution")
+            return Intent(tickers=[], weights={}, mode="execution", futures_multipliers={})
         w = 1.0 / len(tickers)
         weights = {t: w for t in tickers}
-        return Intent(tickers=tickers, weights=weights, mode="execution")
+        return Intent(
+            tickers=tickers,
+            weights=weights,
+            mode="execution",
+            futures_multipliers=_load_futures_multipliers(),
+        )

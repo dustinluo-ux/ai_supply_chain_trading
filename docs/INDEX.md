@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-04-12
 
 **Single entry point for all project documentation.** This file lists the 11 canonical documents that define the system. All other documentation is either archived or superseded.
 
@@ -122,20 +122,42 @@ Then load task-specific docs as needed.
 
 ## Quick Reference
 
-**Run backtest:**
+**Run E2E pipeline (single run):**
 ```bash
-python scripts/backtest_technical_library.py --tickers NVDA,AMD,TSM --start 2023-01-01 --end 2023-12-31
+python scripts/run_e2e_pipeline.py
 ```
 
-**Configuration:**
-- `config/data_config.yaml` - Data paths
-- `config/technical_master_score.yaml` - Signal weights
-- `config/trading_config.yaml` - Execution settings
+**Run autonomous optimizer (30 trials):**
+```bash
+python scripts/run_optimizer.py
+```
 
-**Key directories:**
-- `data/stock_market_data/` - Price CSVs
-- `data/news/` - News JSON files
-- `data/supply_chain_relationships.json` - Supply chain database
+**Smoke test (2 trials, skip data):**
+```bash
+python scripts/run_optimizer.py --n-trials 2 --skip-data
+```
+
+**Standalone OOS backtest:**
+```bash
+python scripts/backtest_technical_library.py --tickers NVDA,AMD,TSM --start 2023-01-01 --end 2023-12-31 --no-llm
+```
+
+**Canonical Configuration:**
+- `config/optimizer_config.yaml` — search space + composite score params
+- `config/model_config.yaml` — rolling training window (machine-written)
+- `config/strategy_params.yaml` — auto-promoted winner params
+- `config/trading_config.yaml` — execution + risk limits (max_single_position_weight: 0.40)
+- `config/data_config.yaml` — universe watchlist, data source paths
+
+**Canonical data root (outside repo):**
+- `C:\ai_supply_chain_trading\trading_data\stock_market_data\` — price CSVs
+- `C:\ai_supply_chain_trading\trading_data\news\` — news JSON / Tiingo parquets
+
+**Output artifacts:**
+- `outputs/e2e_oos_backtest.json` — latest OOS backtest result
+- `outputs/last_valid_weights.json` — latest portfolio weights
+- `outputs/optimizer_results.json` — full optimizer trial log
+- `models/factory_winner.json` — best model from last factory run
 
 ---
 

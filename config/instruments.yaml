@@ -1,0 +1,33 @@
+equities:
+  use_watchlist: true        # pull tickers from data_config.yaml universe
+  exchange: SMART
+  currency: USD
+
+futures:
+  NQ:
+    description: E-mini NASDAQ-100 Futures
+    exchange: CME
+    currency: USD
+    multiplier: 20
+    front_month_offset: 1    # 1 = nearest expiry; 2 = next
+    roll_warning_dte: 5      # warn if days-to-expiry < this
+  MNQ:
+    description: Micro E-mini NASDAQ-100 Futures
+    exchange: CME
+    currency: USD
+    multiplier: 2
+    front_month_offset: 1
+    roll_warning_dte: 5
+
+options:
+  SMH:
+    description: VanEck Semiconductor ETF options
+    exchange: SMART
+    currency: USD
+    right: [C, P]            # C = call, P = put
+    expiry_dte_target: 30    # target days-to-expiry for contract selection
+    strike_atm_offset: 0     # 0 = ATM; negative = ITM; positive = OTM (in strike steps)
+
+allocation_limits:
+  max_futures_pct: 0.20      # max portfolio weight in futures
+  max_options_pct: 0.10      # max portfolio weight in options (delta-adjusted)

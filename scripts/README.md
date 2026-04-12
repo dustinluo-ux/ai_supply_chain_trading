@@ -1,129 +1,92 @@
 # Scripts Directory
 
-This directory contains utility scripts for downloading and processing data.
+## Canonical Entry Points
 
-## P0 Determinism Gate
+### Full autonomous run (production)
 
-Run the canonical backtest twice with identical config and inputs; compares SHA256 of result files and regime ledger row to ensure deterministic outputs. Use for spine stabilization.
+```bash
+python scripts/run_optimizer.py
+```
+
+Random-searches `config/optimizer_config.yaml` search space over 30 trials. After completion:
+- Writes `outputs/optimizer_results.json` (atomic)
+- Promotes winner → `config/strategy_params.yaml` (atomic, `.bak` preserved)
+- Registers `AITrading_WeeklyOptimizer` task in Windows Task Scheduler (next Mon 06:00)
+
+### Single E2E pipeline run
+
+```bash
+python scripts/run_e2e_pipeline.py [--skip-data] [--skip-model] [--top-n N] [--score-floor F] [--track A|D] [--no-hedge] [--no-llm]
+```
+
+Five stages:
+1. Price + news data refresh (`--skip-data` to bypass)
+2. ML factory with rolling 4yr training window (`--skip-model` uses cached winner)
+3. OOS backtest → `outputs/e2e_oos_backtest.json`
+4. Mock execution → `outputs/last_valid_weights.json`
+5. ASCII summary + STATUS: PASS/WARN/FAIL
+
+### Smoke test
+
+```bash
+python scripts/run_optimizer.py --n-trials 2 --skip-data
+```
+
+### Standalone backtest
+
+```bash
+python scripts/backtest_technical_library.py \
+    --tickers NVDA,AMD,TSM,ASML,AMAT \
+    --top-n 5 \
+    --start 2019-01-01 \
+    --end 2024-12-31 \
+    --no-llm
+```
+
+### Weekly rebalance (standalone)
+
+```bash
+python scripts/run_weekly_rebalance.py --dry-run
+```
+
+### Config promotion (standalone)
+
+```bash
+python scripts/run_promoter.py
+```
+
+Reads `outputs/optimizer_results.json`, writes winner params to `config/strategy_params.yaml`.
+
+---
+
+## Data Refresh
+
+```bash
+python scripts/update_price_data.py   # refresh price CSVs
+python scripts/update_news_data.py    # refresh Marketaux news JSON
+```
+
+---
+
+## Determinism Gate
 
 ```bash
 python scripts/verify_determinism.py --start 2022-01-01 --end 2022-12-31
 ```
-Exit 0 = PASS, 1 = FAIL. Both `--start` and `--end` (YYYY-MM-DD) are required.
 
-## FNSPID Dataset Pipeline
+Exit 0 = PASS. Runs canonical backtest twice, compares SHA256 of result files.
 
-### 1. Download FNSPID Dataset
+---
 
-Download NASDAQ news data from Hugging Face:
+## Legacy / Research
 
-```bash
-# Default: Downloads to project folder (self-contained)
-python scripts/download_fnspid.py
+| Script | Purpose |
+|--------|---------|
+| `research_grid_search.py` | Parameter sweep (replaced by run_optimizer.py for production) |
+| `download_fnspid.py` | One-time FNSPID dataset download |
+| `process_fnspid.py` | Convert FNSPID CSV → per-ticker JSON |
+| `test_gemini.py` | Verify Gemini API connection |
 
-# Alternative: Use cache (saves space but not self-contained)
-python scripts/download_fnspid.py --use-cache
-```
+---
 
-**Note:** Default behavior downloads directly to `data/raw/fnspid_nasdaq_news.csv` in your project folder, making the project self-contained (all data in one place).
-
-**Get Token:**
-- Visit: https://huggingface.co/settings/tokens
-- Create a "Read" token (free)
-
-**Options:**
-- `--output PATH`: Custom output path (default: `data/raw/fnspid_nasdaq_news.csv`)
-- `--token TOKEN`: Hugging Face token (or set `HF_TOKEN` environment variable)
-
-**Requirements:**
-```bash
-pip install huggingface_hub pandas pyarrow
-```
-
-**What it does:**
-- Downloads `nasdaq_exteral_data.csv` from Hugging Face repository `Zihan1004/FNSPID`
-- Saves to `data/raw/fnspid_nasdaq_news.csv`
-- Verifies download and shows statistics
-
-### 2. Process FNSPID Dataset
-
-Filter and convert news data to our JSON format:
-
-```bash
-python scripts/process_fnspid.py \
-  --input data/raw/fnspid_nasdaq_news.csv \
-  --output data/news/ \
-  --date-start 2020-01-01 \
-  --date-end 2022-12-31
-```
-
-**Options:**
-- `--input PATH`: Input CSV file (default: `data/raw/fnspid_nasdaq_news.csv`)
-- `--output DIR`: Output directory (default: `data/news`)
-- `--date-start DATE`: Start date filter (YYYY-MM-DD, default: 2020-01-01)
-- `--date-end DATE`: End date filter (YYYY-MM-DD, default: 2022-12-31)
-- `--no-filter-universe`: Process all tickers, not just universe tickers
-
-**What it does:**
-- Filters articles by date range (2020-2022)
-- Filters by supply chain keywords (90% reduction)
-- Extracts ticker symbols
-- Converts to JSON format: `data/news/{TICKER}_news.json`
-- Shows processing statistics
-
-### 3. Test Gemini Integration
-
-Verify Gemini API is working:
-
-```bash
-export GEMINI_API_KEY=your_key_here
-python scripts/test_gemini.py
-```
-
-**What it does:**
-- Tests Gemini API connection
-- Analyzes sample articles
-- Verifies scores are NOT fallback values
-- Tests NewsAnalyzer integration
-
-**Expected Output:**
-- `[SUCCESS]` if Gemini is working
-- `[WARNING]` if using fallback scores
-
-## Quick Start
-
-**Complete pipeline:**
-
-```bash
-# 1. Download dataset
-python scripts/download_fnspid.py
-
-# 2. Process dataset
-python scripts/process_fnspid.py
-
-# 3. Test Gemini (requires API key)
-export GEMINI_API_KEY=your_key_here
-python scripts/test_gemini.py
-
-# 4. Run backtest with real news
-python test_signals.py --universe-size 10
-```
-
-## Troubleshooting
-
-### Download Fails
-- Check internet connection
-- Verify Hugging Face repository exists
-- Try manual download from website
-
-### Processing Fails
-- Check CSV file exists and is valid
-- Verify date range matches data
-- Check ticker extraction logic
-
-### Gemini Test Fails
-- Verify `GEMINI_API_KEY` is set
-- Check API quota not exceeded
-- Verify news files exist
-
-See `docs/DATA_SOURCES.md` for detailed documentation.
+See `docs/INDEX.md` for the full documentation index.

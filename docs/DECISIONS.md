@@ -1,6 +1,6 @@
 # DECISIONS — Architectural Decision Records
 
-**Last Updated:** 2026-02-19
+**Last Updated:** 2026-04-11
 
 This file records architectural decisions and their rationale. Implementation details live in other documents. This is the "why" documentation.
 
@@ -106,6 +106,119 @@ Any run must terminate immediately if:
 **Features (unchanged from existing train_pipeline.py):** momentum_20d, volume_ratio_30d, rsi_14d, news_supply_chain, news_sentiment.
 
 **Status:** Deferred — architecture approved, implementation blocked on IC validation gate.
+
+---
+
+### D022 — ADR D-TES-STUBS: TES financial inputs and patent prior (2026-04-11)
+
+**Status:** Accepted (implemented in `lib/shared_core/tes_scorer.py`, `auditor/financial_fetcher.py`, `config/auditor_config.yaml`).
+
+**Background:** TES inputs previously used hardcoded zeros for patent density and niche revenue, and confidence labels that did not match the COMPUTED / ESTIMATED / STUB ladder. Revenue math used floats in places where deterministic cents mattered.
+
+**Decision summary (three fixes):**
+
+1. **Patent density prior:** `estimate_patent_density()` returns the configured default (from `auditor_config.yaml` → `default_patent_density`) with a log warning until USPTO integration; `build_tes_components()` loads the YAML and passes `config_default` (`lib/shared_core/tes_scorer.py`).
+2. **Niche revenue:** When SEC total revenue is present, `niche_revenue_usd = (Decimal(total) * Decimal(fraction)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)` (`auditor/financial_fetcher.py`, `fetch_tes_components_from_sec`); no fixed `0.0` stub for the computed path.
+3. **Confidence ladder:** `_classify_data_confidence` and `merge_data_confidence` use only `COMPUTED`, `ESTIMATED`, and `STUB`; `_default_tes_components_dict()` uses `data_confidence: "STUB"` (`auditor/financial_fetcher.py`, `lib/shared_core/tes_scorer.py`).
+
+**Revenue tag scope (explicit):** `_parse_latest_revenue_usd` walks a priority-ordered `_REVENUE_TAGS` list (contract-with-customer excluding/including tax, `Revenues`, net sales goods/services, etc.) and uses the first tag with annual **10-K / FY** USD rows (`auditor/financial_fetcher.py`, `_REVENUE_TAGS` + `_parse_latest_revenue_usd`).
+
+**Smoke test evidence (ON Semiconductor, CIK 0001097864):** Run from repo root with `PYTHONPATH` set to project root, Python 3.11 (`wealth` env used where `alpha` env was absent on the validation host):
+
+```
+estimate_patent_density: using config default 0.10 - integrate USPTO API (see auditor_config.yaml: default_patent_density) to replace
+--- raw (fetch) ---
+  total_revenue_usd: 1446300000.0
+  niche_revenue_usd: 216945000.0
+  niche_revenue_source: CONFIG_RATIO
+  divisional_cagr: 0.0
+  patent_density: 0.0
+  data_confidence: ESTIMATED
+--- built (build_tes_components) ---
+  total_revenue_usd: 1446300000.0
+  niche_revenue_usd: 216945000.0
+  niche_revenue_source: CONFIG_RATIO
+  divisional_cagr: 0.0
+  patent_density: 0.1
+  data_confidence: ESTIMATED
+  tes_score: 0.015
+--- assertions OK ---
+```
+
+**Schema / checklist key:** `build_tes_components` exposes **`tes_score`** (not `tes`). `THESIS_SCHEMA.json` is not present in this repository as of this edit; the output key aligns with the external Validator checklist.
+
+**Orchestrator / TES = 0:** `auditor/orchestrator.py` (`run_tes_build_from_sec`) calls `fetch_tes_components_from_sec` then `build_tes_components`; **`tes_score == 0.0` logs a warning only** — no `AUDIT_FAILED` or fatal gate. Boundary `float` conversions for SEC parse return and schema interchange remain only at the documented lines in `auditor/financial_fetcher.py` (see code comments there).
+
+---
+
+### D023 — D-TES-INTEGRATION: TES as offline position-cap tilt in the trading spine
+
+**ID:** D-TES-INTEGRATION  
+**Status:** Proposed
+
+#### Background
+
+- **TES (Technology Exposure Score)** measures, per company, how much of consolidated revenue is attributable to the AI supply-chain niche (auditor financial path + patent prior), surfaced as a scalar **`tes_score`** on the built TDO / TES components path (`lib/shared_core/tes_scorer.py`, `auditor/orchestrator.py`).
+- **Current state:** `AuditOrchestrator.audit()` and `run_tes_build_from_sec` can produce **`tes_score`**, but the trading spine **`SignalEngine → PolicyEngine → PortfolioEngine`** in `src/core/target_weight_pipeline.py` never reads TES; weights depend only on signals, regime, vol filter, and portfolio construction (`compute_target_weights`, lines 201–427; `PortfolioEngine.build`, `src/core/portfolio_engine.py` lines 304–342).
+- **Gap:** The watchlist in `config/data_config.yaml` (`universe_selection.watchlist`, lines 30–85) mixes “pure-play” AI supply-chain names with diversified megacaps; without TES, the allocator cannot tilt max position toward higher thematic exposure.
+
+#### Decision
+
+**1. Precomputed TES store**
+
+| Item | Proposal |
+|------|------------|
+| **Path & format** | Repo-root **`data/tes_scores.json`** (gitignored `data/` is acceptable; alternative: file under `DATA_DIR` mirroring price data layout — engineer to align with ops). Single JSON object keyed by **uppercase ticker** (matches watchlist symbols like `NVDA`, `ASML`). |
+| **Schema (per ticker)** | `{ "tes_score": <float>, "data_confidence": <string>, "audited_at": <ISO-8601 string>, "multiplier": <float> }`. `data_confidence` carries auditor ladder values (`COMPUTED` / `ESTIMATED` / `STUB`) for future weighting of trust; **`multiplier`** is the value the runtime reads (so refresh can bake in formula changes without recomputing TES in hot path). |
+| **Multiplier formula (simple)** | Let `s = tes_score`, `S = max(s)` over tickers present in the store **for that refresh batch** (or a configured `tes_score_cap` if max is unstable). Map linearly: `multiplier = tes_min_mult + (1.0 - tes_min_mult) * (s / S)` when `S > 0`, else `1.0`. Clamp to `[tes_min_mult, 1.0]`. Tickers with `tes_score == 0` still get `multiplier = tes_min_mult` (floor exposure) unless overridden to neutral — **engineer choice:** either floor or treat zero as missing → `1.0` (ADR recommends **missing → 1.0**, **explicit zero score → floor** to distinguish “unknown” vs “low exposure”). |
+| **Refresh cadence** | **Weekly** alongside thesis / risk metadata refresh (same human or cron window as `scripts/run_weekly_rebalance.py`); optional **manual** `python scripts/refresh_tes_scores.py` (new) for ad-hoc reruns before rebalance. |
+| **Regeneration entrypoint** | **New script** `scripts/refresh_tes_scores.py`: for each ticker in `config/data_config.yaml` → `universe_selection.watchlist`, resolve CIK/name (reuse patterns from `auditor/orchestrator.py` / `auditor/financial_fetcher.py`), call **offline** `fetch_tes_components_from_sec` + `build_tes_components` (or a thin batch wrapper), write `data/tes_scores.json` + optional `outputs/tes_refresh.log` timestamp. **No** `AuditOrchestrator.audit()` inside weekly rebalance — batch job only. |
+
+**2. Integration point in the pipeline**
+
+| Item | Proposal |
+|------|------------|
+| **Primary hook** | **`src/core/portfolio_engine.py`**, function **`hrp_alpha_tilt`** (`lines 130–296`): after per-ticker **`liquidity_cap`** is computed (`liquidity_cap[t]` from ADV, lines 207–213) and **before** the iterative cap loop (`cap_t` / lines 272–295), set **`effective_cap[t] = min(liquidity_cap[t], liquidity_cap[t] * tes_mult[t])`** (or equivalently scale the cap by `tes_mult` capped so it never exceeds original liquidity cap intent: *TES only tightens or loosens the vol/liquidity-derived ceiling* — exact formula: `effective_cap[t] = liquidity_cap[t] * tes_mult[t]` with `tes_mult` in `[tes_min_mult, 1.0]` so high-TES names can approach full liquidity cap, low-TES names shrink it). **Evidence:** cap application site is `cap_t = {t: liquidity_cap.get(t, BASE_CAP) for t in w}` at line **274**; loop uses `cap_t[t]` lines **275–290**. |
+| **`PortfolioEngine.build`** (`lines 304–342`) | Pass **`tes_multipliers: dict[str, float]`** (or load inside `hrp_alpha_tilt` from path in context) via **`portfolio_context`** from `compute_target_weights` (`portfolio_context` dict, `target_weight_pipeline.py` lines **422–427**). |
+| **`target_weight_pipeline.py`** | After `intent = portfolio_engine.build(...)` (**line 427**), optional **second line of defense**: if future code paths bypass `hrp_alpha_tilt`, re-clip `intent.weights` to per-ticker max — **not required if all sizing goes through `hrp_alpha_tilt`**. Post-build renormalization (**lines 441–444**) must run **after** any TES adjustment so weights still sum to 1 on the requested universe. |
+| **Fallback path** | **`_build_inverse_atr`** (`portfolio_engine.py` lines **344–371**) does not use liquidity caps. **Decision:** apply the same per-ticker **max-weight cap** there: e.g. `max_w[t] = (1/top_n) * tes_mult[t]` or scale proportional to inverse-vol result — engineer to mirror “cap tilt” semantics without breaking equal-ish fallback intent. |
+| **Missing ticker in store** | **`tes_mult[t] = 1.0`** (neutral); **never** block, **never** raise. |
+
+**3. Config surface**
+
+| Key | Location | Purpose |
+|-----|----------|---------|
+| **`tes_enabled`** | `config/auditor_config.yaml` (or `config/strategy_params.yaml` if auditor YAML is wrong home — **engineer** to pick one; auditor YAML already holds TES fractions) | Master switch: when `false`, skip loading / treat all multipliers as `1.0`. |
+| **`tes_min_mult`** / **`tes_min_multiplier`** | Same file | Floor multiplier (e.g. `0.5`) for linear map. |
+| **`tes_scores_path`** | Optional | Default `data/tes_scores.json` relative to repo root. |
+| **`tes_score_cap`** | Optional | If set, use instead of batch `max(s)` for denominator stability across refreshes. |
+
+**4. What is NOT changing**
+
+- **Signal generation:** `SignalEngine.generate` and feature/news paths unchanged (`target_weight_pipeline.py` lines 302–303, 359–408).
+- **`PolicyEngine.apply`** and regime / sideways scaling unchanged (`target_weight_pipeline.py` lines 413–420).
+- **`auditor/tdo_gate.py`**, **50B market-cap gate**, and **TDO / Pulse eligibility** are **out of scope** for this watchlist integration — **not referenced** by the tilt loader or pipeline flags (per product constraint).
+
+#### SPOF (single point of failure)
+
+- **Stale `tes_scores.json`:** If `refresh_tes_scores.py` is not run after a company materially increases AI-related revenue share, **`multiplier` stays low** → that ticker’s **liquidity-derived cap remains artificially tight** → portfolio under-allocates vs current fundamentals until the next refresh. Mitigation: log **`audited_at`** age at load time in `compute_target_weights` when `tes_enabled` and warn if older than N days; optional auto-fallback to `1.0` when stale (product decision — default **warn only** to preserve constraint 2 “non-blocking”).
+
+#### Files affected (engineer step — list only; no edits in this ADR)
+
+- `scripts/refresh_tes_scores.py` (**new**)
+- `data/tes_scores.json` (**new**, generated; may gitignore)
+- `config/auditor_config.yaml` (or chosen config file) — **`tes_enabled`**, **`tes_min_mult`**, optional path keys
+- `src/core/portfolio_engine.py` — **`hrp_alpha_tilt`**, optionally **`_build_inverse_atr`**, **`PortfolioEngine.build`** context wiring
+- `src/core/target_weight_pipeline.py` — **`compute_target_weights`**: load TES JSON once per call, inject into `portfolio_context`, keep renormalize order
+- `.gitignore` — if `data/tes_scores.json` should not be committed
+- `scripts/run_weekly_rebalance.py` (or ops doc) — **invoke** `refresh_tes_scores.py` before weight build (documentation / ordering only if not automated inside pipeline)
+- `docs/WORKFLOW.md` / **`docs/INDEX.md`** pointer (if workflow doc must mention the batch step) — optional doc touch
+
+#### Evidence gap (could not fully confirm from files read)
+
+- **Execution-only entrypoints:** Whether every live order path calls **`compute_target_weights`** exclusively or duplicates sizing elsewhere was **not** traced in this read (`scripts/run_execution.py`, `run_weekly_rebalance.py` not opened) — **UNKNOWN** for full order-submission graph.
+- **`hrp_alpha_tilt` only when `prices_dict` non-empty:** If `PortfolioEngine.build` falls back to **`_build_inverse_atr`**, TES must be wired there too (**confirmed gap** in `portfolio_engine.py` lines 336–339); exact cap formula for inverse-ATR is **underspecified** without a small design spike.
+- **Cross-listed tickers** (`0700.HK`, `SAP.DE`): CIK resolution in refresh script may need symbol-specific logic beyond `SECFilingParser._ticker_to_cik` — **UNKNOWN** coverage without testing each symbol.
 
 ## Core Architectural Decisions
 

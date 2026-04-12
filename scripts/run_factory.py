@@ -12,6 +12,31 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 CONFIG_PATH = ROOT / "config" / "model_config.yaml"
 
+
+def _patch_model_config_training_window(config_path: Path, train_years: int) -> None:
+    """Rolling window: train [today-N years, today-365d], test [today-365d, today]. Writes YAML."""
+    from datetime import date, timedelta
+
+    _today = date.today()
+    try:
+        _train_start = _today.replace(year=_today.year - train_years)
+    except ValueError:
+        _train_start = _today.replace(month=2, day=28, year=_today.year - train_years)
+    _train_end = _today - timedelta(days=365)
+    _test_start = _train_end
+    _test_end = _today
+
+    with open(config_path, "r", encoding="utf-8") as _f:
+        _cfg = yaml.safe_load(_f) or {}
+    _cfg.setdefault("training", {})
+    _cfg["training"]["train_start"] = str(_train_start)
+    _cfg["training"]["train_end"] = str(_train_end)
+    _cfg["training"]["test_start"] = str(_test_start)
+    _cfg["training"]["test_end"] = str(_test_end)
+    with open(config_path, "w", encoding="utf-8") as _f:
+        yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
 def main() -> int:
     import argparse
     import pandas as pd
@@ -22,6 +47,12 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Run factory tournament.")
     parser.add_argument("--no-news", action="store_true", help="Pass news_signals=None.")
+    parser.add_argument(
+        "--train-years",
+        type=int,
+        default=4,
+        help="Years of history for train_start (default: 4, i.e. train_start ≈ today - N years).",
+    )
     args = parser.parse_args()
 
     cfg = get_config()
@@ -43,6 +74,7 @@ def main() -> int:
                     by_date = grp.groupby("Date")["Sentiment"].mean()
                     news_signals[ticker] = {str(d): {"sentiment": float(s), "supply_chain": 0.5} for d, s in by_date.items()}
 
+    _patch_model_config_training_window(CONFIG_PATH, int(args.train_years))
     model, model_type, ic = get_best_model(prices_dict, news_signals or {}, str(CONFIG_PATH))
     model_path = "tech_only"
     if model is not None:

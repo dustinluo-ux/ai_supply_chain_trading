@@ -1,20 +1,21 @@
 # PROJECT STATUS — Current State & Readiness Assessment
 
-**Last Updated:** 2026-02-15  
-**Project:** AI Supply Chain Quantitative Trading System  
-**Phase:** Phase 2 Active (Intelligence Expansion + Automated Rebalancing)
+**Last Updated:** 2026-04-12
+**Project:** AI Supply Chain Quantitative Trading System
+**Phase:** MVP Complete — Autonomous E2E Pipeline Operational
 
 ---
 
 ## Executive Summary
 
-**Quantitative trading system** that combines technical signals (Master Score: trend/momentum/volume/volatility), news sentiment analysis (FinBERT + event detection), and 3-state market regime detection (HMM) for weekly rebalancing of mid-cap stocks.
+**Autonomous quantitative trading pipeline** — dynamically imports price + news data, trains a rolling ML model, runs OOS backtest, constructs a portfolio with risk controls, and self-optimizes parameters on a weekly schedule without manual intervention.
 
-**Current focus:** Phase 2 — Automated Rebalancing wired; Live Execution Bridge (IBKR) in place; Execution Bridge mock verification complete; **Gemini Bridge verified (Active).**
+**Current status:** MVP operational. The full chain from raw data to promoted config runs unattended:
+`run_optimizer.py` → random search → `run_e2e_pipeline.py` (5 stages) → `run_promoter.py` → `strategy_params.yaml` → Windows Task Scheduler re-arms for next week.
 
-**Status:** Backtest and execution spine complete; spine produces validated orders using last-close price injection (dry-run parity with live path); paper execution with AccountMonitor, OrderDispatcher, CircuitBreaker; weekly rebalance entry point active.
+**OOS backtest result (smoke test, 2-trial run):** Sharpe ~0.44–0.47, composite score ~0.71–0.82. Trials completed with STATUS: PASS.
 
-**Operating mode:** Phase 2 — intelligence expansion and execution infrastructure active; ARCHITECTURE.md and STRATEGY_MATH.md require Proposal Review before edits.
+**Operating mode:** MVP Phase — optimization loop is live; paper/live IBKR execution is next gate.
 
 ---
 
@@ -33,10 +34,15 @@
 8. ✅ Performance metrics (Sharpe, total return, max drawdown)
 
 **Entry points:**
-- ✅ `scripts/backtest_technical_library.py` (canonical, production-ready)
-- ✅ `scripts/research_grid_search.py` (parameter sweep)
-- ✅ `scripts/run_execution.py` (canonical execution: spine -> Intent -> delta trades; mock or IB paper)
-- ✅ `scripts/run_weekly_rebalance.py` (canonical automated rebalancing entry; produces validated orders via last-close price injection; watchlist from `config/data_config.yaml`)
+- ✅ `scripts/run_e2e_pipeline.py` — canonical single-run E2E (5 stages: data→factory→backtest→execute→summary)
+- ✅ `scripts/run_optimizer.py` — autonomous random-search optimizer (N trials → promote → schedule)
+- ✅ `scripts/run_promoter.py` — atomic config promotion (winner → strategy_params.yaml)
+- ✅ `scripts/run_factory.py` — ML model factory with rolling window patch
+- ✅ `scripts/backtest_technical_library.py` — standalone OOS backtest engine
+- ✅ `scripts/run_execution.py` — portfolio execution (mock/paper/live); supports --no-hedge
+- ✅ `scripts/run_weekly_rebalance.py` — standalone weekly rebalance (legacy entry point)
+
+**E2E Pipeline + Optimizer — COMPLETE.** Full chain from data refresh to config promotion runs autonomously. Optimizer composite scoring: `0.5×Sharpe + 0.3×CAGR + 0.2×(1 - |maxDD|)`. Winner params written atomically to `strategy_params.yaml`; schtasks registers next weekly run.
 
 **Execution Bridge: Mock Verification — COMPLETE.** Spine produces validated orders (BUY/SELL with non-zero quantities) using last-close price injection. Implementation: `scripts/run_execution.py` builds a last-close Series from `prices_dict` and passes it as `prices` into `PositionManager.calculate_delta_trades` (see DECISIONS.md D018).
 
@@ -129,10 +135,12 @@
 ### Configuration & Documentation
 
 **Configs:**
-- ✅ `config/data_config.yaml` — data sources, paths
-- ✅ `config/technical_master_score.yaml` — category weights, indicators
-- ✅ `config/signal_weights.yaml` — legacy signal weights
-- ✅ `config/trading_config.yaml` — execution settings (exists, not wired to weekly)
+- ✅ `config/optimizer_config.yaml` — **master tuning manifest**: `search_space` (varied per trial), `fixed_params` (all other tunable dimensions consolidated here), `composite_weights` (scoring formula — config-driven, no code edit needed)
+- ✅ `config/model_config.yaml` — rolling training window (machine-written by factory patch — do not edit)
+- ✅ `config/strategy_params.yaml` — auto-promoted winner params
+- ✅ `config/trading_config.yaml` — execution settings (values mirrored in `fixed_params`)
+- ✅ `config/technical_master_score.yaml` — indicator definitions; category weights mirrored in `fixed_params`
+- ✅ `config/data_config.yaml` — data sources, paths, universe watchlist
 
 **Canonical documentation (INDEX.md + 11 in docs/):**
 - ✅ ARCHITECTURE.md — system design, data flow *(immutable: Proposal Review required before edits)*
@@ -166,13 +174,11 @@
 - ⚠️ Warm-up/self-healing implemented but not activated in weekly mode
 
 **Risk management:**
-- ❌ Config limits exist but not enforced in code
-  - `min_order_size`, `max_position_size` in `trading_config.yaml`
-  - Need: Validation layer in executor or wrapper
+- ✅ `max_single_position_weight: 0.40` enforced post-normalization in `portfolio_engine.py` (`hrp_alpha_tilt` + `_build_inverse_atr`)
+- ⚠️ `min_order_size`, `max_position_size` in `trading_config.yaml` still not enforced in executor
 
 **Scheduling:**
-- ❌ No automated weekly rebalance (cron, APScheduler)
-- ⚠️ Manual runs only
+- ✅ Windows Task Scheduler auto-registered after each optimizer run (AITrading_WeeklyOptimizer, next Mon 06:00)
 
 **Reconciliation:**
 - ❌ No fill verification (expected vs actual positions)
@@ -283,86 +289,75 @@
 
 ## Readiness Assessment
 
-### Research Phase: 95% Complete ✅
+### MVP (Autonomous E2E Loop): 100% Complete ✅
+
+- ✅ Dynamic data ingestion (price + news refresh)
+- ✅ Rolling ML model training (4-year window, auto-patched)
+- ✅ OOS backtest with contamination guard (test window from model_config, never hardcoded)
+- ✅ Portfolio construction — HRP/inverse-ATR + max single-weight cap (0.40)
+- ✅ Mock execution + last_valid_weights.json output
+- ✅ E2E pipeline (`run_e2e_pipeline.py`) — 5 stages, single entry point
+- ✅ Autonomous optimizer (`run_optimizer.py`) — random search, composite score
+- ✅ Config promotion (`run_promoter.py`) — atomic write, .bak preserved
+- ✅ Auto-scheduler — schtasks registers next Monday 06:00 after each optimizer run
+- ✅ Max single-position cap enforced in portfolio_engine.py
+
+### Paper Trading: 80% Complete ✅
 
 **Completed:**
-- ✅ Canonical workflow end-to-end
-- ✅ Master Score with dynamic weighting
-- ✅ News Alpha overlay (4 strategies)
-- ✅ 3-state regime detection (HMM)
-- ✅ Policy gates with dual-confirmation
-- ✅ Backtest infrastructure
-- ✅ Safety validation
-- ✅ State logging and diagnostics
+- ✅ `src/data/ibkr_live_provider.py` — connect, get_live_prices (snapshot + historical fallback), get_account_summary (NAV, margin), get_positions
+- ✅ Live prices wired into `run_execution.py --mode paper` — overlaid on last bar of prices_dict; NAV from IBKR replaces hardcoded 100k
+- ✅ `src/data/contract_resolver.py` — resolves equity/future/option to typed IB contract; front-month future selection; ATM option selection; roll warning
+- ✅ `config/instruments.yaml` — all instrument definitions (NQ×20, MNQ×2, SMH options, allocation limits)
+- ✅ `_instrument_type()` helper in `run_execution.py` — routes each ticker to correct contract type via instruments.yaml
+- ✅ `Intent.futures_multipliers` — passed through portfolio engine → position_manager; futures quantity = delta_dollars / (price × multiplier)
+- ✅ `--confirm-paper` → real order submission via IBExecutor + stop orders
+- ✅ Fill ledger (`outputs/fills/fills.jsonl`) + `--check-fills` flag
+- ✅ Circuit breaker, AccountMonitor, OrderDispatcher wired
 
-**Remaining (5%):**
-- ⚠️ Multi-year backtest validation
-- ⚠️ Statistical significance testing
-- ⚠️ Parameter sensitivity analysis
-
-### Paper Trading: 30% Complete ⚠️
-
-**Completed:**
-- ✅ IBKR components exist (`ib_provider.py`, `ib_executor.py`)
-- ✅ Executor factory pattern
-- ✅ Configuration structure
-- ✅ Signal generation for "this week"
-- ✅ Orchestration: `run_weekly_rebalance.py` → `run_execution.py` (spine → Intent → delta trades → optional IB submit)
-- ✅ Execution Bridge mock verification: dry-run produces validated orders (last-close price injection in `run_execution.py` for `PositionManager` parity)
-
-**Remaining (70%):**
-- ❌ Fill reconciliation
-- ❌ Order status tracking
-- ❌ Config limit enforcement
-- ❌ Scheduling automation
+**Remaining (activate when TWS is running):**
+- ❌ First live paper run with TWS — validation deferred
+- ❌ `min_order_size` / `max_position_size` enforcement in executor
+- ❌ Automated TWS session startup
 
 ### Live Trading: 20% Complete ⚠️
 
-**Completed:**
-- ✅ Same as paper trading infrastructure
-
-**Remaining (80%):**
-- ❌ All paper trading gaps
-- ❌ Real-time data feeds
+**Remaining (beyond paper):**
+- ❌ Real-time price feeds
 - ❌ Live news ingestion
 - ❌ Position reconciliation
-- ❌ Safety limits enforcement
-- ❌ Duplicate order prevention
+- ❌ Duplicate order guardrails
 - ❌ Monitoring dashboard
 
 ---
 
 ## Priority Action Items
 
-### High Priority (Must-Have for Paper Trading)
+### High Priority (Next Gate: Profitability Proof)
 
-| # | Item | Effort | Status |
-|---|------|--------|--------|
-| 1 | Create `run_paper_rebalance.py` orchestration script | 2 hrs | ❌ Not started |
-| 2 | Wire Phase 3 to weekly in-memory signals | 1 hr | ❌ Not started |
-| 3 | Add audit logging to backtest runs | 1 hr | ❌ Not started |
-| 4 | Enforce execution limits from config | 1 hr | ❌ Not started |
-| 5 | Implement simple fill check | 1 hr | ❌ Not started |
+| # | Item | Status |
+|---|------|--------|
+| 1 | Run full backtest 2019–2024, confirm profitable Sharpe | ❌ Deferred (20–40 min run) |
+| 2 | Activate TES tilt: `python scripts/refresh_tes_scores.py` | ❌ Deferred (3–5 min) |
+| 3 | Verify `run_weekly_rebalance.py --dry-run` produces non-zero weights (ASML/AMAT CSVs now present) | ❌ Not yet verified |
 
-### Medium Priority (Quality & Validation)
+### Medium Priority (Paper Trading Readiness)
 
-| # | Item | Effort | Status |
-|---|------|--------|--------|
-| 6 | Multi-year backtest (2020-2024) | 4 hrs | ❌ Not started |
-| 7 | Statistical validation (confidence intervals, p-values) | 3 hrs | ❌ Not started |
-| 8 | Parameter sensitivity sweep | 2 hrs | ✅ Complete |
-| 9 | Update regime ledger post-run | 2 hrs | ❌ Planned |
-| 10 | Wire ML pipeline to main flow | 3 hrs | ❌ Not started |
+| # | Item | Status |
+|---|------|--------|
+| 4 | Fill reconciliation (expected vs actual positions) | ❌ Not started |
+| 5 | Order status tracking | ❌ Not started |
+| 6 | Enforce `min_order_size` / `max_position_size` in executor | ❌ Not started |
+| 7 | Multi-year statistical validation (confidence intervals) | ❌ Not started |
 
-### Low Priority (Enhancement)
+### Low Priority
 
-| # | Item | Effort | Status |
-|---|------|--------|--------|
-| 11 | Real-time data feeds | 8 hrs | ❌ Not started |
-| 12 | Live news ingestion | 6 hrs | ❌ Not started |
-| 13 | Monitoring dashboard | 8 hrs | ❌ Not started |
-| 14 | Walk-forward analysis | 4 hrs | ❌ Not started |
-| 15 | Monte Carlo simulation | 4 hrs | ❌ Not started |
+| # | Item | Status |
+|---|------|--------|
+| 8 | Real-time data feeds | ❌ Not started |
+| 9 | Live news ingestion pipeline | ❌ Not started |
+| 10 | Monitoring dashboard | ❌ Not started |
+| 11 | Walk-forward / Monte Carlo simulation | ❌ Not started |
 
 ---
 

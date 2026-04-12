@@ -1,0 +1,65 @@
+optimizer:
+  strategy: random
+  n_trials: 30
+  min_sharpe: 0.0               # reject trial if OOS Sharpe below this
+  results_path: outputs/optimizer_results.json
+  run_interval_days: 30         # used by auto-scheduler (schtasks)
+
+  # Composite score formula: weighted sum used to rank trials.
+  # Must sum to 1.0. Change here — no code edit needed.
+  composite_weights:
+    sharpe: 0.50
+    cagr:   0.30
+    maxdd:  0.20                # contribution = maxdd_weight * (1 - abs(maxDD))
+
+# Dimensions varied per trial (random choice from each list).
+# Add values or move fixed_params entries here to include them in optimization.
+search_space:
+  top_n:          [3, 5, 8]
+  score_floor:    [0.0, 0.2, 0.3]
+  no_llm:         [true]        # always true for speed; false = Phase 3
+  track:          [A]           # D requires short-selling infra; Phase 3
+  no_hedge:       [true, false]
+  train_years:    [3, 4]
+
+# Dimensions that are tunable but fixed for this run.
+# Move any entry into search_space (as a list) to include it in optimization.
+fixed_params:
+
+  # --- Signal blending ---
+  news_weight: 0.20             # 0 = pure technical, 1 = pure news
+                                # source: config/technical_master_score.yaml
+
+  # --- Portfolio construction ---
+  max_single_position_weight: 0.40   # hard cap per position post-normalization
+                                      # source: config/trading_config.yaml → risk
+  risk_pct: 0.02                # fraction of equity risked per position (ATR sizing)
+  atr_multiplier: 2.0           # stop distance in ATRs; source: trading_config.yaml
+
+  # --- Master Score category weights (must sum to 1.0) ---
+  # source: config/technical_master_score.yaml → category_weights
+  master_score_weights:
+    trend:      0.40
+    momentum:   0.30
+    volume:     0.20
+    volatility: 0.10
+
+  # --- Normalization ---
+  rolling_window: 252           # trading days for unbounded indicator normalization (~1yr)
+                                # source: config/technical_master_score.yaml
+
+  # --- ML model factory ---
+  # The factory runs a tournament: Ridge vs XGBoost vs CatBoost.
+  # Winner = highest IC above factory_ic_gate. Result cached 7 days in models/factory_winner.json.
+  # --skip-model (used per optimizer trial) reuses that cache; only one tournament per optimizer run.
+  # To force a specific model, remove the others from candidate_models (code change required).
+  # source: config/model_config.yaml
+  candidate_models: [ridge, xgboost, catboost]
+  factory_ic_gate: 0.01         # minimum IC to qualify; if none qualify → tech_only (no ML blend)
+  ml_blend_weight: 0.30         # weight of ML signal in final score (1 - ml_blend_weight = technical)
+  current_winner: catboost      # informational only — actual winner is in models/factory_winner.json
+
+  # --- Instrument allocation limits ---
+  # source: config/instruments.yaml → allocation_limits
+  max_futures_pct: 0.20
+  max_options_pct: 0.10    # applied on delta-adjusted notional

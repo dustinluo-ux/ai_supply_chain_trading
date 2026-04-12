@@ -1,0 +1,506 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://alpha-scout-pipeline/thesis-data-object/v1",
+  "title": "ThesisDataObject",
+  "description": "Immutable, deterministic handoff format between Scout → Auditor → Pulse modules. A TDO must traverse all three phases before any capital deployment is permitted.",
+  "version": "1.0.0",
+
+  "type": "object",
+  "required": [
+    "thesis_id",
+    "schema_version",
+    "phase",
+    "created_at",
+    "scout"
+  ],
+  "additionalProperties": false,
+
+  "properties": {
+
+    "thesis_id": {
+      "type": "string",
+      "description": "Deterministic UUID v5 derived from thesis_claim text. Immutable after Scout emission. Format: tdo_{uuid4}.",
+      "pattern": "^tdo_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "examples": ["tdo_7f3a9b12-4e1c-4d2f-a83b-9c0e1f2d3a4b"]
+    },
+
+    "schema_version": {
+      "type": "string",
+      "description": "Semver of this TDO schema. Must match the version field at top-level.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "const": "1.0.0"
+    },
+
+    "phase": {
+      "type": "string",
+      "description": "Current lifecycle stage. Pulse is prohibited from executing unless phase = AUDITED.",
+      "enum": ["SCOUTED", "AUDIT_PENDING", "AUDITED", "AUDIT_FAILED", "PULSE_BLOCKED", "PULSE_ELIGIBLE", "EXECUTED", "EXPIRED"]
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of Scout emission. Immutable."
+    },
+
+    "last_updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of last phase transition."
+    },
+
+    "scout": {
+      "type": "object",
+      "description": "Output from Module 1 (Scout). Populated at SCOUTED phase. Immutable after emission.",
+      "required": ["title", "thesis_claim", "summary", "confidence", "horizon", "supporting_findings"],
+      "additionalProperties": false,
+      "properties": {
+
+        "title": {
+          "type": "string",
+          "description": "Short-form thesis title (max 120 chars).",
+          "maxLength": 120
+        },
+
+        "thesis_claim": {
+          "type": "string",
+          "description": "Single falsifiable investment claim. The canonical 'why this matters' statement.",
+          "minLength": 50,
+          "maxLength": 1000
+        },
+
+        "summary": {
+          "type": "string",
+          "description": "2-4 sentence narrative of the opportunity.",
+          "maxLength": 2000
+        },
+
+        "confidence": {
+          "type": "number",
+          "description": "Scout composite confidence score [0.0, 1.0]. Below 0.30 = LowSignalError (blocked).",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+
+        "horizon": {
+          "type": "string",
+          "description": "Investment horizon classification.",
+          "enum": ["H1_TACTICAL", "H2_STRUCTURAL", "H3_DISCOVERY"],
+          "default": "H3_DISCOVERY"
+        },
+
+        "query_origin": {
+          "type": "string",
+          "description": "The original search query or sentinel topic that triggered this thesis."
+        },
+
+        "trigger_source": {
+          "type": "string",
+          "description": "What caused Scout to fire this thesis.",
+          "enum": ["MANUAL_QUERY", "SENTINEL_ACCELERATION", "SEED_PAPER", "CRON_SCHEDULED"]
+        },
+
+        "supporting_findings": {
+          "type": "array",
+          "description": "Source evidence. Minimum 3 required for a valid thesis (circuit breaker threshold).",
+          "minItems": 3,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["url", "title", "source_domain", "composite_score"],
+            "additionalProperties": false,
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "title": { "type": "string" },
+              "snippet": { "type": "string" },
+              "source_domain": { "type": "string" },
+              "published_date": { "type": ["string", "null"], "format": "date" },
+              "relevance_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+              "novelty_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+              "evidence_quality": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+              "composite_score": {
+                "type": "number",
+                "description": "0.40×relevance + 0.35×novelty + 0.25×evidence. Must exceed 0.30 to pass gatekeeper.",
+                "minimum": 0.0,
+                "maximum": 1.0
+              }
+            }
+          }
+        },
+
+        "critical_disagreement": {
+          "type": ["string", "null"],
+          "description": "Counter-narrative identified by Gemini synthesis. Null if no disagreement found."
+        },
+
+        "research_risks": {
+          "type": "array",
+          "description": "Risk factors identified during synthesis.",
+          "items": { "type": "string" }
+        },
+
+        "bottleneck_description": {
+          "type": ["string", "null"],
+          "description": "Free-text description of the supply chain bottleneck or technological constraint. Feeds BOM Decomposer in Auditor."
+        }
+      }
+    },
+
+    "auditor": {
+      "type": ["object", "null"],
+      "description": "Output from Module 2 (Auditor). Null until phase transitions to AUDIT_PENDING. Contains physical verification and TES scoring.",
+      "required": ["audit_hash", "tes_score", "tes_components", "market_cap_usd", "cap_rule_passed"],
+      "additionalProperties": false,
+      "properties": {
+
+        "audit_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of the canonical audit payload (tes_score + supply_chain + financials). Required by Pulse before any execution. Format: audit_{hex64}.",
+          "pattern": "^audit_[0-9a-f]{64}$"
+        },
+
+        "audited_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp when audit_hash was sealed."
+        },
+
+        "auditor_version": {
+          "type": "string",
+          "description": "Semver of the Auditor module that generated this record.",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+
+        "tes_score": {
+          "type": "number",
+          "description": "Technology Exposure Score. Formula: (niche_revenue / total_revenue) × (1 + CAGR) × patent_density. Range: [0.0, ∞), typically [0.0, 3.0].",
+          "minimum": 0.0
+        },
+
+        "tes_components": {
+          "type": "object",
+          "description": "Disaggregated TES inputs for reproducibility.",
+          "required": ["niche_revenue_usd", "total_revenue_usd", "niche_revenue_ratio", "divisional_cagr", "patent_density"],
+          "additionalProperties": false,
+          "properties": {
+            "primary_ticker": { "type": ["string", "null"], "description": "CIK-resolved ticker symbol." },
+            "company_name": { "type": ["string", "null"] },
+            "niche_revenue_usd": { "type": ["number", "null"], "description": "Divisional niche revenue in USD." },
+            "total_revenue_usd": { "type": ["number", "null"], "description": "Total company revenue in USD." },
+            "niche_revenue_ratio": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+            "divisional_cagr": { "type": ["number", "null"], "description": "Divisional CAGR (e.g., 0.25 = 25%)." },
+            "patent_density": { "type": ["number", "null"], "description": "Patent count per $1B revenue or normalized patent score [0.0, 1.0].", "minimum": 0.0 },
+            "data_vintage": { "type": ["string", "null"], "format": "date", "description": "Date of most recent SEC filing used." },
+            "data_confidence": { "type": ["string", "null"], "enum": ["HIGH", "MEDIUM", "LOW", "ESTIMATED", null] }
+          }
+        },
+
+        "market_cap_usd": {
+          "type": ["number", "null"],
+          "description": "Market cap in USD at time of audit. Used to enforce the 50B-cap rule.",
+          "minimum": 0
+        },
+
+        "cap_rule_passed": {
+          "type": "boolean",
+          "description": "RED TEAM CONSTRAINT: True only if market_cap_usd < 50,000,000,000 (sub-$50B). Pulse MUST NOT execute if false."
+        },
+
+        "bom_components": {
+          "type": "array",
+          "description": "Bill-of-materials components extracted by Gemini from bottleneck_description.",
+          "items": { "type": "string" }
+        },
+
+        "supply_chain": {
+          "type": "object",
+          "description": "Physical supply chain mapping extracted from SEC 10-K filings.",
+          "additionalProperties": false,
+          "properties": {
+            "primary_company": { "type": ["string", "null"] },
+            "suppliers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "ticker": { "type": ["string", "null"] },
+                  "tier": { "type": "integer", "enum": [1, 2] },
+                  "relationship_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+                }
+              }
+            },
+            "customers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "ticker": { "type": ["string", "null"] },
+                  "tier": { "type": "integer", "enum": [1, 2] },
+                  "relationship_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+                }
+              }
+            },
+            "competitors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "ticker": { "type": ["string", "null"] }
+                }
+              }
+            },
+            "sec_filings_used": {
+              "type": "array",
+              "items": { "type": "string", "description": "SEC accession numbers (e.g., 0001140361-24-000001)." }
+            }
+          }
+        },
+
+        "audit_failures": {
+          "type": "array",
+          "description": "Non-fatal audit warnings (e.g., missing SEC data, low-confidence CAGR).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stage": { "type": "string", "enum": ["BOM_DECOMPOSE", "SUPPLY_CHAIN", "FINANCIAL_FETCH", "TES_SCORE", "CAP_RULE"] },
+              "message": { "type": "string" },
+              "severity": { "type": "string", "enum": ["WARNING", "ERROR"] }
+            }
+          }
+        }
+      }
+    },
+
+    "pulse": {
+      "type": ["object", "null"],
+      "description": "Execution gate and portfolio metadata from Module 3 (Pulse). Null until Auditor seals the audit_hash. MUST NOT be populated if auditor.cap_rule_passed = false.",
+      "additionalProperties": false,
+      "properties": {
+
+        "execution_permitted": {
+          "type": "boolean",
+          "description": "RED TEAM CONSTRAINT: Must be true AND auditor.audit_hash must be verified before any order is submitted. Computed as: audit_hash_valid AND cap_rule_passed AND tes_score >= tes_threshold."
+        },
+
+        "execution_blocked_reason": {
+          "type": ["string", "null"],
+          "description": "Human-readable reason why execution_permitted = false. Required when execution_permitted is false."
+        },
+
+        "tes_threshold_used": {
+          "type": "number",
+          "description": "Minimum TES score required for execution_permitted = true. Default: 0.20.",
+          "default": 0.20
+        },
+
+        "macro_gate": {
+          "type": "object",
+          "description": "Macro regime state at time of pulse evaluation.",
+          "additionalProperties": false,
+          "properties": {
+            "regime": { "type": "string", "enum": ["BULL", "SIDEWAYS", "BEAR"] },
+            "spy_vs_200sma": { "type": ["number", "null"], "description": "SPY price / SPY 200-day SMA ratio." },
+            "kill_switch_active": { "type": "boolean", "description": "True if SPY < 200 SMA (hard exit gate)." },
+            "evaluated_at": { "type": "string", "format": "date-time" }
+          }
+        },
+
+        "target_tickers": {
+          "type": "array",
+          "description": "Resolved ticker symbols from supply chain mapping for portfolio targeting.",
+          "items": { "type": "string" }
+        },
+
+        "suggested_position_bias": {
+          "type": "string",
+          "description": "Directional bias from TES + macro gate.",
+          "enum": ["OVERWEIGHT", "NEUTRAL", "UNDERWEIGHT", "NO_POSITION"]
+        },
+
+        "thesis_expiry_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "Date after which this TDO must be re-audited before Pulse can re-execute. Default: 90 days from audited_at."
+        },
+
+        "execution_log": {
+          "type": "array",
+          "description": "Immutable append-only log of all execution events referencing this TDO.",
+          "items": {
+            "type": "object",
+            "required": ["event_type", "timestamp", "audit_hash_at_execution"],
+            "properties": {
+              "event_type": { "type": "string", "enum": ["WEIGHT_APPLIED", "ORDER_SUBMITTED", "FILL_CONFIRMED", "POSITION_EXITED", "GATE_BLOCKED"] },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "audit_hash_at_execution": { "type": "string", "description": "Must match auditor.audit_hash. Mismatch = tampered TDO, block immediately." },
+              "ticker": { "type": ["string", "null"] },
+              "weight": { "type": ["number", "null"] },
+              "notes": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+
+    "red_team_constraints": {
+      "type": "object",
+      "description": "Hard constraints enforced at schema level. Any module producing a TDO that violates these must raise an AuditConstraintError and halt.",
+      "additionalProperties": false,
+      "properties": {
+
+        "market_cap_ceiling_usd": {
+          "type": "integer",
+          "description": "50B-CAP RULE: Pulse MUST NOT build a position if auditor.market_cap_usd exceeds this value. Hard ceiling.",
+          "const": 50000000000
+        },
+
+        "min_supporting_findings": {
+          "type": "integer",
+          "description": "Circuit breaker: Scout must supply at minimum this many findings above threshold. Below = LowSignalError.",
+          "const": 3
+        },
+
+        "min_composite_score": {
+          "type": "number",
+          "description": "Minimum composite_score per finding to pass the Scout gatekeeper.",
+          "const": 0.30
+        },
+
+        "audit_hash_required_for_execution": {
+          "type": "boolean",
+          "description": "EXECUTION GATE: Pulse is unconditionally prohibited from submitting any order if auditor.audit_hash is null or unverified.",
+          "const": true
+        },
+
+        "max_thesis_age_days": {
+          "type": "integer",
+          "description": "TDOs older than this (from audited_at) require re-audit before Pulse can act. Default 90 days.",
+          "const": 90
+        },
+
+        "same_day_execution_gate_hours": {
+          "type": "integer",
+          "description": "CONTAMINATION GATE: Pulse must not execute on a TDO within this many hours of Scout emission. Prevents same-day signal feedback loop.",
+          "const": 24
+        }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "description": "Audit trail of all module versions and timestamps that touched this TDO.",
+      "additionalProperties": false,
+      "properties": {
+        "scout_version": { "type": ["string", "null"], "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "auditor_version": { "type": ["string", "null"], "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "pulse_version": { "type": ["string", "null"], "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "pipeline_run_id": { "type": ["string", "null"], "description": "Unique ID for the pipeline run that created this TDO (for log correlation)." },
+        "git_sha_scout": { "type": ["string", "null"], "description": "Git commit SHA of alpha_scout at emission time." },
+        "git_sha_pulse": { "type": ["string", "null"], "description": "Git commit SHA of ai_supply_chain_trading at execution time." }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "thesis_id": "tdo_7f3a9b12-4e1c-4d2f-a83b-9c0e1f2d3a4b",
+      "schema_version": "1.0.0",
+      "phase": "AUDITED",
+      "created_at": "2026-03-10T09:00:00Z",
+      "last_updated_at": "2026-03-10T11:30:00Z",
+      "scout": {
+        "title": "GaN Power Semiconductor Supply Constraint — Sub-$50B Beneficiaries",
+        "thesis_claim": "Gallium nitride power semiconductor demand will outpace supply through 2027 due to EV charger ramp and AI data center PDU upgrades, creating a structural margin expansion for tier-2 GaN fabs currently trading below $15B market cap.",
+        "summary": "Three independent supply chain analyses confirm GaN substrate capacity is running at 94% utilization globally. Two tier-2 fabs have filed provisional patents on new substrate techniques. SEC 10-K filings show 3 major hyperscalers adding GaN-specific supplier clauses.",
+        "confidence": 0.74,
+        "horizon": "H3_DISCOVERY",
+        "query_origin": "GaN power semiconductor supply chain constraints 2026",
+        "trigger_source": "SENTINEL_ACCELERATION",
+        "supporting_findings": [
+          {
+            "url": "https://arxiv.org/abs/2501.12345",
+            "title": "Gallium Nitride Substrate Capacity Constraints in High-Power Applications",
+            "snippet": "Current fab utilization exceeds 92% in top-5 GaN producers...",
+            "source_domain": "arxiv.org",
+            "published_date": "2025-11-14",
+            "relevance_score": 0.88,
+            "novelty_score": 0.81,
+            "evidence_quality": 0.85,
+            "composite_score": 0.85
+          }
+        ],
+        "critical_disagreement": "SiC may substitute GaN in some EV applications above 800V — reduces addressable market by ~20%.",
+        "research_risks": ["Silicon carbide substitution risk", "Geopolitical: 60% of GaN substrates sourced from China"],
+        "bottleneck_description": "GaN HEMT substrate fabrication requiring MOCVD reactors; constraint at epitaxial layer deposition step"
+      },
+      "auditor": {
+        "audit_hash": "audit_a3f9c1d2e4b5f67890abcdef1234567890abcdef1234567890abcdef12345678",
+        "audited_at": "2026-03-10T11:28:00Z",
+        "auditor_version": "1.0.0",
+        "tes_score": 0.68,
+        "tes_components": {
+          "primary_ticker": "WOLFSPEED",
+          "company_name": "Wolfspeed Inc.",
+          "niche_revenue_usd": 890000000,
+          "total_revenue_usd": 1020000000,
+          "niche_revenue_ratio": 0.873,
+          "divisional_cagr": 0.31,
+          "patent_density": 0.59,
+          "data_vintage": "2025-09-30",
+          "data_confidence": "HIGH"
+        },
+        "market_cap_usd": 4200000000,
+        "cap_rule_passed": true,
+        "bom_components": ["MOCVD reactor", "GaN epitaxial wafer", "SiC substrate", "HEMT die", "power module package"],
+        "supply_chain": {
+          "primary_company": "Wolfspeed Inc.",
+          "suppliers": [
+            { "name": "Aixtron SE", "ticker": "AIXA.DE", "tier": 1, "relationship_strength": 0.82 }
+          ],
+          "customers": [
+            { "name": "Onsemi", "ticker": "ON", "tier": 1, "relationship_strength": 0.71 }
+          ],
+          "competitors": [
+            { "name": "Infineon Technologies", "ticker": "IFNNY" }
+          ],
+          "sec_filings_used": ["0001558750-25-001234"]
+        },
+        "audit_failures": []
+      },
+      "pulse": {
+        "execution_permitted": true,
+        "execution_blocked_reason": null,
+        "tes_threshold_used": 0.20,
+        "macro_gate": {
+          "regime": "BULL",
+          "spy_vs_200sma": 1.08,
+          "kill_switch_active": false,
+          "evaluated_at": "2026-03-10T16:00:00Z"
+        },
+        "target_tickers": ["WOLF", "ON", "AIXA.DE"],
+        "suggested_position_bias": "OVERWEIGHT",
+        "thesis_expiry_date": "2026-06-08",
+        "execution_log": []
+      },
+      "red_team_constraints": {
+        "market_cap_ceiling_usd": 50000000000,
+        "min_supporting_findings": 3,
+        "min_composite_score": 0.30,
+        "audit_hash_required_for_execution": true,
+        "max_thesis_age_days": 90,
+        "same_day_execution_gate_hours": 24
+      },
+      "provenance": {
+        "scout_version": "1.0.0",
+        "auditor_version": "1.0.0",
+        "pulse_version": "1.0.0",
+        "pipeline_run_id": "run_20260310_090012",
+        "git_sha_scout": null,
+        "git_sha_pulse": null
+      }
+    }
+  ]
+}

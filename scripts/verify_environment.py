@@ -41,6 +41,11 @@ def _check_gemini_api_key() -> tuple[bool, str]:
 
 def main() -> int:
     missing = []
+    import numpy as np
+
+    if not hasattr(np, "NaN"):
+        np.NaN = np.nan  # numpy 2.x; pandas_ta imports numpy.NaN before technical_library patch runs
+
     # Spine-critical: target_weight_pipeline -> SignalEngine -> technical_library, weight_model
     checks = [
         ("pandas", "pandas"),
@@ -73,7 +78,7 @@ def main() -> int:
 
     if missing:
         print(f"\nERROR: Missing required packages: {', '.join(missing)}", flush=True)
-        print("  pip install -r requirements.txt", flush=True)
+        print("  conda env update -f environment.yml  # or: conda activate wealth", flush=True)
         print("  For Gemini bridge: pip install google-genai pydantic", flush=True)
         print("  then re-run: python scripts/verify_environment.py", flush=True)
         return 1

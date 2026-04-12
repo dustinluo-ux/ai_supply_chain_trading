@@ -42,3 +42,4 @@ position_sizing:
 risk:
   max_drawdown_pause: -0.10   # pause auto_paper if portfolio drawdown exceeds 10%
   max_daily_loss: -0.03       # skip execution if yesterday's return below -3%
+  max_single_position_weight: 0.40
