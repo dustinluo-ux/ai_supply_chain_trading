@@ -82,6 +82,8 @@ def main() -> int:
                         help="Stage 4: disable SMH hedge.")
     parser.add_argument("--skip-gate", action="store_true", default=False, dest="skip_gate",
                         help="Stage 3.5: skip Skeptic Gate (use for optimizer/backtest-only runs).")
+    parser.add_argument("--ibkr-port", type=int, default=7497, dest="ibkr_port",
+                        help="Stage 4: IBKR TWS port (default 7497 paper, 7496 live).")
     parser.add_argument(
         "--dry-run",
         default=True,
@@ -381,6 +383,8 @@ def main() -> int:
         _mode,
         "--regime-multiplier",
         "1.0",
+        "--ibkr-port",
+        str(args.ibkr_port),
     ]
     if args.track == "D":
         _argv.extend(["--track", "D"])
