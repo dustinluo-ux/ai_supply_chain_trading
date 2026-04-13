@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Last Updated:** 2026-04-12
+**Last Updated:** 2026-04-13
 
 **Single entry point for all project documentation.** This file lists the 11 canonical documents that define the system. All other documentation is either archived or superseded.
 
@@ -124,12 +124,17 @@ Then load task-specific docs as needed.
 
 **Run E2E pipeline (single run):**
 ```bash
-python scripts/run_e2e_pipeline.py
+python scripts/run_e2e_pipeline.py --skip-data
 ```
 
-**Run autonomous optimizer (30 trials):**
+**Run E2E pipeline with paper orders (TWS must be running on port 7497):**
 ```bash
-python scripts/run_optimizer.py
+python scripts/run_e2e_pipeline.py --skip-data --no-dry-run --ibkr-port 7497
+```
+
+**Run autonomous optimizer (weekly, self-scheduling):**
+```bash
+python scripts/run_optimizer.py --n-trials 30 --skip-data
 ```
 
 **Smoke test (2 trials, skip data):**
@@ -137,9 +142,14 @@ python scripts/run_optimizer.py
 python scripts/run_optimizer.py --n-trials 2 --skip-data
 ```
 
+**Run quarterly model retrain (self-scheduling):**
+```bash
+python scripts/run_quarterly_retrain.py
+```
+
 **Standalone OOS backtest:**
 ```bash
-python scripts/backtest_technical_library.py --tickers NVDA,AMD,TSM --start 2023-01-01 --end 2023-12-31 --no-llm
+python scripts/backtest_technical_library.py --start 2024-01-01 --end 2024-12-31 --no-llm --score-floor 0.65 --top-n 3
 ```
 
 **Canonical Configuration:**
@@ -157,6 +167,11 @@ python scripts/backtest_technical_library.py --tickers NVDA,AMD,TSM --start 2023
 - `outputs/e2e_oos_backtest.json` — latest OOS backtest result
 - `outputs/last_valid_weights.json` — latest portfolio weights
 - `outputs/optimizer_results.json` — full optimizer trial log
+- `outputs/retrain_oos_latest.json` — latest quarterly retrain OOS result
+- `outputs/retrain_baseline.json` — retrain promotion baseline
+- `outputs/agent_audit.json` — Taleb + Damodaran per-ticker advisory (Stage 3.6)
+- `outputs/fills/fills.jsonl` — order fill ledger
+- `outputs/drawdown_tracker.json` — peak NAV, drawdown, flatten_active flag
 - `models/factory_winner.json` — best model from last factory run
 
 ---

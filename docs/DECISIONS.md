@@ -668,6 +668,62 @@ RegimeState {
 
 ---
 
+### D020 — Autonomous Optimizer Loop with schtasks (2026-04-12)
+
+**Decision:** `run_optimizer.py` runs a random search over `optimizer_config.yaml` search_space, promotes the winner via `run_promoter.py`, and self-registers in Windows Task Scheduler to re-run next Monday 06:00. No human intervention required for weekly param tuning.
+
+**Rationale:**
+- Parameter sensitivity (top_n, score_floor, sma_window) shifts with market regimes. Weekly re-optimization adapts without manual intervention.
+- Composite score: 0.5*Sharpe + 0.3*CAGR + 0.2*(1 - |maxDD|) balances return quality and drawdown control.
+- Promoter guard: skips promotion if winner composite <= -998 or exit_code != 0 (prevents junk params from failed trials corrupting config).
+
+**Optimized params (2026-04-12 36-combo grid):** sma_window=100, score_floor=0.65, top_n=3. IS Calmar 1.683; OOS 2024 Calmar 9.67.
+
+**Status:** Implemented. schtasks registers AITrading_WeeklyOptimizer after each run.
+
+---
+
+### D021 — Skeptic Gate as Pre-Execution Bear Screen (2026-04-12)
+
+**Decision:** Stage 3.5 of the E2E pipeline runs a bear-flag screen (`src/agents/skeptic_gate.py`) on any position with weight > 15%. If any such ticker has >= 2 bear flags (PE>35, PB>5, D/E>2, current ratio<1, 52w drawdown < -40%), the pipeline exits 1 before execution.
+
+**Rationale:**
+- Concentrated positions in fundamentally distressed names compound tail risk. A simple rules-based screen costs nothing and prevents obvious blow-ups.
+- Uses live yfinance data — appropriate for execution decisions, not historical backtests.
+
+**Key design constraint:** The gate is skipped during optimizer trials (`--skip-gate`) because it uses live market data, which is irrelevant to historical backtest scoring.
+
+**Status:** Implemented. Gate currently blocks AMD + TSM (bear flags as of 2026-04-13).
+
+---
+
+### D022 — Taleb + Damodaran Advisory Agents (Stage 3.6) (2026-04-12)
+
+**Decision:** Stage 3.6 runs `taleb_auditor.py` and `damodaran_anchor.py` on each concentrated position after the Skeptic Gate. Results are advisory only — never exits non-zero. Output written atomically to `outputs/agent_audit.json`.
+
+**Rationale:**
+- Skeptic Gate catches distress. Taleb captures tail/fragility risk (convexity, antifragility, vol regime). Damodaran anchors intrinsic value (FCFF DCF, CAPM, margin of safety).
+- Advisory, never blocking: these agents surface information; the human (or future automated layer) decides whether to act.
+
+**Status:** Implemented. Both agents use yfinance only. All non-ASCII chars replaced for cp1252 compatibility.
+
+---
+
+### D023 — Quarterly Model Retraining Automation (2026-04-13)
+
+**Decision:** `run_quarterly_retrain.py` automates the full model lifecycle: force retrain via `run_factory`, OOS backtest on prior calendar year, promotion gate (new Sharpe >= 0.9 * baseline AND new CAGR >= 0.9 * baseline), and self-registration in schtasks 91 days out.
+
+**Rationale:**
+- ML model with IC=0.0958 adds +15-30% CAGR over technical-only (validated 2024 OOS). Keeping the model fresh on rolling data maintains this edge.
+- Quarterly cadence balances freshness vs overfitting to short regimes.
+- Promotion gate prevents a degraded model from being silently promoted. On rejection, previous `factory_winner.json` is restored from `.bak`.
+
+**Baseline stored in:** `outputs/retrain_baseline.json`. Updated on every successful promotion.
+
+**Status:** Implemented. First run will establish baseline and schedule next quarterly run.
+
+---
+
 ## Governance Process
 
 ### Decision Lifecycle
