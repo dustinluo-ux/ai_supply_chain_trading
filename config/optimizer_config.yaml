@@ -20,7 +20,6 @@ search_space:
   no_llm:         [true]        # always true for speed; false = Phase 3
   track:          [A]           # D requires short-selling infra; Phase 3
   no_hedge:       [true, false]
-  train_years:    [3, 4]
   news_weight:    [0.0, 0.1, 0.2, 0.3]
   ml_blend_weight: [0.1, 0.2, 0.3, 0.4]
   master_score_weights:
@@ -40,6 +39,9 @@ search_space:
 # Dimensions that are tunable but fixed for this run.
 # Move any entry into search_space (as a list) to include it in optimization.
 fixed_params:
+  # train_years controls factory training window, which is set once before
+  # optimization begins and is not varied per --skip-model trial.
+  train_years: 4
 
   # --- Portfolio construction ---
   max_single_position_weight: 0.40   # hard cap per position post-normalization

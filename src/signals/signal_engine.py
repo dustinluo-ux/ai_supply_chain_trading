@@ -162,6 +162,7 @@ class SignalEngine:
         buzz_by_ticker: dict[str, bool] = {}
         enriched_composites: dict[str, float] = {}
         category_sub_scores_by_ticker: dict[str, dict[str, float]] = {}
+        news_signals = data_context.get("news_signals") or {}
 
         # ==============================================================
         # Phase 1: Compute indicators + base news composites
@@ -231,6 +232,17 @@ class SignalEngine:
                     except Exception:
                         news_composite_val = 0.5
                         buzz_by_ticker[t] = False
+                elif news_signals:
+                    ticker_news = news_signals.get(t) or news_signals.get(str(t).upper()) or {}
+                    date_key = as_of_date.strftime("%Y-%m-%d")
+                    date_payload = ticker_news.get(date_key)
+                    if isinstance(date_payload, dict) and date_payload.get("sentiment_score") is not None:
+                        try:
+                            _sent = float(date_payload.get("sentiment_score"))
+                            news_composite_val = _sent
+                            sentiment_current = _sent
+                        except Exception:
+                            pass
 
                 cached[t] = {
                     "row": row,
@@ -336,7 +348,7 @@ class SignalEngine:
                     entry["row"],
                     category_weights_override=resolved_category_weights,
                     news_composite=news_composite_val,
-                    news_weight_override=news_weight_used if news_dir else None,
+                    news_weight_override=news_weight_used if (news_dir or news_composite_val is not None) else None,
                 )
                 week_scores[t] = score
                 sub = (score_meta or {}).get("category_sub_scores", {}) or {}
