@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_BENCHMARKS_DIR = Path(r"C:\ai_supply_chain_trading\trading_data\benchmarks")
+DEFAULT_BENCHMARKS_DIR = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / "benchmarks"
 SPY_CSV = DEFAULT_BENCHMARKS_DIR / "SPY.csv"
 VIX_CSV = DEFAULT_BENCHMARKS_DIR / "VIX.csv"
 SMH_CSV = DEFAULT_BENCHMARKS_DIR / "SMH.csv"

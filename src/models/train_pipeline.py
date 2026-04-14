@@ -277,10 +277,11 @@ class ModelTrainingPipeline:
 
     def _load_smh_prices(self) -> pd.DataFrame:
         """Load SMH benchmark CSV; return DataFrame with DatetimeIndex and lowercase 'close'. Raises FileNotFoundError if missing."""
-        path = self.config["training"].get("smh_benchmark_path", "trading_data/benchmarks/SMH.csv")
+        path = self.config["training"].get("smh_benchmark_path", "benchmarks/SMH.csv")
         p = Path(path)
         if not p.is_absolute():
-            p = Path(__file__).resolve().parent.parent.parent / path
+            import os
+            p = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / path
         if not p.exists():
             raise FileNotFoundError(f"SMH benchmark file not found: {p}")
         df = pd.read_csv(p, index_col=0, parse_dates=True)

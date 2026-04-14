@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 import sys
 sys.path.insert(0, str(ROOT))
 
-VIX_PATH = Path(r"C:\ai_supply_chain_trading\trading_data\benchmarks\VIX.csv")
+_BENCHMARKS_DIR = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / "benchmarks"
+VIX_PATH = _BENCHMARKS_DIR / "VIX.csv"
 
 def ensure_vix_csv():
     if not VIX_PATH.exists():
@@ -20,7 +22,7 @@ def ensure_vix_csv():
 
 from src.hedging.hedging_strategy import TailHedge
 
-SMH_PATH = Path(r"C:\ai_supply_chain_trading\trading_data\benchmarks\SMH.csv")
+SMH_PATH = _BENCHMARKS_DIR / "SMH.csv"
 PORTFOLIO_USD = 740_000.0
 ROLL_WEEKS = 4
 
