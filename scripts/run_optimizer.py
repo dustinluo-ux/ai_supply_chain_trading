@@ -51,6 +51,19 @@ def _run_trial(trial_params: dict, skip_data: bool, n_trial: int, n_total: int) 
         argv.append("--no-llm")
     if trial_params.get("no_hedge", False):
         argv.append("--no-hedge")
+    if trial_params.get("news_weight") is not None:
+        argv.extend(["--news-weight", str(trial_params.get("news_weight"))])
+    if trial_params.get("ml_blend_weight") is not None:
+        argv.extend(["--ml-blend-weight", str(trial_params.get("ml_blend_weight"))])
+    if trial_params.get("master_score_weights") is not None:
+        _msw = trial_params.get("master_score_weights")
+        if isinstance(_msw, dict):
+            argv.extend(
+                [
+                    "--master-score-weights",
+                    json.dumps(_msw, separators=(",", ":")),
+                ]
+            )
 
     print(f"[OPTIMIZER] Trial {n_trial}/{n_total}: {trial_params}", flush=True)
     try:

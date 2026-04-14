@@ -94,6 +94,7 @@ def apply_ml_blend(
     precomputed_indicators: Optional[dict[str, dict[str, float]]] = None,
     model_path_override: Optional[str] = None,
     use_ml_override: bool | None = None,
+    ml_blend_weight_override: float | None = None,
 ) -> dict[str, float]:
     """
     If use_ml and model loaded, blend 0.7*week_scores + 0.3*ML; else return week_scores.
@@ -113,6 +114,8 @@ def apply_ml_blend(
     if not _use_ml:
         return week_scores
     _ml_blend_weight = float(_model_cfg.get("models", {}).get("ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)))
+    if ml_blend_weight_override is not None:
+        _ml_blend_weight = float(ml_blend_weight_override)
     # model_path_override (from --track A/B) takes priority over config
     if model_path_override:
         _path = Path(model_path_override)

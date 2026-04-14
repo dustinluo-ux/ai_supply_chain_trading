@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -184,18 +185,22 @@ def main() -> int:
             _prices_dict = load_prices(_data_dir, _ticker_list)
             _news_signals = {}
             try:
+                import datetime as _dt_news
                 from src.core.config import NEWS_DIR
-                import pandas as pd
-                _eodhd = Path(NEWS_DIR) / "eodhd_global_backfill.parquet"
-                if _eodhd.exists():
-                    _df = pd.read_parquet(_eodhd, engine="fastparquet")
-                    if not _df.empty and "Ticker" in _df.columns and "Date" in _df.columns and "Sentiment" in _df.columns:
-                        for _ticker, _grp in _df.groupby("Ticker"):
-                            _by_date = _grp.groupby("Date")["Sentiment"].mean()
-                            _news_signals[_ticker] = {
-                                str(_d): {"sentiment": float(_s), "supply_chain": 0.5}
-                                for _d, _s in _by_date.items()
-                            }
+                from src.data.unified_news_loader import UnifiedNewsLoader
+
+                _today = _dt_news.date.today()
+                _start = (_today - _dt_news.timedelta(days=90)).isoformat()
+                _end = _today.isoformat()
+                _loader_data_dir = os.environ.get("DATA_DIR", NEWS_DIR)
+                _loader = UnifiedNewsLoader(str(_loader_data_dir))
+                _loaded = _loader.load(_ticker_list, _start, _end)
+                for _ticker, _by_date in _loaded.items():
+                    for _d, _payload in _by_date.items():
+                        _news_signals.setdefault(_ticker, {})[_d] = {
+                            "sentiment": float(_payload.get("sentiment_score", 0.5)),
+                            "supply_chain": float(_payload.get("supply_chain_score", 0.5)),
+                        }
             except Exception:
                 pass
             _model_cfg_path = ROOT / "config" / "model_config.yaml"

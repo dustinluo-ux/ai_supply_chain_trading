@@ -847,18 +847,20 @@ def main() -> tuple[int, list]:
             futures_multipliers=_futures_mults,
         )
     else:
-        # --reset-stop-loss: clear flatten_active before any other logic
+        # --reset-stop-loss: fully reset tracker to current NAV before any other logic
         if args.reset_stop_loss:
             _dd_path = ROOT / "outputs" / "drawdown_tracker.json"
             try:
-                _dd = {}
-                if _dd_path.exists():
-                    with open(_dd_path, "r", encoding="utf-8") as _f:
-                        _dd = json.load(_f)
-                _dd["flatten_active"] = False
+                _fresh = {
+                    "peak_nav": account_value,
+                    "current_nav": account_value,
+                    "drawdown": 0.0,
+                    "flatten_active": False,
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                }
                 _dd_path.parent.mkdir(parents=True, exist_ok=True)
-                _dd_path.write_text(json.dumps(_dd, indent=2), encoding="utf-8")
-                print("[STOP-LOSS] Reset: flatten_active cleared. Normal execution continues.", flush=True)
+                _dd_path.write_text(json.dumps(_fresh, indent=2), encoding="utf-8")
+                print("[STOP-LOSS] Reset: peak_nav and flatten_active cleared. Normal execution continues.", flush=True)
             except Exception as _e:
                 print(f"[STOP-LOSS] Reset failed: {_e}", flush=True)
 
@@ -1109,6 +1111,8 @@ def main() -> tuple[int, list]:
             if up_to.empty:
                 continue
             close_val = up_to["close"].iloc[-1]
+            if isinstance(close_val, pd.Series):
+                close_val = close_val.iloc[0]
             if pd.notna(close_val) and float(close_val) > 0:
                 prices_last[sym] = float(close_val)
         # Overlay live prices for instruments without CSV data (e.g. futures like MNQ)

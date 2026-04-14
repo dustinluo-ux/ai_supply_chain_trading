@@ -21,28 +21,31 @@ search_space:
   track:          [A]           # D requires short-selling infra; Phase 3
   no_hedge:       [true, false]
   train_years:    [3, 4]
+  news_weight:    [0.0, 0.1, 0.2, 0.3]
+  ml_blend_weight: [0.1, 0.2, 0.3, 0.4]
+  master_score_weights:
+    - trend: 0.40
+      momentum: 0.30
+      volume: 0.20
+      volatility: 0.10
+    - trend: 0.50
+      momentum: 0.25
+      volume: 0.15
+      volatility: 0.10
+    - trend: 0.30
+      momentum: 0.40
+      volume: 0.20
+      volatility: 0.10
 
 # Dimensions that are tunable but fixed for this run.
 # Move any entry into search_space (as a list) to include it in optimization.
 fixed_params:
-
-  # --- Signal blending ---
-  news_weight: 0.20             # 0 = pure technical, 1 = pure news
-                                # source: config/technical_master_score.yaml
 
   # --- Portfolio construction ---
   max_single_position_weight: 0.40   # hard cap per position post-normalization
                                       # source: config/trading_config.yaml → risk
   risk_pct: 0.02                # fraction of equity risked per position (ATR sizing)
   atr_multiplier: 2.0           # stop distance in ATRs; source: trading_config.yaml
-
-  # --- Master Score category weights (must sum to 1.0) ---
-  # source: config/technical_master_score.yaml → category_weights
-  master_score_weights:
-    trend:      0.40
-    momentum:   0.30
-    volume:     0.20
-    volatility: 0.10
 
   # --- Normalization ---
   rolling_window: 252           # trading days for unbounded indicator normalization (~1yr)
@@ -56,7 +59,6 @@ fixed_params:
   # source: config/model_config.yaml
   candidate_models: [ridge, xgboost, catboost]
   factory_ic_gate: 0.01         # minimum IC to qualify; if none qualify → tech_only (no ML blend)
-  ml_blend_weight: 0.30         # weight of ML signal in final score (1 - ml_blend_weight = technical)
   current_winner: catboost      # informational only — actual winner is in models/factory_winner.json
 
   # --- Instrument allocation limits ---

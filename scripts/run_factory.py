@@ -39,9 +39,10 @@ def _patch_model_config_training_window(config_path: Path, train_years: int) -> 
 
 def main() -> int:
     import argparse
-    import pandas as pd
+    import os
     from src.data.csv_provider import load_prices
     from src.core.config import NEWS_DIR
+    from src.data.unified_news_loader import UnifiedNewsLoader
     from src.utils.config_manager import get_config
     from src.models.factory import get_best_model
 
@@ -62,19 +63,26 @@ def main() -> int:
     if not prices_dict:
         print("ERROR: No price data loaded.", flush=True)
         return 1
+    _patch_model_config_training_window(CONFIG_PATH, int(args.train_years))
+    with open(CONFIG_PATH, "r", encoding="utf-8") as _f_cfg:
+        _cfg_after_patch = yaml.safe_load(_f_cfg) or {}
+    _train_cfg = _cfg_after_patch.get("training", {})
+    _train_start = str(_train_cfg.get("train_start", "2022-01-01"))
+    _train_end = str(_train_cfg.get("train_end", "2023-12-31"))
     if args.no_news:
         news_signals = None
     else:
-        eodhd_path = Path(NEWS_DIR) / "eodhd_global_backfill.parquet"
         news_signals = {}
-        if eodhd_path.exists():
-            df = pd.read_parquet(eodhd_path, engine="fastparquet")
-            if not df.empty and "Ticker" in df.columns and "Date" in df.columns and "Sentiment" in df.columns:
-                for ticker, grp in df.groupby("Ticker"):
-                    by_date = grp.groupby("Date")["Sentiment"].mean()
-                    news_signals[ticker] = {str(d): {"sentiment": float(s), "supply_chain": 0.5} for d, s in by_date.items()}
+        _loader_data_dir = os.environ.get("DATA_DIR", NEWS_DIR)
+        _loader = UnifiedNewsLoader(str(_loader_data_dir))
+        _loaded = _loader.load(tickers, _train_start, _train_end)
+        for _ticker, _by_date in _loaded.items():
+            for _d, _payload in _by_date.items():
+                news_signals.setdefault(_ticker, {})[_d] = {
+                    "sentiment": float(_payload.get("sentiment_score", 0.5)),
+                    "supply_chain": float(_payload.get("supply_chain_score", 0.5)),
+                }
 
-    _patch_model_config_training_window(CONFIG_PATH, int(args.train_years))
     model, model_type, ic = get_best_model(prices_dict, news_signals or {}, str(CONFIG_PATH))
     model_path = "tech_only"
     if model is not None:

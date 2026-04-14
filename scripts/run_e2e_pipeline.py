@@ -74,6 +74,9 @@ def main() -> int:
     parser.add_argument("--tickers", type=str, default=None, help="Comma-separated; default: data_config watchlist.")
     parser.add_argument("--top-n", type=int, default=5, dest="top_n")
     parser.add_argument("--score-floor", type=float, default=0.0, dest="score_floor")
+    parser.add_argument("--news-weight", type=float, default=None, dest="news_weight")
+    parser.add_argument("--ml-blend-weight", type=float, default=None, dest="ml_blend_weight")
+    parser.add_argument("--master-score-weights", type=str, default=None, dest="master_score_weights")
     parser.add_argument("--no-llm", action="store_true", default=False, dest="no_llm",
                         help="Stage 3: disable LLM signal (always True in pipeline for speed).")
     parser.add_argument("--track", type=str, default="A", choices=["A", "D"],
@@ -199,6 +202,23 @@ def main() -> int:
                 result: dict | None = None
                 try:
                     if prices_dict:
+                        _category_override = None
+                        if args.master_score_weights is not None:
+                            try:
+                                _parsed = json.loads(args.master_score_weights)
+                                if isinstance(_parsed, dict):
+                                    _category_override = _parsed
+                                else:
+                                    print("WARNING: --master-score-weights is not a JSON object; skipping.", flush=True)
+                            except Exception as _jerr:
+                                print(f"WARNING: Could not parse --master-score-weights: {_jerr}", flush=True)
+                        _bt_kwargs: dict = {}
+                        if args.news_weight is not None:
+                            _bt_kwargs["news_weight_fixed"] = float(args.news_weight)
+                        if args.ml_blend_weight is not None:
+                            _bt_kwargs["ml_blend_weight_override"] = float(args.ml_blend_weight)
+                        if _category_override is not None:
+                            _bt_kwargs["category_weights_override_param"] = _category_override
                         result = run_backtest_master_score(
                             prices_dict,
                             data_dir=_data_dir,
@@ -210,6 +230,7 @@ def main() -> int:
                             end_date=str(oos_end),
                             llm_enabled=False,  # always off in pipeline (speed)
                             verbose=False,
+                            **_bt_kwargs,
                         )
                 except Exception as _e:
                     print(f"WARNING: OOS backtest raised: {_e}", flush=True)
@@ -386,6 +407,8 @@ def main() -> int:
         "--ibkr-port",
         str(args.ibkr_port),
     ]
+    if args.dry_run:
+        _argv.append("--reset-stop-loss")  # mock runs are independent; never inherit prior peak NAV
     if args.track == "D":
         _argv.extend(["--track", "D"])
     if args.no_hedge:

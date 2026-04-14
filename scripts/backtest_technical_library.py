@@ -333,6 +333,8 @@ def run_backtest_master_score(
     llm_enabled: bool = True,
     model_path_override: str | None = None,
     use_ml_override: bool | None = None,
+    ml_blend_weight_override: float | None = None,
+    category_weights_override_param: dict | None = None,
     track: str | None = None,
     max_global_positions: int = MAX_GLOBAL_POSITIONS,
     sma_window: int = 200,
@@ -487,6 +489,8 @@ def run_backtest_master_score(
                 if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
                     spy_below_sma200 = bool(spy_cl < sma_val)
         category_weights_override = None
+        if category_weights_override_param is not None and weight_mode == "fixed":
+            category_weights_override = category_weights_override_param
         if weight_mode == "rolling":
             hist = _build_weight_history(prices_dict, tickers, monday, "rolling", 60, ensure_ohlcv_fn=ensure_ohlcv, ohlcv_cols=OHLCV_COLS)
             if hist is not None and len(hist) >= 10:
@@ -503,8 +507,10 @@ def run_backtest_master_score(
         signal_horizon_days_this_week = signal_horizon_days
         sideways_risk_scale_this_week = sideways_risk_scale
         news_weight_used = 0.0
-        if news_dir:
-            news_weight_used = float(news_weight_fixed) if news_weight_fixed is not None else (adaptive_selector.get_optimal_weights(regime_state) if adaptive_selector else 0.20)
+        if news_weight_fixed is not None:
+            news_weight_used = float(news_weight_fixed)
+        elif news_dir:
+            news_weight_used = adaptive_selector.get_optimal_weights(regime_state) if adaptive_selector else 0.20
         if dynamic_selector and regime_state and strategy_selector is not None:
             profile = strategy_selector.get_winning_profile(regime_state)
             if profile and profile.get("params"):
@@ -563,7 +569,16 @@ def run_backtest_master_score(
         week_scores, aux = signal_engine.generate(monday, tickers, data_context)
         from src.core.target_weight_pipeline import apply_ml_blend
         precomputed_indicators = aux.get("indicator_rows") or {}
-        week_scores = apply_ml_blend(week_scores, monday, prices_dict, backtest_news_signals, precomputed_indicators=precomputed_indicators, model_path_override=model_path_override, use_ml_override=use_ml_override)
+        week_scores = apply_ml_blend(
+            week_scores,
+            monday,
+            prices_dict,
+            backtest_news_signals,
+            precomputed_indicators=precomputed_indicators,
+            model_path_override=model_path_override,
+            use_ml_override=use_ml_override,
+            ml_blend_weight_override=ml_blend_weight_override,
+        )
         atr_norms = aux.get("atr_norms", {})
         buzz_by_ticker = aux.get("buzz_by_ticker", {})
 
@@ -868,6 +883,8 @@ def main():
     parser.add_argument("--rolling-method", type=str, default="max_sharpe", help="When weight-mode=rolling: hrp or max_sharpe")
     parser.add_argument("--news-dir", type=str, default=None)
     parser.add_argument("--news-weight", type=float, default=None)
+    parser.add_argument("--ml-blend-weight", type=float, default=None)
+    parser.add_argument("--master-score-weights", type=str, default=None, help="Compact JSON dict for category weights override in fixed mode")
     parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
     parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
     parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
@@ -1033,6 +1050,17 @@ def main():
         llm_enabled_resolved = True
         news_weight_fixed_resolved = args.news_weight
 
+    category_weights_override_resolved = None
+    if args.master_score_weights is not None:
+        try:
+            _parsed_msw = json.loads(args.master_score_weights)
+            if isinstance(_parsed_msw, dict):
+                category_weights_override_resolved = _parsed_msw
+            else:
+                print("[WARN] --master-score-weights must be a JSON object; skipping override")
+        except Exception as _msw_e:
+            print(f"[WARN] Could not parse --master-score-weights: {_msw_e}")
+
     run_kw: dict = {
         "prices_dict": prices_dict,
         "data_dir": data_dir,
@@ -1046,6 +1074,8 @@ def main():
         "llm_enabled": llm_enabled_resolved,
         "model_path_override": _track_model_path_override,
         "use_ml_override": False if args.no_ml else None,
+        "ml_blend_weight_override": args.ml_blend_weight,
+        "category_weights_override_param": category_weights_override_resolved,
         "track": args.track,
         "max_global_positions": args.max_global_positions,
         "sma_window": args.sma_window,
