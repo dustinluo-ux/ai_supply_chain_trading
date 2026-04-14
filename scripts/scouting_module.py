@@ -397,6 +397,43 @@ def main() -> int:
             flush=True,
         )
     print(f"[SCOUT] Results written to {PIT_CSV_PATH}", flush=True)
+
+    # Self-schedule next run: 1st of next month at 06:00
+    try:
+        import subprocess
+        import sys
+        _next = (today_d.replace(day=1) if today_d.month == 12
+                 else today_d.replace(day=1, month=today_d.month + 1))
+        if today_d.month == 12:
+            _next = date(today_d.year + 1, 1, 1)
+        else:
+            _next = date(today_d.year, today_d.month + 1, 1)
+        _sd_str = _next.strftime("%m/%d/%Y")
+        _root = Path(__file__).resolve().parent.parent
+        _py = sys.executable
+        _script = str(Path(__file__).resolve())
+        _tr = f'cmd /c cd /d "{_root}" && "{_py}" "{_script}"'
+        _sch = [
+            "schtasks", "/Create", "/F",
+            "/TN", "AITrading_MonthlyScouting",
+            "/TR", _tr,
+            "/SC", "MONTHLY",
+            "/D", "1",
+            "/ST", "06:00",
+            "/SD", _sd_str,
+        ]
+        _sr = subprocess.run(_sch, capture_output=True, text=True)
+        if _sr.returncode != 0:
+            print(
+                f"[SCOUT][WARN] schtasks exit {_sr.returncode}: "
+                f"{(_sr.stderr or _sr.stdout or '').strip()}",
+                flush=True,
+            )
+        else:
+            print(f"[SCOUT] Next run scheduled: {_next} 06:00 (AITrading_MonthlyScouting)", flush=True)
+    except Exception as _se:
+        print(f"[SCOUT][WARN] Scheduler registration failed: {_se}", flush=True)
+
     return 0
 
 
