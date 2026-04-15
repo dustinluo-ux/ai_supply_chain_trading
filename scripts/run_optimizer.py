@@ -208,10 +208,6 @@ def main() -> int:
         print(f"[OPTIMIZER][WARN] Promotion failed: {_pe}", file=sys.stderr, flush=True)
 
     try:
-        _opt = cfg.get("optimizer", {})
-        _interval = int(_opt.get("run_interval_days", 30))
-        _sd = date.today() + timedelta(days=_interval)
-        _sd_str = _sd.strftime("%m/%d/%Y")
         _py = sys.executable
         _script = str(ROOT / "scripts" / "run_optimizer.py")
         _tr = f'cmd /c cd /d "{ROOT}" && "{_py}" "{_script}" --skip-data'
@@ -229,8 +225,6 @@ def main() -> int:
             "MON",
             "/ST",
             "06:00",
-            "/SD",
-            _sd_str,
         ]
         _sr = subprocess.run(_sch, capture_output=True, text=True)
         if _sr.returncode != 0:
