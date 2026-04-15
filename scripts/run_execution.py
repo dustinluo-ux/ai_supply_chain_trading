@@ -1210,12 +1210,18 @@ def main() -> tuple[int, list]:
                         if up_to.empty:
                             continue
                         last = up_to.iloc[-1]
-                        entry_price_map[sym] = float(last.get("close", 0) or 0)
+                        _cv = last.get("close", 0)
+                        if isinstance(_cv, pd.Series):
+                            _cv = _cv.iloc[0]
+                        entry_price_map[sym] = float(_cv or 0)
                         atr_series = compute_atr_series(
                             up_to["high"], up_to["low"], up_to["close"], period=14
                         )
                         if not atr_series.empty:
-                            atr_per_share[sym] = float(atr_series.iloc[-1])
+                            _atr_last = atr_series.iloc[-1]
+                            if isinstance(_atr_last, pd.Series):
+                                _atr_last = _atr_last.iloc[0]
+                            atr_per_share[sym] = float(_atr_last)
                         else:
                             atr_per_share[sym] = 0.0
                 exec_config = {}
