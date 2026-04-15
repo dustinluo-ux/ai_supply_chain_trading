@@ -58,7 +58,6 @@ pillars:
     - 0700.HK   # Tencent
     - 1810.HK   # Xiaomi
     - SAP.DE    # SAP
-    - ORSTED.CO # Orsted
     - 6861.T    # Keyence
     - 6758.T    # Sony
 
@@ -69,6 +68,5 @@ ibkr_symbols:
   "0700.HK": "700 STK SEHK"
   "1810.HK": "1810 STK SEHK"
   "SAP.DE": "SAP STK IBIS"
-  "ORSTED.CO": "ORSTED STK CSE"
  # "6861.TSE": "6861.JP"  # Change the KEY to .TSE
  # "6758.TSE": "6758.JP"  # Change the KEY to .TSE
