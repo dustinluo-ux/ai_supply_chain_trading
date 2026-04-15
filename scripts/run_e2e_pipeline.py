@@ -106,6 +106,8 @@ def main() -> int:
         print("ERROR: No tickers (set --tickers or data_config watchlist).", flush=True)
         return 1
     tickers_str = ",".join(ticker_list)
+    from src.core.state import new_pipeline_state
+    _pipeline_state = new_pipeline_state(tickers_requested=ticker_list)
 
     # --- Stage 1 ---
     if not args.skip_data:
@@ -305,7 +307,6 @@ def main() -> int:
             except Exception:
                 pass
 
-    # --- Stage 3.5: Skeptic Gate ---
     _weights_path = ROOT / "outputs" / "last_valid_weights.json"
     _gate_weights: dict[str, float] = {}
     if _weights_path.exists():
@@ -319,25 +320,12 @@ def main() -> int:
     if not _gate_weights:
         _n = max(len(ticker_list), 1)
         _gate_weights = {t: 1.0 / _n for t in ticker_list}
-    from src.agents.skeptic_gate import run_gate as _run_gate
-
-    if args.skip_gate:
-        print("[STAGE 3.5] Skeptic Gate: SKIPPED (--skip-gate)", flush=True)
-    else:
-        _gate_result = _run_gate(_gate_weights, ticker_list)
-        print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
-        if _gate_result.verdict == "FAIL":
-            print(
-                f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
-                file=sys.stderr,
-                flush=True,
-            )
-            return 1
 
     # --- Stage 3.6: Taleb + Damodaran Audit (advisory) ---
     try:
         import pandas as pd
 
+        from src.agents.bull_bear_debate import run_debate
         from src.agents.damodaran_anchor import anchor_ticker as _anchor_ticker
         from src.agents.taleb_auditor import audit_ticker as _audit_ticker
         from src.data.csv_provider import load_data_config, load_prices
@@ -383,12 +371,51 @@ def main() -> int:
                 flush=True,
             )
 
+        try:
+            _debate_res = run_debate(_gate_weights, _stage36_date)
+            debate_json = {
+                "overall_bias": round(float(_debate_res.overall_bias), 4),
+                "tickers_screened": _debate_res.tickers_screened,
+                "per_ticker": {
+                    t: {
+                        "bull_score": round(float(d.bull_score), 3),
+                        "bear_score": round(float(d.bear_score), 3),
+                        "net_score": round(float(d.net_score), 3),
+                        "verdict": d.verdict,
+                    }
+                    for t, d in _debate_res.per_ticker.items()
+                },
+            }
+            print(
+                f"[STAGE 3.6] Bull/Bear debate: overall_bias={_debate_res.overall_bias:+.3f} "
+                f"({_debate_res.tickers_screened} tickers screened)",
+                flush=True,
+            )
+        except Exception:
+            debate_json = {}
+
         _tmp_audit = _agent_audit_path.with_name(_agent_audit_path.name + ".tmp")
         with open(_tmp_audit, "w", encoding="utf-8") as _aj:
-            json.dump({"taleb": taleb_json, "damodaran": damodaran_json}, _aj, indent=2)
+            json.dump({"taleb": taleb_json, "damodaran": damodaran_json, "bull_bear_debate": debate_json}, _aj, indent=2)
         _tmp_audit.replace(_agent_audit_path)
     except Exception as _e36:
         print(f"WARNING: Stage 3.6 agent audit skipped: {_e36}", file=sys.stderr, flush=True)
+
+    # --- Stage 3.5: Skeptic Gate ---
+    from src.agents.skeptic_gate import run_gate as _run_gate
+
+    if args.skip_gate:
+        print("[STAGE 3.5] Skeptic Gate: SKIPPED (--skip-gate)", flush=True)
+    else:
+        _gate_result = _run_gate(_gate_weights, ticker_list)
+        print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
+        if _gate_result.verdict == "FAIL":
+            print(
+                f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
 
     # --- Stage 4 ---
     import run_execution
@@ -477,6 +504,14 @@ def main() -> int:
     else:
         print("STATUS: FAIL [X]", flush=True)
     print(bar, flush=True)
+
+    try:
+        _state_path = ROOT / "outputs" / "pipeline_state.json"
+        _pipeline_state.finished_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        _pipeline_state.save(_state_path)
+        print(f"[PIPELINE] State written: {_state_path}", flush=True)
+    except Exception as _se:
+        print(f"WARNING: Could not save pipeline_state.json: {_se}", file=sys.stderr, flush=True)
 
     return exit_code
 

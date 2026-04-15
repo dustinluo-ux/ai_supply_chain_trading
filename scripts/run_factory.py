@@ -40,7 +40,7 @@ def _patch_model_config_training_window(config_path: Path, train_years: int) -> 
 def main() -> int:
     import argparse
     import os
-    from src.data.csv_provider import load_prices
+    from src.data.resilience_layer import get_prices
     from src.core.config import NEWS_DIR
     from src.data.unified_news_loader import UnifiedNewsLoader
     from src.utils.config_manager import get_config
@@ -59,16 +59,22 @@ def main() -> int:
     cfg = get_config()
     tickers = cfg.get_watchlist()
     data_dir = Path(cfg.get_param("data_config.data_sources.data_dir"))
-    prices_dict = load_prices(data_dir, tickers)
-    if not prices_dict:
-        print("ERROR: No price data loaded.", flush=True)
-        return 1
     _patch_model_config_training_window(CONFIG_PATH, int(args.train_years))
     with open(CONFIG_PATH, "r", encoding="utf-8") as _f_cfg:
         _cfg_after_patch = yaml.safe_load(_f_cfg) or {}
     _train_cfg = _cfg_after_patch.get("training", {})
     _train_start = str(_train_cfg.get("train_start", "2022-01-01"))
     _train_end = str(_train_cfg.get("train_end", "2023-12-31"))
+    _test_end = str(_train_cfg.get("test_end", "2024-12-31"))
+    prices_dict = get_prices(
+        tickers,
+        start=str(_train_start),
+        end=str(_test_end),
+        data_dir=data_dir,
+    )
+    if not prices_dict:
+        print("ERROR: No price data loaded.", flush=True)
+        return 1
     if args.no_news:
         news_signals = None
     else:
