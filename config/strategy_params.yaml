@@ -54,6 +54,16 @@ regime:
   score_floor_contraction: 0.65
 optimizer_promotion:
   top_n: 3
-  score_floor: 0.65
-  sma_window: 100
-  source: optimize_params.py
+  score_floor: 0.3
+  no_llm: true
+  track: A
+  no_hedge: true
+  news_weight: 0.3
+  ml_blend_weight: 0.3
+  master_score_weights:
+    trend: 0.3
+    momentum: 0.4
+    volume: 0.2
+    volatility: 0.1
+  promoted_at: '2026-04-14T15:15:40.054264+00:00'
+  source_results: C:/Users/User/OneDrive/Programming/ai_supply_chain_trading/outputs/optimizer_results.json

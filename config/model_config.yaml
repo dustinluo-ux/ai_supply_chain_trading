@@ -30,10 +30,10 @@ features:
   - willr_norm
   - cci_norm
 training:
-  train_start: '2022-01-01'
-  train_end: '2023-12-31'
-  test_start: '2024-01-01'
-  test_end: '2024-12-31'
+  train_start: '2022-04-13'
+  train_end: '2025-04-13'
+  test_start: '2025-04-13'
+  test_end: '2026-04-13'
   validation_split: 0.2
   residual_target: true
   smh_benchmark_path: trading_data/benchmarks/SMH.csv
