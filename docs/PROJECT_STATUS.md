@@ -1,6 +1,6 @@
 # PROJECT STATUS — Current State & Readiness Assessment
 
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-16
 **Project:** AI Supply Chain Quantitative Trading System
 **Phase:** MVP Complete — Autonomous E2E Pipeline Operational
 
@@ -51,6 +51,17 @@ Autonomous quantitative trading pipeline for the AI/semiconductor supply chain u
 - News: Pre-2025 neutral (0.5); 2025+ via Tiingo (requires TIINGO_API_KEY in .env)
 - Regime: Z-score gate; score_floor_contraction=0.65
 
+### Three-Layer Signal Engine (feature-flagged, off by default)
+
+A new signal architecture lives alongside the existing pipeline in `src/signals/layered_signal_engine.py`. Enable via `strategy_params.use_layered_engine: true`.
+
+- **Layer 3 (technical/sentiment):** cross-sectional z-score → percentile rank for 9 signals (rsi_norm, macd_norm, cmf_norm, momentum_avg, volume_ratio_norm, news_sentiment, news_supply, sentiment_velocity, news_spike). Equal-weight composite.
+- **Layer 2 (fundamental cycle):** cross-sectional z-score → percentile rank for earnings_revision_30d, gross_margin_pct, inventory_days (negated), TES score. Quarterly cadence; forward-filled up to 91 days with `l2_stale` flag. Falls back to Layer 3 when <60% universe has non-stale data.
+- **Layer 1 (post-signal caps only):** FCF + leverage quality filter (zero-out); post-earnings miss dampener (×0.7 within 5 days of >10% miss); pre-earnings size-down (×0.5 within 2 days); macro-regime multiplier from yield curve slope (EXPANSION ×1.0 / LATE_CYCLE ×0.7 / CONTRACTION ×0.4).
+- **Combination:** `w = 0.6 × Layer2_pseudo_weight + 0.4 × Layer3_pseudo_weight`, then net-zero normalize (±1.0 long-short convention).
+- **Data feed:** `scripts/fetch_quarterly_fundamentals.py` — `--mode quarterly` full fetch, `--mode weekly` refreshes earnings_revision_30d only. Output: `trading_data/fundamentals/quarterly_signals.parquet`.
+- **Config:** `config/layered_signal_config.yaml` — all weights, thresholds, and multipliers tunable without code changes.
+
 ### Execution Infrastructure
 
 - IBKR TWS: paper account DUM879076 (SGD); port 7497
@@ -83,6 +94,7 @@ scripts/run_weekly_rebalance.py     # Standalone weekly rebalance (RiskOverlay w
 scripts/run_execution.py            # Execution spine (mock / paper / live)
 scripts/backtest_technical_library.py  # Standalone OOS backtest engine
 scripts/train_ml_model.py           # Manual ML retrain
+scripts/fetch_quarterly_fundamentals.py  # EODHD fundamental signals (--mode quarterly|weekly)
 ```
 
 ---
@@ -101,6 +113,7 @@ scripts/train_ml_model.py           # Manual ML retrain
 | `outputs/drawdown_tracker.json` | Peak NAV, current drawdown, flatten_active |
 | `outputs/risk_metadata_history.csv` | Weekly RiskOverlay log |
 | `models/factory_winner.json` | Best model from last factory run |
+| `trading_data/fundamentals/quarterly_signals.parquet` | EODHD fundamental signals for layered engine (earnings revision, gross margin, inventory, FCF, leverage) |
 
 ---
 

@@ -1,6 +1,6 @@
 # DECISIONS — Architectural Decision Records
 
-**Last Updated:** 2026-04-11
+**Last Updated:** 2026-04-16
 
 This file records architectural decisions and their rationale. Implementation details live in other documents. This is the "why" documentation.
 
@@ -752,6 +752,53 @@ RegimeState {
 - **Deferred:** Accepted but implementation delayed
 - **Superseded:** Replaced by newer decision
 - **Rejected:** Considered and declined
+
+---
+
+### D024 — D-LAYERED-ENGINE: Three-layer cross-sectional signal architecture (2026-04-16)
+
+**ID:** D-LAYERED-ENGINE  
+**Status:** Implemented (feature-flagged, off by default)
+
+#### Background
+
+The existing signal stack (Master Score → CatBoost ML blend → HRP + Alpha Tilt) uses within-ticker, rolling-window normalization for all signals. Cross-sectional comparison across tickers on the same date is implicit in the ranking step inside `PortfolioEngine`. Fundamental cycle data (earnings revisions, gross margin, inventory levels) was absent from the alpha signal entirely; TES was wired only as a position-cap multiplier (D023), not as a ranked signal.
+
+#### Decision
+
+Introduce a parallel three-layer signal architecture in `src/signals/layered_signal_engine.py`, activated via `strategy_params.use_layered_engine: true`. The existing pipeline is the default and is unaffected when the flag is false.
+
+**Layer structure (strict order):**
+
+| Layer | Role | Signals | Normalization |
+|-------|------|---------|---------------|
+| Layer 3 | Technical/Sentiment alpha | rsi_norm, macd_norm, cmf_norm, momentum_avg, volume_ratio_norm, news_sentiment, news_supply, sentiment_velocity, news_spike | Cross-sectional z-score → percentile rank per date |
+| Layer 2 | Fundamental Cycle alpha | earnings_revision_30d (primary, weekly), gross_margin_pct, inventory_days (negated), TES score | Cross-sectional z-score → percentile rank per date; forward-fill ≤91 days; stale flag |
+| Layer 1 | Post-signal caps only | FCF/leverage quality filter; post-earnings miss dampener; pre-earnings size-down; yield-curve regime multiplier | Multipliers applied after combination; no contribution to alpha score |
+
+**Combination:** `w = 0.6 × L2_pseudo_weight + 0.4 × L3_pseudo_weight` (tunable in `config/layered_signal_config.yaml`). Net-zero normalized final output (±1.0 long-short convention).
+
+#### Rationale
+
+1. **Cross-sectional ranking is the correct normalization** for a multi-ticker thematic book. Within-ticker rolling normalization answers "is this ticker's RSI high vs its own history?" Cross-sectional ranking answers "which ticker has the strongest RSI signal today?" — the relevant question for relative-value positioning.
+2. **Fundamental cycle is the primary driver of semiconductor sector returns** over 1–4 quarter horizons. Earnings revision momentum (Earnings.Trend, 30-day consensus change) is the highest-IC fundamental factor in this universe and was entirely absent.
+3. **Layer 1 as post-signal caps only** (not contributing to alpha scores) preserves the integrity of the cross-sectional ranking. Mixing quality filters into the ranking would penalize low-FCF tickers twice (lower rank + zero weight).
+4. **Feature flag default = false** ensures the existing autonomous pipeline (optimizer loop, quarterly retrain, paper execution) is unaffected until the layered engine is explicitly validated on OOS data.
+
+#### Data source decision
+
+All fundamental signals sourced from EODHD (existing `EODHD_API_KEY` in `.env`). No new vendor required. `Earnings.Trend` (weekly) provides the primary earnings revision signal. `Earnings.History`, `Financials.Income_Statement`, `Balance_Sheet`, `Cash_Flow` (quarterly) provide the remaining fields. `beat/miss` (Earnings.History) is used only in Layer 1 as a post-earnings sanity dampener, not as a cross-sectional alpha signal.
+
+#### SPOF
+
+Fundamental data sparsity on the weekly cross-section. If `quarterly_signals.parquet` is not refreshed (quarterly) or `earnings_revision_30d` is not updated (weekly), Layer 2 degrades toward stale signals. Mitigated by: `l2_stale` flag per row, `l2_coverage_flag` per date (falls back to Layer 3 when <60% of universe has non-stale L2 data), and `fundamental_ffill_days: 91` cap.
+
+#### Files
+
+- `src/signals/layered_signal_engine.py` — engine (new)
+- `scripts/fetch_quarterly_fundamentals.py` — EODHD fundamental fetcher, `--mode quarterly|weekly` (new)
+- `config/layered_signal_config.yaml` — all tunable parameters (new)
+- `src/core/target_weight_pipeline.py` — feature flag insertion, <20 lines, default false (modified)
 
 ---
 

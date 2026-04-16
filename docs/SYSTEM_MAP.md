@@ -1,7 +1,7 @@
 # SYSTEM_MAP — Workflow to Code Mapping
 
-**Last Updated:** 2026-02-15  
-**Parity Status:** 1:1 with disk (65 files in `src/`, 17 canonical scripts)
+**Last Updated:** 2026-04-16  
+**Parity Status:** 1:1 with disk (66 files in `src/`, 18 canonical scripts)
 
 This document maps the WORKFLOW stages to executable code modules. This is the authoritative reference for understanding which code implements which logical step.
 
@@ -36,6 +36,9 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 **Research / ML:**
 - `scripts/train_ml_model.py` — Phase 3 ML training runner: train ridge model, evaluate Spearman IC on test period; save to models/saved/ only if IC ≥ 0.02 (no signal_engine wiring)
 
+**Fundamental Data:**
+- `scripts/fetch_quarterly_fundamentals.py` — EODHD fundamental signal fetcher. `--mode quarterly` (full fetch, ~91-day cadence): extracts gross_margin_pct, inventory_days, last_eps_surprise_pct, earnings_revision_30d, last_earnings_date, next_earnings_date, fcf_ttm, debt_to_equity per ticker per period. `--mode weekly`: refreshes earnings_revision_30d + next_earnings_date only (Earnings.Trend endpoint). Atomic parquet write to `trading_data/fundamentals/quarterly_signals.parquet`.
+
 ---
 
 ## Core Module Structure
@@ -54,7 +57,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 
 **Note:** `SignalEngine` lives in `src/signals/signal_engine.py` (not in `src/core/`) to avoid circular imports. See `src/core/__init__.py` L5–6.
 
-### Signal Generation: `src/signals/` (9 files)
+### Signal Generation: `src/signals/` (10 files)
 
 | Module | Purpose |
 |--------|---------|
@@ -62,6 +65,7 @@ This document maps the WORKFLOW stages to executable code modules. This is the a
 | `signal_engine.py` | **Canonical SignalEngine** — orchestrates backtest + weekly signal generation, sentiment propagation, regime auto-detection |
 | `technical_library.py` | Master Score computation, all indicator calculation (pandas_ta), normalization |
 | `news_engine.py` | News Alpha strategies (Buzz, Surprise, Sector, Event), FinBERT, EventDetector |
+| `layered_signal_engine.py` | **Three-layer cross-sectional ranking engine** (feature-flagged). Layer 3: technical/sentiment ranks. Layer 2: fundamental-cycle ranks (quarterly, forward-filled). Layer 1: quality filter, earnings-event caps, macro-regime multiplier. Net-zero normalized output. Activated via `strategy_params.use_layered_engine: true`. |
 | `weight_model.py` | Dynamic category weighting (fixed/regime/rolling/ml), HMM regime detection, AdaptiveSelector |
 | `signal_combiner.py` | Legacy combined signal generation (weekly/precomputed path only) |
 | `sentiment_propagator.py` | Tier 1/Tier 2 supply chain sentiment propagation (per STRATEGY_LOGIC.md §2.1) |
@@ -303,13 +307,22 @@ PolicyEngine.apply(as_of_date, scores, aux, context) → (gated_scores, flags)
 ```
 scripts/backtest_technical_library.py
     ↓
-src/signals/signal_engine.py (SignalEngine)
-    ↓
-src/signals/technical_library.py
-src/signals/news_engine.py (optional)
-src/signals/sentiment_propagator.py (optional)
-    ↓
-src/signals/weight_model.py (optional, regime/rolling/ml)
+src/core/target_weight_pipeline.py
+    ├─ [use_layered_engine=false, default]
+    │   src/signals/signal_engine.py (SignalEngine)
+    │       ↓
+    │   src/signals/technical_library.py
+    │   src/signals/news_engine.py (optional)
+    │   src/signals/sentiment_propagator.py (optional)
+    │       ↓
+    │   src/signals/weight_model.py (optional, regime/rolling/ml)
+    │
+    └─ [use_layered_engine=true, feature-flagged]
+        src/signals/layered_signal_engine.py
+            Layer 3: technical_library signals + news_engine signals
+            Layer 2: trading_data/fundamentals/quarterly_signals.parquet
+                     + data/tes_scores.json (via portfolio_engine._load_tes_multipliers)
+            Layer 1: quality filter + earnings-event caps + macro-regime multiplier
     ↓
 src/core/policy_engine.py
     ↓
@@ -327,7 +340,8 @@ src/execution/ (mock or IB)
 | `config/signal_weights.yaml` | Legacy signal weights | `signal_combiner.py` (non-canonical path) |
 | `config/trading_config.yaml` | Execution parameters, IB config | `executor_factory.py` |
 | `config/model_config.yaml` | ML model selection and training params | `src/models/` |
-| `config/strategy_params.yaml` | Propagation, warmup, execution params | `config_manager.py` |
+| `config/strategy_params.yaml` | Propagation, warmup, execution params; `use_layered_engine` flag | `config_manager.py` |
+| `config/layered_signal_config.yaml` | Layer weights, ffill cap, quality thresholds, earnings-event windows, macro-regime multipliers | `layered_signal_engine.py` |
 
 ---
 
@@ -349,7 +363,7 @@ src/execution/ (mock or IB)
 | Location | Files |
 |----------|-------|
 | `src/core/` | 7 |
-| `src/signals/` | 9 |
+| `src/signals/` | 10 |
 | `src/data/` | 15 |
 | `src/data/news_sources/` | 6 |
 | `src/portfolio/` | 2 |
@@ -359,8 +373,8 @@ src/execution/ (mock or IB)
 | `src/evaluation/` | 2 |
 | `src/utils/` | 9 |
 | `src/__init__.py` | 1 |
-| **Total `src/`** | **65** |
-| `scripts/` (canonical) | 17 |
+| **Total `src/`** | **66** |
+| `scripts/` (canonical) | 18 |
 
 ---
 

@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-16
 
 **Single entry point for all project documentation.** This file lists the 11 canonical documents that define the system. All other documentation is either archived or superseded.
 
@@ -147,6 +147,16 @@ python scripts/run_optimizer.py --n-trials 2 --skip-data
 python scripts/run_quarterly_retrain.py
 ```
 
+**Fetch fundamental signals (first run, or quarterly cadence):**
+```bash
+python scripts/fetch_quarterly_fundamentals.py --mode quarterly
+```
+
+**Refresh earnings revision only (weekly, alongside optimizer run):**
+```bash
+python scripts/fetch_quarterly_fundamentals.py --mode weekly
+```
+
 **Standalone OOS backtest:**
 ```bash
 python scripts/backtest_technical_library.py --start 2024-01-01 --end 2024-12-31 --no-llm --score-floor 0.65 --top-n 3
@@ -155,9 +165,10 @@ python scripts/backtest_technical_library.py --start 2024-01-01 --end 2024-12-31
 **Canonical Configuration:**
 - `config/optimizer_config.yaml` — search space + composite score params
 - `config/model_config.yaml` — rolling training window (machine-written)
-- `config/strategy_params.yaml` — auto-promoted winner params
+- `config/strategy_params.yaml` — auto-promoted winner params; `use_layered_engine` flag
 - `config/trading_config.yaml` — execution + risk limits (max_single_position_weight: 0.40)
 - `config/data_config.yaml` — universe watchlist, data source paths
+- `config/layered_signal_config.yaml` — three-layer engine weights, thresholds, multipliers (D024)
 
 **Canonical data root (outside repo):**
 - `C:\ai_supply_chain_trading\trading_data\stock_market_data\` — price CSVs
