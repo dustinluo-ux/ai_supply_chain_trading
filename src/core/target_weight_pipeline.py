@@ -302,6 +302,34 @@ def compute_target_weights(
         "ensure_ohlcv": ensure_ohlcv,
         "llm_enabled": llm_enabled,
     }
+    use_layered = False
+    try:
+        from src.utils.config_manager import get_config as _get_cfg
+        use_layered = bool(_get_cfg().get_param("strategy_params.use_layered_engine", False))
+    except Exception:
+        pass
+
+    if use_layered:
+        try:
+            from src.signals.layered_signal_engine import (
+                compute_layered_positions,
+                load_layered_config,
+            )
+            _layered_cfg = load_layered_config()
+            # Build a minimal panel from prices_dict + any precomputed signals in scope.
+            # Caller is expected to have assembled panel_df before this point.
+            # If panel_df is not in scope, fall through to existing path.
+            if "panel_df" in dir():
+                _layered_out = compute_layered_positions(panel_df, _layered_cfg)
+                _scores = (
+                    _layered_out[_layered_out["date"] == as_of_date]
+                    .set_index("ticker")["final_position_weight"]
+                    .to_dict()
+                )
+                _aux = {"layered_engine": True, "intermediates": _layered_out}
+                return _scores, _aux
+        except Exception as _e:
+            logger.warning("layered_signal_engine failed (%s); falling back to SignalEngine", _e)
     week_scores, aux = signal_engine.generate(as_of, tickers, data_context)
     atr_norms = aux.get("atr_norms", {})
 

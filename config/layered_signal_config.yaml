@@ -1,0 +1,24 @@
+layer_weights:
+  fundamental_cycle_weight: 0.6
+  technical_sentiment_weight: 0.4
+
+fundamental_ffill_days: 91
+min_layer2_coverage: 0.6
+
+quality_filter:
+  max_leverage_ratio: 3.0
+
+macro_regime:
+  expansion_threshold: 0.5
+  contraction_threshold: 0.0
+  multipliers:
+    EXPANSION: 1.0
+    LATE_CYCLE: 0.7
+    CONTRACTION: 0.4
+
+earnings_event:
+  pre_event_days: 2
+  earnings_size_down: 0.5
+  post_earnings_window: 5
+  miss_threshold: 0.10
+  post_earnings_miss_multiplier: 0.7
