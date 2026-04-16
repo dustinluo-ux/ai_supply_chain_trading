@@ -1,0 +1,11 @@
+# Auditor / TES (Thesis Execution Score) — see ADR D-TES-STUBS
+
+# TES configuration
+niche_revenue_fraction: 0.15   # Assumed ratio; replace with segment XBRL when available
+default_patent_density: 0.10   # Prior; replace with USPTO API integration
+
+# TES integration (D023 — offline position-cap tilt; see docs/DECISIONS.md §D023)
+tes_enabled: true
+tes_min_mult: 0.5
+tes_scores_path: "data/tes_scores.json"
+tes_score_cap: 0.10   # denominator cap for multiplier formula stability
