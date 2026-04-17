@@ -38,6 +38,11 @@ L2_BASE_SIGNALS = [
     "inventory_days_accel",
     "gross_margin_delta",
     "last_rev_surprise_pct",
+    "fcf_yield",
+    "roic",
+    "fcf_conversion",
+    "net_capex_sales",
+    "net_debt_ebitda",
 ]
 
 L1_REQUIRED_SIGNALS = [
@@ -134,6 +139,7 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     out["tes_score"] = _load_tes_series(out["ticker"])
     out["inventory_days_neg"] = -1.0 * out["inventory_days"]
     out["inventory_days_accel_neg"] = -1.0 * out["inventory_days_accel"]
+    out["net_debt_ebitda_neg"] = -1.0 * out["net_debt_ebitda"]
 
     # Forward-fill fundamentals by ticker with age cap.
     out = out.sort_values(["ticker", "date"]).reset_index(drop=True)
@@ -145,6 +151,11 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         "inventory_days_accel_neg",
         "gross_margin_delta",
         "last_rev_surprise_pct",
+        "fcf_yield",
+        "roic",
+        "fcf_conversion",
+        "net_capex_sales",
+        "net_debt_ebitda_neg",
         "tes_score",
     ]
     stale_any = pd.Series(False, index=out.index)
@@ -175,6 +186,11 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         "inventory_days_accel_neg",
         "gross_margin_delta",
         "last_rev_surprise_pct",
+        "fcf_yield",
+        "roic",
+        "fcf_conversion",
+        "net_capex_sales",
+        "net_debt_ebitda_neg",
         "tes_score",
     ]
     if out["tes_score"].isna().all():
@@ -185,6 +201,11 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             "inventory_days_accel_neg",
             "gross_margin_delta",
             "last_rev_surprise_pct",
+            "fcf_yield",
+            "roic",
+            "fcf_conversion",
+            "net_capex_sales",
+            "net_debt_ebitda_neg",
         ]
 
     for col in l2_rank_inputs:
@@ -219,10 +240,20 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     out.loc[out["l2_coverage_flag"], "w_raw_combined"] = out.loc[out["l2_coverage_flag"], "layer3_pseudo_weight"]
 
     # Layer 1 multipliers.
-    max_lev = float(((config or {}).get("quality_filter") or {}).get("max_leverage_ratio", 3.0))
+    for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
+        if col not in out.columns:
+            out[col] = np.nan
+    qf_cfg = (config or {}).get("quality_filter") or {}
+    max_lev = float(qf_cfg.get("max_leverage_ratio", 3.0))
+    fcf_yield_min = float(qf_cfg.get("fcf_yield_min", -999.0))
+    net_debt_ebitda_max = float(qf_cfg.get("net_debt_ebitda_max", 8.0))
+    roic_min = float(qf_cfg.get("roic_min", -999.0))
     quality_pass = (
         (out["fcf_ttm"].isna() | out["fcf_ttm"].gt(0))
         & (out["debt_to_equity"].isna() | out["debt_to_equity"].le(max_lev))
+        & (out["fcf_yield"].isna() | out["fcf_yield"].ge(fcf_yield_min))
+        & (out["net_debt_ebitda"].isna() | out["net_debt_ebitda"].le(net_debt_ebitda_max))
+        & (out["roic"].isna() | out["roic"].ge(roic_min))
     )
     out["l1_quality_pass"] = quality_pass
     out["l1_quality_multiplier"] = np.where(quality_pass, 1.0, 0.0)

@@ -20,6 +20,7 @@ import pandas as pd
 import requests
 import yaml
 from dotenv import load_dotenv
+from src.fundamentals.quality_metrics import compute_quality_metrics
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -52,6 +53,11 @@ OUT_COLUMNS = [
     "inventory_days_accel",
     "gross_margin_delta",
     "last_rev_surprise_pct",
+    "fcf_yield",
+    "roic",
+    "fcf_conversion",
+    "net_capex_sales",
+    "net_debt_ebitda",
 ]
 
 
@@ -282,6 +288,13 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
     earnings_hist = _extract_earnings_history_map(data)
     earnings_revision_30d, next_earnings_date = _extract_earnings_revision_30d_and_next_date(data)
     last_rev_surprise_pct = _extract_last_rev_surprise_pct(data)
+    highlights = data.get("Highlights", {})
+    valuation = data.get("Valuation", {})
+    _market_cap = None
+    if isinstance(highlights, dict):
+        _market_cap = _safe_float(highlights.get("MarketCapitalization"))
+    if _market_cap is None and isinstance(valuation, dict):
+        _market_cap = _safe_float(valuation.get("EnterpriseValue"))
 
     period_keys = sorted(set(income_q.keys()) | set(balance_q.keys()) | set(cash_q.keys()) | set(earnings_hist.keys()))
     if not period_keys:
@@ -341,6 +354,7 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
         key = ts.strftime("%Y-%m-%d")
         income = income_q.get(key, {})
         balance = balance_q.get(key, {})
+        cash = cash_q.get(key, {})
         earn = earnings_hist.get(key, {})
 
         gross_profit = _safe_float(income.get("grossProfit"))
@@ -361,6 +375,21 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
         if eps_est not in (None, 0.0) and eps_act is not None:
             last_eps_surprise_pct = (eps_act - eps_est) / abs(eps_est)
 
+        net_income = _safe_float(income.get("netIncome"))
+        ebitda = _safe_float(income.get("ebitda"))
+        if ebitda in (None, 0.0):
+            ebitda = _safe_float(income.get("operatingIncome"))
+        r_and_d = _safe_float(income.get("researchAndDevelopment"))
+        capex = _safe_float(cash.get("capitalExpenditures"))
+        total_assets = _safe_float(balance.get("totalAssets"))
+        cash_bal = _safe_float(balance.get("cash"))
+        if cash_bal is None:
+            cash_bal = _safe_float(balance.get("cashAndShortTermInvestments"))
+        short_term_debt = _safe_float(balance.get("shortTermDebt"))
+        long_term_debt = _safe_float(balance.get("longTermDebt"))
+        current_liabilities = _safe_float(balance.get("totalCurrentLiabilities"))
+        fcf_ttm = np.nan if key not in fcf_ttm_by_period else fcf_ttm_by_period[key]
+
         rows.append(
             {
                 "ticker": ticker,
@@ -371,11 +400,23 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
                 "earnings_revision_30d": np.nan if earnings_revision_30d is None else float(earnings_revision_30d),
                 "last_earnings_date": last_earnings_date,
                 "next_earnings_date": next_earnings_date,
-                "fcf_ttm": np.nan if key not in fcf_ttm_by_period else fcf_ttm_by_period[key],
+                "fcf_ttm": fcf_ttm,
                 "debt_to_equity": np.nan if debt_to_equity is None else float(debt_to_equity),
                 "inventory_days_accel": np.nan,
                 "gross_margin_delta": np.nan,
                 "last_rev_surprise_pct": np.nan if last_rev_surprise_pct is None else float(last_rev_surprise_pct),
+                "_net_income": np.nan if net_income is None else float(net_income),
+                "_ebitda": np.nan if ebitda is None else float(ebitda),
+                "_r_and_d": np.nan if r_and_d is None else float(r_and_d),
+                "_capex": np.nan if capex is None else float(capex),
+                "_total_assets": np.nan if total_assets is None else float(total_assets),
+                "_cash": np.nan if cash_bal is None else float(cash_bal),
+                "_short_term_debt": np.nan if short_term_debt is None else float(short_term_debt),
+                "_long_term_debt": np.nan if long_term_debt is None else float(long_term_debt),
+                "_current_liabilities": np.nan if current_liabilities is None else float(current_liabilities),
+                "_market_cap": np.nan if _market_cap is None else float(_market_cap),
+                "_fcf_ttm": fcf_ttm,
+                "_revenue": np.nan if total_revenue is None else float(total_revenue),
             }
         )
     for i in range(1, len(rows)):
@@ -387,13 +428,19 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
         prev_gm = rows[i - 1].get("gross_margin_pct")
         if pd.notna(cur_gm) and pd.notna(prev_gm):
             rows[i]["gross_margin_delta"] = float(cur_gm) - float(prev_gm)
-    return rows
+    ticker_df = pd.DataFrame(rows)
+    ticker_df = compute_quality_metrics(ticker_df)
+    ticker_df = ticker_df.reindex(columns=OUT_COLUMNS)
+    return ticker_df.to_dict(orient="records")
 
 
 def _validate_output_frame(df: pd.DataFrame) -> None:
     if list(df.columns) != OUT_COLUMNS:
         raise ValueError(f"Unexpected output columns: {df.columns.tolist()}")
     for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+    for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
     if not pd.api.types.is_datetime64_any_dtype(df["period_end"]):
@@ -433,6 +480,9 @@ def main() -> None:
         for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
             if col not in df.columns:
                 df[col] = np.nan
+        for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
+            if col not in df.columns:
+                df[col] = np.nan
         for col in ("earnings_revision_30d", "next_earnings_date"):
             if col not in df.columns:
                 print(f"[WARN] weekly mode skipped: missing column {col} in existing parquet", flush=True)
@@ -467,6 +517,11 @@ def main() -> None:
                 "inventory_days_accel": "float64",
                 "gross_margin_delta": "float64",
                 "last_rev_surprise_pct": "float64",
+                "fcf_yield": "float64",
+                "roic": "float64",
+                "fcf_conversion": "float64",
+                "net_capex_sales": "float64",
+                "net_debt_ebitda": "float64",
             }
         )
         df = df[OUT_COLUMNS]
@@ -534,6 +589,11 @@ def main() -> None:
             "inventory_days_accel": "float64",
             "gross_margin_delta": "float64",
             "last_rev_surprise_pct": "float64",
+            "fcf_yield": "float64",
+            "roic": "float64",
+            "fcf_conversion": "float64",
+            "net_capex_sales": "float64",
+            "net_debt_ebitda": "float64",
         }
     )
     df = df.sort_values(["ticker", "period_end"], ascending=[True, True]).reset_index(drop=True)
