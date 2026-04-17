@@ -49,6 +49,9 @@ OUT_COLUMNS = [
     "next_earnings_date",
     "fcf_ttm",
     "debt_to_equity",
+    "inventory_days_accel",
+    "gross_margin_delta",
+    "last_rev_surprise_pct",
 ]
 
 
@@ -191,6 +194,28 @@ def _extract_earnings_history_map(data: dict[str, Any]) -> dict[str, dict[str, A
     return _as_period_map(history)
 
 
+def _extract_last_rev_surprise_pct(data: dict[str, Any]) -> float | None:
+    earnings_hist = _extract_earnings_history_map(data)
+    if not earnings_hist:
+        return None
+    candidates: list[tuple[pd.Timestamp, float]] = []
+    for k, row in earnings_hist.items():
+        if not isinstance(row, dict):
+            continue
+        ts = pd.to_datetime(k, errors="coerce")
+        if pd.isna(ts):
+            continue
+        rev_actual = _safe_float(row.get("revenueActual"))
+        rev_estimate = _safe_float(row.get("revenueEstimate"))
+        if rev_actual is None or rev_estimate in (None, 0.0):
+            continue
+        candidates.append((ts, (rev_actual - rev_estimate) / abs(rev_estimate)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    return float(candidates[-1][1])
+
+
 def _extract_earnings_revision_30d_and_next_date(data: dict[str, Any]) -> tuple[float | None, pd.Timestamp | None]:
     earnings = data.get("Earnings", {})
     if not isinstance(earnings, dict):
@@ -256,6 +281,7 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
     cash_q = _as_period_map((financials.get("Cash_Flow") or {}).get("quarterly"))
     earnings_hist = _extract_earnings_history_map(data)
     earnings_revision_30d, next_earnings_date = _extract_earnings_revision_30d_and_next_date(data)
+    last_rev_surprise_pct = _extract_last_rev_surprise_pct(data)
 
     period_keys = sorted(set(income_q.keys()) | set(balance_q.keys()) | set(cash_q.keys()) | set(earnings_hist.keys()))
     if not period_keys:
@@ -347,14 +373,29 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
                 "next_earnings_date": next_earnings_date,
                 "fcf_ttm": np.nan if key not in fcf_ttm_by_period else fcf_ttm_by_period[key],
                 "debt_to_equity": np.nan if debt_to_equity is None else float(debt_to_equity),
+                "inventory_days_accel": np.nan,
+                "gross_margin_delta": np.nan,
+                "last_rev_surprise_pct": np.nan if last_rev_surprise_pct is None else float(last_rev_surprise_pct),
             }
         )
+    for i in range(1, len(rows)):
+        cur_inv = rows[i].get("inventory_days")
+        prev_inv = rows[i - 1].get("inventory_days")
+        if pd.notna(cur_inv) and pd.notna(prev_inv):
+            rows[i]["inventory_days_accel"] = float(cur_inv) - float(prev_inv)
+        cur_gm = rows[i].get("gross_margin_pct")
+        prev_gm = rows[i - 1].get("gross_margin_pct")
+        if pd.notna(cur_gm) and pd.notna(prev_gm):
+            rows[i]["gross_margin_delta"] = float(cur_gm) - float(prev_gm)
     return rows
 
 
 def _validate_output_frame(df: pd.DataFrame) -> None:
     if list(df.columns) != OUT_COLUMNS:
         raise ValueError(f"Unexpected output columns: {df.columns.tolist()}")
+    for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
     if not pd.api.types.is_datetime64_any_dtype(df["period_end"]):
         raise ValueError("period_end must be datetime64")
     if not pd.api.types.is_datetime64_any_dtype(df["last_earnings_date"]):
@@ -389,6 +430,9 @@ def main() -> None:
             sys.exit(0)
 
         df = pd.read_parquet(OUT_FILE)
+        for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
+            if col not in df.columns:
+                df[col] = np.nan
         for col in ("earnings_revision_30d", "next_earnings_date"):
             if col not in df.columns:
                 print(f"[WARN] weekly mode skipped: missing column {col} in existing parquet", flush=True)
@@ -420,6 +464,9 @@ def main() -> None:
                 "earnings_revision_30d": "float64",
                 "fcf_ttm": "float64",
                 "debt_to_equity": "float64",
+                "inventory_days_accel": "float64",
+                "gross_margin_delta": "float64",
+                "last_rev_surprise_pct": "float64",
             }
         )
         df = df[OUT_COLUMNS]
@@ -484,6 +531,9 @@ def main() -> None:
             "earnings_revision_30d": "float64",
             "fcf_ttm": "float64",
             "debt_to_equity": "float64",
+            "inventory_days_accel": "float64",
+            "gross_margin_delta": "float64",
+            "last_rev_surprise_pct": "float64",
         }
     )
     df = df.sort_values(["ticker", "period_end"], ascending=[True, True]).reset_index(drop=True)

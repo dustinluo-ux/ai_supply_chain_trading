@@ -3,6 +3,10 @@ sentiment:
   event_priority_hours: 48
   min_baseline_obs: 1
   sector_top_pct: 0.1
+three_layer_engine:
+  three_layer_engine_weight: 0.0
+  fundamental_cycle_weight: 0.6
+  technical_sentiment_weight: 0.4
 deduplication:
   similarity_threshold: 0.85
 llm_analysis:

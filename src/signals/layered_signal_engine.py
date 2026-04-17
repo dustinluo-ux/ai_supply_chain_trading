@@ -35,6 +35,9 @@ L2_BASE_SIGNALS = [
     "earnings_revision_30d",
     "gross_margin_pct",
     "inventory_days",
+    "inventory_days_accel",
+    "gross_margin_delta",
+    "last_rev_surprise_pct",
 ]
 
 L1_REQUIRED_SIGNALS = [
@@ -102,7 +105,7 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     Returns:
         DataFrame with all intermediate and output columns appended.
     """
-    required = ["date", "ticker"] + L3_SIGNALS + L2_BASE_SIGNALS + L1_REQUIRED_SIGNALS
+    required = ["date", "ticker"] + L3_SIGNALS + L1_REQUIRED_SIGNALS
     _require_columns(df, required)
 
     w_cfg = (config or {}).get("layer_weights", {})
@@ -112,6 +115,9 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         raise ValueError("layer_weights must sum to 1.0")
 
     out = df.copy()
+    for col in L2_BASE_SIGNALS:
+        if col not in out.columns:
+            out[col] = np.nan
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out["last_earnings_date"] = pd.to_datetime(out["last_earnings_date"], errors="coerce")
     out["next_earnings_date"] = pd.to_datetime(out["next_earnings_date"], errors="coerce")
@@ -127,11 +133,20 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     # Layer 2 input prep: add TES score.
     out["tes_score"] = _load_tes_series(out["ticker"])
     out["inventory_days_neg"] = -1.0 * out["inventory_days"]
+    out["inventory_days_accel_neg"] = -1.0 * out["inventory_days_accel"]
 
     # Forward-fill fundamentals by ticker with age cap.
     out = out.sort_values(["ticker", "date"]).reset_index(drop=True)
     ffill_days = int((config or {}).get("fundamental_ffill_days", 91))
-    l2_signal_cols = ["earnings_revision_30d", "gross_margin_pct", "inventory_days_neg", "tes_score"]
+    l2_signal_cols = [
+        "earnings_revision_30d",
+        "gross_margin_pct",
+        "inventory_days_neg",
+        "inventory_days_accel_neg",
+        "gross_margin_delta",
+        "last_rev_surprise_pct",
+        "tes_score",
+    ]
     stale_any = pd.Series(False, index=out.index)
     for col in l2_signal_cols:
         src_date_col = f"_{col}_src_date"
@@ -153,9 +168,24 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     out["l2_coverage_flag"] = (per_date_non_stale / per_date_total) < min_cov
 
     # Layer 2 cross-sectional scoring (exclude stale rows).
-    l2_rank_inputs = ["earnings_revision_30d", "gross_margin_pct", "inventory_days_neg", "tes_score"]
+    l2_rank_inputs = [
+        "earnings_revision_30d",
+        "gross_margin_pct",
+        "inventory_days_neg",
+        "inventory_days_accel_neg",
+        "gross_margin_delta",
+        "last_rev_surprise_pct",
+        "tes_score",
+    ]
     if out["tes_score"].isna().all():
-        l2_rank_inputs = ["earnings_revision_30d", "gross_margin_pct", "inventory_days_neg"]
+        l2_rank_inputs = [
+            "earnings_revision_30d",
+            "gross_margin_pct",
+            "inventory_days_neg",
+            "inventory_days_accel_neg",
+            "gross_margin_delta",
+            "last_rev_surprise_pct",
+        ]
 
     for col in l2_rank_inputs:
         safe_series = out[col].where(~out["l2_stale"])

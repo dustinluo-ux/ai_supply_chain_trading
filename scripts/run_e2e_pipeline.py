@@ -328,6 +328,7 @@ def main() -> int:
         from src.agents.bull_bear_debate import run_debate
         from src.agents.damodaran_anchor import anchor_ticker as _anchor_ticker
         from src.agents.taleb_auditor import audit_ticker as _audit_ticker
+        from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
         from src.data.csv_provider import load_data_config, load_prices
 
         _agent_audit_path = ROOT / "outputs" / "agent_audit.json"
@@ -394,9 +395,66 @@ def main() -> int:
         except Exception:
             debate_json = {}
 
+        three_layer_offset = None
+        try:
+            _as_of_ts = pd.to_datetime(_stage36_date, errors="coerce")
+            if not pd.isna(_as_of_ts):
+                _prices_36 = load_prices(_stage36_dir, ticker_list)
+                _tw_out = _compute_target_weights(
+                    as_of=_as_of_ts,
+                    tickers=ticker_list,
+                    prices_dict=_prices_36,
+                    data_dir=Path(_stage36_dir),
+                    top_n=int(args.top_n),
+                    weight_mode="fixed",
+                    llm_enabled=not bool(args.no_llm),
+                    return_aux=True,
+                    use_ml_override=None,
+                    score_floor=args.score_floor,
+                )
+                _aux_36 = _tw_out[1] if isinstance(_tw_out, tuple) and len(_tw_out) > 1 and isinstance(_tw_out[1], dict) else {}
+                _existing = _aux_36.get("existing_alpha") if isinstance(_aux_36, dict) else {}
+                _layered = _aux_36.get("three_layer_alpha") if isinstance(_aux_36, dict) else {}
+                if isinstance(_layered, dict) and _layered:
+                    _existing = {str(k).upper(): v for k, v in (_existing.items() if isinstance(_existing, dict) else [])}
+                    _layered = {str(k).upper(): v for k, v in _layered.items()}
+                    _tick_union = sorted(set(_existing.keys()) | set(_layered.keys()))
+
+                    def _clean_num(_v):
+                        if _v is None:
+                            return None
+                        try:
+                            _fv = float(_v)
+                        except (TypeError, ValueError):
+                            return None
+                        return None if pd.isna(_fv) else _fv
+
+                    three_layer_offset = {}
+                    for _t in _tick_union:
+                        _ev = _clean_num(_existing.get(_t))
+                        _lv = _clean_num(_layered.get(_t))
+                        _delta = (_lv - _ev) if (_ev is not None and _lv is not None) else None
+                        three_layer_offset[_t] = {
+                            "existing_alpha": _ev,
+                            "three_layer_alpha": _lv,
+                            "delta": _delta,
+                        }
+        except Exception as _tlo_err:
+            three_layer_offset = None
+            print(f"WARNING: Stage 3.6 three_layer_offset skipped: {_tlo_err}", file=sys.stderr, flush=True)
+
         _tmp_audit = _agent_audit_path.with_name(_agent_audit_path.name + ".tmp")
         with open(_tmp_audit, "w", encoding="utf-8") as _aj:
-            json.dump({"taleb": taleb_json, "damodaran": damodaran_json, "bull_bear_debate": debate_json}, _aj, indent=2)
+            json.dump(
+                {
+                    "taleb": taleb_json,
+                    "damodaran": damodaran_json,
+                    "bull_bear_debate": debate_json,
+                    "three_layer_offset": three_layer_offset,
+                },
+                _aj,
+                indent=2,
+            )
         _tmp_audit.replace(_agent_audit_path)
     except Exception as _e36:
         print(f"WARNING: Stage 3.6 agent audit skipped: {_e36}", file=sys.stderr, flush=True)

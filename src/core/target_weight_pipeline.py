@@ -303,33 +303,16 @@ def compute_target_weights(
         "llm_enabled": llm_enabled,
     }
     use_layered = False
+    three_layer_engine_weight = 0.0
     try:
         from src.utils.config_manager import get_config as _get_cfg
         use_layered = bool(_get_cfg().get_param("strategy_params.use_layered_engine", False))
+        from src.signals.layered_signal_engine import load_layered_config
+
+        _layered_cfg = load_layered_config()
+        three_layer_engine_weight = float((_layered_cfg or {}).get("three_layer_engine_weight", 0.0))
     except Exception:
         pass
-
-    if use_layered:
-        try:
-            from src.signals.layered_signal_engine import (
-                compute_layered_positions,
-                load_layered_config,
-            )
-            _layered_cfg = load_layered_config()
-            # Build a minimal panel from prices_dict + any precomputed signals in scope.
-            # Caller is expected to have assembled panel_df before this point.
-            # If panel_df is not in scope, fall through to existing path.
-            if "panel_df" in dir():
-                _layered_out = compute_layered_positions(panel_df, _layered_cfg)
-                _scores = (
-                    _layered_out[_layered_out["date"] == as_of_date]
-                    .set_index("ticker")["final_position_weight"]
-                    .to_dict()
-                )
-                _aux = {"layered_engine": True, "intermediates": _layered_out}
-                return _scores, _aux
-        except Exception as _e:
-            logger.warning("layered_signal_engine failed (%s); falling back to SignalEngine", _e)
     week_scores, aux = signal_engine.generate(as_of, tickers, data_context)
     atr_norms = aux.get("atr_norms", {})
 
@@ -437,6 +420,49 @@ def compute_target_weights(
                 else:
                     _vol_triggered_dict[_t] = False
             scores_to_use = _scores_copy
+
+    existing_alpha = dict(scores_to_use)
+    three_layer_alpha: dict[str, float] = {}
+    final_alpha = dict(scores_to_use)
+    if use_layered and three_layer_engine_weight > 0.0:
+        try:
+            from src.signals.layered_signal_engine import (
+                compute_layered_positions,
+                load_layered_config,
+            )
+
+            _layered_cfg = load_layered_config()
+
+            def _normalize_alpha(_alpha: dict[str, float]) -> dict[str, float]:
+                _out = {str(k): float(v) for k, v in _alpha.items()}
+                if not _out:
+                    return {}
+                _vals = np.array(list(_out.values()), dtype=float)
+                _mn, _mx = float(np.nanmin(_vals)), float(np.nanmax(_vals))
+                if _mx - _mn > 0:
+                    return {k: float((v - _mn) / (_mx - _mn)) for k, v in _out.items()}
+                return {k: 0.5 for k in _out}
+
+            if "panel_df" in dir():
+                _layered_out = compute_layered_positions(panel_df, _layered_cfg)
+                _as_of = pd.Timestamp(as_of).normalize()
+                _today = _layered_out[_layered_out["date"].dt.normalize() == _as_of]
+                three_layer_alpha = _normalize_alpha(_today.set_index("ticker")["final_position_weight"].to_dict())
+                if three_layer_alpha:
+                    _w = max(0.0, min(1.0, float(three_layer_engine_weight)))
+                    _all_tickers = set(existing_alpha) | set(three_layer_alpha)
+                    final_alpha = {
+                        _t: (1.0 - _w) * float(existing_alpha.get(_t, 0.5)) + _w * float(three_layer_alpha.get(_t, 0.5))
+                        for _t in _all_tickers
+                    }
+                    scores_to_use = final_alpha
+        except Exception as _e:
+            logging.warning("layered_signal_engine blend failed (%s); falling back to existing alpha path", _e)
+            scores_to_use = existing_alpha
+            final_alpha = existing_alpha
+    aux["existing_alpha"] = existing_alpha
+    aux["three_layer_alpha"] = three_layer_alpha
+    aux["final_alpha"] = final_alpha
     for _t in scores_to_use:
         _vol_20d_dict.setdefault(_t, None)
         _vol_triggered_dict.setdefault(_t, False)
