@@ -11,15 +11,7 @@ data:
 news:
   enabled: true          # Set false to disable news in pipeline (news_dir becomes None)
   data_dir: "C:/ai_supply_chain_trading/trading_data/news"  # Directory read by target_weight_pipeline and signal_engine
-  source: "marketaux"  # Options: "newsapi", "alphavantage", "finnhub", "marketaux"
-  # Source-specific configurations
-  newsapi:
-    rate_limit_daily: 100  # Free tier limit
-  alphavantage:
-    calls_per_minute: 5  # Free tier limit
-    calls_per_day: 500  # Free tier limit
-  finnhub:
-    calls_per_minute: 60  # Free tier limit
+  source: "marketaux"  # Options: "marketaux", "tiingo"
   marketaux:
     requests_per_day: 100  # Free tier limit
     articles_per_request: 3  # Free tier limit

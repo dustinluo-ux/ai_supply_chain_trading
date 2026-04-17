@@ -1,0 +1,70 @@
+sentiment:
+  baseline_days: 30
+  event_priority_hours: 48
+  min_baseline_obs: 1
+  sector_top_pct: 0.1
+deduplication:
+  similarity_threshold: 0.85
+llm_analysis:
+  enabled: true
+  provider: google
+  model: gemini-2.0-flash
+  trigger_threshold: 0.2
+  entity_ticker_map:
+    NVIDIA: NVDA
+    TAIWAN SEMICONDUCTOR: TSM
+    TSMC: TSM
+    ASML HOLDING: ASML
+    MICRON: MU
+    APPLIED MATERIALS: AMAT
+    ADVANCED MICRO DEVICES: AMD
+    SAMSUNG ELECTRONICS: SSNLF
+propagation:
+  tier_1_weight: 0.5
+  tier_2_weight: 0.2
+  blend_factor: 0.3
+  enabled: true
+  min_rsi_norm_for_entry: 0.5
+warmup:
+  min_required_days: 60
+  rolling_normalization: 252
+rebalancing:
+  enabled: true
+  schedule: monday_open
+  drift_threshold_pct: 0.05
+  min_trade_dollar_value: 500
+  rebalance_buffer: 0.01
+  cash_reserve_pct: 0.05
+execution:
+  default_timeframe: 1d
+  rebalance_frequency: weekly
+  rebalance_day: Monday
+circuit_breaker:
+  enabled: true
+  max_1d_drawdown_pct: 0.05
+pod_overrides:
+  frozen_pods_resume: []
+risk_overlay:
+  vix_elevated_threshold: 28
+  spy_sma_window: 100
+  sector_corr_threshold: 0.85
+  corr_lookback_days: 60
+  vix_multiplier: 0.6
+regime:
+  score_floor_contraction: 0.65
+optimizer_promotion:
+  top_n: 5
+  score_floor: 0.2
+  no_llm: true
+  track: A
+  no_hedge: false
+  train_years: 3
+  news_weight: 0.1
+  ml_blend_weight: 0.2
+  master_score_weights:
+    trend: 0.5
+    momentum: 0.25
+    volume: 0.15
+    volatility: 0.1
+  promoted_at: '2026-04-14T14:34:09.524923+00:00'
+  source_results: C:/Users/User/OneDrive/Programming/ai_supply_chain_trading/outputs/optimizer_results.json

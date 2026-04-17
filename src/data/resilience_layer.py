@@ -1,6 +1,5 @@
-# Staged: not yet wired into active pipelines. Entry point is get_prices(). Do not delete — tests pass, future integration planned.
 """
-Price fetch with vendor fallback: local CSV → Marketaux → YFinance → Alpha Vantage.
+Price fetch with vendor fallback: local CSV → Marketaux → YFinance.
 """
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ALPHAVANTAGE_URL = "https://www.alphavantage.co/query"
 _MARKETAUX_EOD_URL = "https://api.marketaux.com/v1/eod"
 
 
@@ -175,50 +173,6 @@ def _try_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame | None:
         return None
 
 
-def _try_alphavantage(ticker: str, start: str, end: str, api_key: str) -> pd.DataFrame | None:
-    try:
-        params = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": ticker,
-            "outputsize": "full",
-            "apikey": api_key,
-        }
-        r = requests.get(_ALPHAVANTAGE_URL, params=params, timeout=120)
-        r.raise_for_status()
-        data = r.json()
-        if not isinstance(data, dict):
-            return None
-        if "Information" in data:
-            return None
-        ts = data.get("Time Series (Daily)")
-        if not isinstance(ts, dict):
-            return None
-        rows = []
-        for date_str, bar in ts.items():
-            if not isinstance(bar, dict):
-                continue
-            rows.append(
-                {
-                    "date": date_str,
-                    "open": float(bar.get("1. open", 0) or 0),
-                    "high": float(bar.get("2. high", 0) or 0),
-                    "low": float(bar.get("3. low", 0) or 0),
-                    "close": float(bar.get("5. adjusted close") or bar.get("4. close", 0) or 0),
-                    "volume": float(bar.get("6. volume", 0) or 0),
-                }
-            )
-        if len(rows) < 5:
-            return None
-        df = pd.DataFrame(rows)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        df = _slice_date_range(df, start, end)
-        if len(df) < 5:
-            return None
-        return df
-    except Exception:
-        return None
-
 
 def _run_vendor(
     ticker: str,
@@ -250,11 +204,10 @@ def get_prices(
     data_dir: Path,
     *,
     marketaux_api_key: Optional[str] = None,
-    alphavantage_api_key: Optional[str] = None,
     state: Optional["PipelineState"] = None,
 ) -> dict[str, pd.DataFrame]:
     """
-    Per-ticker fallback: CSV → Marketaux → YFinance → Alpha Vantage.
+    Per-ticker fallback: CSV → Marketaux → YFinance.
 
     Never raises; omits tickers that fail all vendors. OHLC columns are Decimal after success.
     """
@@ -289,17 +242,6 @@ def get_prices(
             lambda: _try_yfinance(ticker, start, end),
             state,
         )
-        if df is not None:
-            out[ticker] = _cast_ohlc_to_decimal(df)
-            continue
-
-        if alphavantage_api_key:
-            df = _run_vendor(
-                ticker,
-                "alphavantage",
-                lambda: _try_alphavantage(ticker, start, end, alphavantage_api_key),
-                state,
-            )
         if df is not None:
             out[ticker] = _cast_ohlc_to_decimal(df)
             continue

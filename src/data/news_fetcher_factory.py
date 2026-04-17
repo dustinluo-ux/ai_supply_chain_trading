@@ -13,11 +13,7 @@ from src.data.news_base import NewsDataSource
 
 logger = logging.getLogger(__name__)
 
-# Lazy-load source classes to avoid ModuleNotFoundError when a source's package is uninstalled
 _SOURCE_MAP = {
-    'newsapi': ('src.data.news_sources.newsapi_source', 'NewsAPISource'),
-    'alphavantage': ('src.data.news_sources.alphavantage_source', 'AlphaVantageSource'),
-    'finnhub': ('src.data.news_sources.finnhub_source', 'FinnhubSource'),
     'marketaux': ('src.data.news_sources.marketaux_source', 'MarketauxSource'),
     'tiingo': ('src.data.news_sources.tiingo_provider', 'TiingoProvider'),
 }
@@ -34,7 +30,7 @@ class NewsFetcherFactory:
         Create a news data source instance
         
         Args:
-            source_name: Name of the source ('newsapi', 'alphavantage', 'finnhub', 'marketaux')
+            source_name: Name of the source ('marketaux', 'tiingo')
             data_dir: Directory to store cached articles
             keywords: List of keywords to filter articles
             config: Optional configuration dict for source-specific settings

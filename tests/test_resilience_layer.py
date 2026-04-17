@@ -41,7 +41,6 @@ def test_vendor_chain_falls_through_on_exception(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(resilience_layer, "_try_csv", boom)
     monkeypatch.setattr(resilience_layer, "_try_yfinance", yf_ok)
     monkeypatch.setattr(resilience_layer, "_try_marketaux", lambda *a, **k: None)
-    monkeypatch.setattr(resilience_layer, "_try_alphavantage", lambda *a, **k: None)
 
     out = resilience_layer.get_prices(
         ["ZZZ"],
@@ -49,7 +48,6 @@ def test_vendor_chain_falls_through_on_exception(monkeypatch: pytest.MonkeyPatch
         "2024-01-10",
         Path("/tmp"),
         marketaux_api_key=None,
-        alphavantage_api_key=None,
     )
     assert "csv" in called and "yfinance" in called
     assert "ZZZ" in out
@@ -60,7 +58,6 @@ def test_close_column_is_decimal_after_success(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(resilience_layer, "_try_csv", lambda *a, **k: None)
     monkeypatch.setattr(resilience_layer, "_try_marketaux", lambda *a, **k: None)
     monkeypatch.setattr(resilience_layer, "_try_yfinance", lambda *a, **k: _five_row_ohlcv())
-    monkeypatch.setattr(resilience_layer, "_try_alphavantage", lambda *a, **k: None)
 
     out = resilience_layer.get_prices(
         ["X"],
@@ -112,7 +109,6 @@ def test_get_prices_records_vendor_events(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(resilience_layer, "_try_csv", lambda *a, **k: None)
     monkeypatch.setattr(resilience_layer, "_try_marketaux", lambda *a, **k: None)
     monkeypatch.setattr(resilience_layer, "_try_yfinance", lambda *a, **k: _five_row_ohlcv())
-    monkeypatch.setattr(resilience_layer, "_try_alphavantage", lambda *a, **k: None)
 
     st = PipelineState(
         run_id="x",
