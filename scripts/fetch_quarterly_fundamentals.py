@@ -15,6 +15,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import numpy as np
 import pandas as pd
 import requests
@@ -22,7 +26,6 @@ import yaml
 from dotenv import load_dotenv
 from src.fundamentals.quality_metrics import compute_quality_metrics
 
-ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
 TOKEN = os.getenv("EODHD_API_KEY", "")
