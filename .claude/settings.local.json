@@ -134,22 +134,22 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": ".*",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "conda run -n wealth python .claude/hooks/pre-tool-use.py"
+            "command": "/c/Users/dusro/anaconda3/envs/wealth/python.exe .claude/hooks/pre-tool-use.py"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": ".*",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "conda run -n wealth python .claude/hooks/post-tool-use.py"
+            "command": "/c/Users/dusro/anaconda3/envs/wealth/python.exe .claude/hooks/post-tool-use.py"
           }
         ]
       }

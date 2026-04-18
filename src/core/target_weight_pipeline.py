@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
@@ -234,7 +235,17 @@ def compute_target_weights(
     if len(tickers) < top_n:
         out = pd.Series(0.0, index=tickers)
         if return_aux:
-            return (out, {"scores": {}, "vol_20d": {}, "vol_triggered": {}})
+            from decimal import Decimal as _D
+            from src.risk.types import TargetPortfolio
+
+            _aux_early = {"scores": {}, "vol_20d": {}, "vol_triggered": {}}
+            _aux_early["target_portfolio"] = TargetPortfolio(
+                as_of=pd.Timestamp(as_of),
+                weights={str(t): _D("0") for t in tickers},
+                scores={},
+                construction_meta={"top_n": top_n, "three_layer_engine_weight": 0.0, "use_layered": False},
+            )
+            return (out, _aux_early)
         return out
 
     spy_bench = _spy_benchmark_series(data_dir) if data_dir else None
@@ -248,7 +259,7 @@ def compute_target_weights(
 
     regime_state = None
     spy_above_sma200 = None
-    spy_below_sma200 = False
+    spy_below_sma200 = False  # GATE MOVED: now in src/risk/policy.py
     if spy_close_native is not None:
         from src.signals.weight_model import get_regime_hmm
 
@@ -262,14 +273,6 @@ def compute_target_weights(
                 if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
                     spy_above_sma200 = bool(spy_cl >= sma_val)
                     regime_state = "BULL" if spy_above_sma200 else "BEAR"
-        if kill_switch_active and spy_close_series is not None and spy_sma_series is not None:
-            up_to = spy_close_series.index[spy_close_series.index <= as_of]
-            if len(up_to) > 0:
-                last_d = up_to[-1]
-                spy_cl = spy_close_series.loc[last_d]
-                sma_val = spy_sma_series.loc[last_d] if last_d in spy_sma_series.index else None
-                if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
-                    spy_below_sma200 = bool(spy_cl < sma_val)
 
     # news_dir from config if enabled and directory exists
     _news_dir = None
@@ -456,21 +459,44 @@ def compute_target_weights(
             if _fund_path.exists():
                 _fund = _pd.read_parquet(str(_fund_path))
                 _fund["period_end"] = _pd.to_datetime(_fund["period_end"])
+                if "filing_date" in _fund.columns:
+                    _fund["filing_date"] = _pd.to_datetime(_fund["filing_date"], errors="coerce")
                 _as_of_ts = _pd.Timestamp(as_of)
-                # latest period_end <= as_of per ticker (point-in-time)
+                # Point-in-time: use filing_date when present; else conservative period_end + 45d proxy.
+                _pit_col = "filing_date" if "filing_date" in _fund.columns else None
+                if _pit_col:
+                    _fund["_pit"] = _fund["filing_date"].fillna(
+                        _fund["period_end"] + _pd.Timedelta(days=45)
+                    )
+                else:
+                    _fund["_pit"] = _fund["period_end"] + _pd.Timedelta(days=45)
                 _fund_pit = (
-                    _fund[_fund["period_end"] <= _as_of_ts]
-                    .sort_values("period_end")
+                    _fund[_fund["_pit"] <= _as_of_ts]
+                    .sort_values("_pit")
                     .groupby("ticker")
                     .last()
                     .reset_index()
                 )
+                _fund.drop(columns=["_pit"], inplace=True, errors="ignore")
+                _fund_pit = _fund_pit.drop(columns=["_pit"], errors="ignore")
                 _fund_cols = [
-                    "ticker", "fcf_ttm", "debt_to_equity", "fcf_yield", "roic",
-                    "fcf_conversion", "net_capex_sales", "net_debt_ebitda",
-                    "gross_margin_pct", "inventory_days", "inventory_days_accel",
-                    "gross_margin_delta", "last_rev_surprise_pct",
-                    "earnings_revision_30d", "last_earnings_date", "next_earnings_date",
+                    "ticker",
+                    "filing_date",
+                    "fcf_ttm",
+                    "debt_to_equity",
+                    "fcf_yield",
+                    "roic",
+                    "fcf_conversion",
+                    "net_capex_sales",
+                    "net_debt_ebitda",
+                    "gross_margin_pct",
+                    "inventory_days",
+                    "inventory_days_accel",
+                    "gross_margin_delta",
+                    "last_rev_surprise_pct",
+                    "earnings_revision_30d",
+                    "last_earnings_date",
+                    "next_earnings_date",
                 ]
                 _fund_cols_present = [c for c in _fund_cols if c in _fund_pit.columns]
                 _fund_pit = _fund_pit[_fund_cols_present]
@@ -529,10 +555,11 @@ def compute_target_weights(
         _vol_20d_dict.setdefault(_t, None)
         _vol_triggered_dict.setdefault(_t, False)
 
+    sideways_risk_scale = Decimal("1.0")  # GATE MOVED: now in src/risk/policy.py
     policy_context = {
         "regime_state": regime_state,
         "spy_below_sma200": spy_below_sma200,
-        "sideways_risk_scale": sideways_risk_scale,
+        "sideways_risk_scale": float(sideways_risk_scale),
         "kill_switch_mode": KILL_SWITCH_MODE,
         "kill_switch_active": kill_switch_active,
     }
@@ -541,6 +568,7 @@ def compute_target_weights(
     portfolio_context = {"top_n": top_n, "atr_norms": atr_norms, "tickers": tickers}
     if path is not None:
         portfolio_context["path"] = path
+    # GATE MOVED: score_floor_contraction now in src/risk/policy.py
     if score_floor is not None:
         portfolio_context["score_floor"] = score_floor
     intent = portfolio_engine.build(as_of, gated_scores, portfolio_context)
@@ -551,7 +579,26 @@ def compute_target_weights(
     if not intent.tickers:
         out = pd.Series(0.0, index=list(tickers))
         if return_aux:
-            return (out, {"scores": dict(scores_to_use), "vol_20d": _vol_20d_dict, "vol_triggered": _vol_triggered_dict})
+            from decimal import Decimal as _D
+            from src.risk.types import TargetPortfolio
+
+            _aux_empty = {
+                **aux,
+                "scores": dict(scores_to_use),
+                "vol_20d": _vol_20d_dict,
+                "vol_triggered": _vol_triggered_dict,
+            }
+            _aux_empty["target_portfolio"] = TargetPortfolio(
+                as_of=pd.Timestamp(as_of),
+                weights={str(t): _D("0") for t in tickers},
+                scores=dict(scores_to_use),
+                construction_meta={
+                    "top_n": top_n,
+                    "three_layer_engine_weight": three_layer_engine_weight,
+                    "use_layered": use_layered,
+                },
+            )
+            return (out, _aux_empty)
         return out
     weights = {t: intent.weights.get(t, 0.0) for t in requested_set}
     for t in requested_set:
@@ -563,5 +610,24 @@ def compute_target_weights(
             weights[t] /= total
     weights_series = pd.Series(weights).reindex(list(tickers), fill_value=0.0)
     if return_aux:
-        return (weights_series, {"scores": dict(scores_to_use), "vol_20d": _vol_20d_dict, "vol_triggered": _vol_triggered_dict})
+        from decimal import Decimal as _D
+        from src.risk.types import TargetPortfolio
+
+        _aux_out = {
+            **aux,
+            "scores": dict(scores_to_use),
+            "vol_20d": _vol_20d_dict,
+            "vol_triggered": _vol_triggered_dict,
+        }
+        _aux_out["target_portfolio"] = TargetPortfolio(
+            as_of=pd.Timestamp(as_of),
+            weights={t: _D(str(round(float(w), 6))) for t, w in weights.items()},
+            scores=dict(scores_to_use),
+            construction_meta={
+                "top_n": top_n,
+                "three_layer_engine_weight": three_layer_engine_weight,
+                "use_layered": use_layered,
+            },
+        )
+        return (weights_series, _aux_out)
     return weights_series

@@ -120,6 +120,7 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         raise ValueError("layer_weights must sum to 1.0")
 
     out = df.copy()
+    # filing_date (optional): fundamentals audit metadata only; not in L2_BASE_SIGNALS / L1_REQUIRED_SIGNALS.
     for col in L2_BASE_SIGNALS:
         if col not in out.columns:
             out[col] = np.nan

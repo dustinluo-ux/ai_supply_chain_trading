@@ -487,8 +487,6 @@ def main() -> int:
         str(int(args.top_n)),
         "--mode",
         _mode,
-        "--regime-multiplier",
-        "1.0",
         "--ibkr-port",
         str(args.ibkr_port),
     ]

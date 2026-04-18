@@ -234,6 +234,51 @@ def main() -> int:
                 file=sys.stderr,
                 flush=True,
             )
+        _risk_script = str(ROOT / "scripts" / "run_risk_daily.py")
+        _tr_open = f'cmd /c cd /d "{ROOT}" && "{_py}" "{_risk_script}"'
+        _sch_open = [
+            "schtasks",
+            "/Create",
+            "/F",
+            "/TN",
+            "run_risk_daily_open",
+            "/TR",
+            _tr_open,
+            "/SC",
+            "DAILY",
+            "/ST",
+            "09:00",
+        ]
+        _sr_o = subprocess.run(_sch_open, capture_output=True, text=True)
+        if _sr_o.returncode != 0:
+            print(
+                f"[OPTIMIZER][WARN] schtasks risk-open exit {_sr_o.returncode}: "
+                f"{(_sr_o.stderr or _sr_o.stdout or '').strip()}",
+                file=sys.stderr,
+                flush=True,
+            )
+        _tr_close = f'cmd /c cd /d "{ROOT}" && "{_py}" "{_risk_script}"'
+        _sch_close = [
+            "schtasks",
+            "/Create",
+            "/F",
+            "/TN",
+            "run_risk_daily_close",
+            "/TR",
+            _tr_close,
+            "/SC",
+            "DAILY",
+            "/ST",
+            "16:00",
+        ]
+        _sr_c = subprocess.run(_sch_close, capture_output=True, text=True)
+        if _sr_c.returncode != 0:
+            print(
+                f"[OPTIMIZER][WARN] schtasks risk-close exit {_sr_c.returncode}: "
+                f"{(_sr_c.stderr or _sr_c.stdout or '').strip()}",
+                file=sys.stderr,
+                flush=True,
+            )
     except Exception as _se:
         print(f"[OPTIMIZER][WARN] Scheduler registration failed: {_se}", file=sys.stderr, flush=True)
 

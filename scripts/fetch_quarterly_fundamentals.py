@@ -45,6 +45,7 @@ INSTRUMENTS_PATH = ROOT / "config" / "instruments.yaml"
 OUT_COLUMNS = [
     "ticker",
     "period_end",
+    "filing_date",
     "gross_margin_pct",
     "inventory_days",
     "last_eps_surprise_pct",
@@ -388,6 +389,7 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
         {
             "ticker": ticker,
             "period_end": idx,
+            "filing_date": idx + pd.Timedelta(days=45),
             "source_date": idx,
             "gross_margin_pct": gross_margin_pct.values,
             "inventory_days": inventory_days.values,
@@ -421,6 +423,21 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
     if ydf.empty:
         return None
     return ydf
+
+
+def _ensure_filing_date_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ensure every row has filing_date (conservative proxy: period_end + 45d when missing)."""
+    if not rows:
+        return rows
+    df = pd.DataFrame(rows)
+    df["period_end"] = pd.to_datetime(df["period_end"], errors="coerce")
+    if "filing_date" not in df.columns:
+        df["filing_date"] = df["period_end"] + pd.Timedelta(days=45)
+    else:
+        df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
+        na_mask = df["filing_date"].isna()
+        df.loc[na_mask, "filing_date"] = df.loc[na_mask, "period_end"] + pd.Timedelta(days=45)
+    return df.to_dict(orient="records")
 
 
 def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -502,6 +519,9 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
         balance = balance_q.get(key, {})
         cash = cash_q.get(key, {})
         earn = earnings_hist.get(key, {})
+        filing_date = pd.to_datetime(earn.get("reportDate") or earn.get("report_date"), errors="coerce")
+        if pd.isna(filing_date):
+            filing_date = ts + pd.Timedelta(days=45)
 
         gross_profit = _safe_float(income.get("grossProfit"))
         total_revenue = _safe_float(income.get("totalRevenue"))
@@ -540,6 +560,7 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
             {
                 "ticker": ticker,
                 "period_end": ts,
+                "filing_date": filing_date,
                 "gross_margin_pct": gross_margin_pct,
                 "inventory_days": inventory_days,
                 "last_eps_surprise_pct": last_eps_surprise_pct,
@@ -592,7 +613,7 @@ def _extract_rows_for_ticker(ticker: str, suffix_map: dict[str, str]) -> list[di
     ydf = _extract_yfinance(ticker, market_cap)
     if ydf is not None and len(ydf) >= 1:
         print(f"[yfinance] {ticker}: {len(ydf)} quarters", flush=True)
-        return ydf.to_dict(orient="records")
+        return _ensure_filing_date_on_rows(ydf.to_dict(orient="records"))
 
     print(f"[EODHD fallback] {ticker}", flush=True)
     eod_ticker = _normalize_eodhd_ticker(ticker, suffix_map)
@@ -605,7 +626,7 @@ def _extract_rows_for_ticker(ticker: str, suffix_map: dict[str, str]) -> list[di
     if not rows:
         print(f"[WARN] {ticker}: no rows from yfinance or EODHD", flush=True)
         return []
-    return rows
+    return _ensure_filing_date_on_rows(rows)
 
 
 def _validate_output_frame(df: pd.DataFrame) -> None:
@@ -623,6 +644,8 @@ def _validate_output_frame(df: pd.DataFrame) -> None:
         raise ValueError("last_earnings_date must be datetime64")
     if not pd.api.types.is_datetime64_any_dtype(df["next_earnings_date"]):
         raise ValueError("next_earnings_date must be datetime64")
+    if not pd.api.types.is_datetime64_any_dtype(df["filing_date"]):
+        raise ValueError("filing_date must be datetime64")
 
 
 def _parse_mode(argv: list[str]) -> str:
@@ -661,6 +684,14 @@ def main() -> None:
             if col not in df.columns:
                 print(f"[WARN] weekly mode skipped: missing column {col} in existing parquet", flush=True)
                 sys.exit(0)
+        if "filing_date" not in df.columns:
+            df["filing_date"] = pd.to_datetime(df["period_end"], errors="coerce") + pd.Timedelta(days=45)
+        else:
+            df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
+            _fd_na = df["filing_date"].isna()
+            df.loc[_fd_na, "filing_date"] = (
+                pd.to_datetime(df.loc[_fd_na, "period_end"], errors="coerce") + pd.Timedelta(days=45)
+            )
 
         updated = 0
         for base_ticker in tickers:
@@ -677,6 +708,7 @@ def main() -> None:
                 updated += 1
 
         df["period_end"] = pd.to_datetime(df["period_end"], errors="coerce")
+        df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
         df["last_earnings_date"] = pd.to_datetime(df.get("last_earnings_date"), errors="coerce")
         df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"], errors="coerce")
         df = df.astype(
@@ -722,7 +754,7 @@ def main() -> None:
             continue
 
         ticker_df = pd.DataFrame(rows, columns=OUT_COLUMNS)
-        measure_cols = [c for c in OUT_COLUMNS if c not in ("ticker", "period_end")]
+        measure_cols = [c for c in OUT_COLUMNS if c not in ("ticker", "period_end", "filing_date")]
         if ticker_df[measure_cols].isna().any().any():
             tickers_partial += 1
         else:
@@ -734,11 +766,13 @@ def main() -> None:
     df = pd.DataFrame(all_rows, columns=OUT_COLUMNS)
     if not df.empty:
         df["period_end"] = pd.to_datetime(df["period_end"], errors="coerce")
+        df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
         df["last_earnings_date"] = pd.to_datetime(df["last_earnings_date"], errors="coerce")
         df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"], errors="coerce")
     else:
         df = pd.DataFrame(columns=OUT_COLUMNS)
         df["period_end"] = pd.to_datetime(df["period_end"])
+        df["filing_date"] = pd.to_datetime(df["filing_date"])
         df["last_earnings_date"] = pd.to_datetime(df["last_earnings_date"])
         df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"])
 

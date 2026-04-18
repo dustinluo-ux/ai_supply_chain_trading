@@ -621,7 +621,12 @@ def main() -> tuple[int, list]:
     )
     parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
     parser.add_argument("--reset-stop-loss", action="store_true", help="Clear flatten_active in drawdown_tracker and continue normal execution")
-    parser.add_argument("--regime-multiplier", type=float, default=1.0, help="De-gross effective NAV multiplier from regime controller")
+    parser.add_argument(
+        "--regime-multiplier",
+        type=float,
+        default=1.0,
+        help="Deprecated: no longer applied to NAV (RiskPolicy.position_scale in weekly Two-Lane).",
+    )
     parser.add_argument("--ibkr-host", type=str, default="127.0.0.1")
     parser.add_argument("--ibkr-port", type=int, default=7497)
     args = parser.parse_args()
@@ -822,8 +827,7 @@ def main() -> tuple[int, list]:
         with open(trading_config_path, "r", encoding="utf-8") as f:
             tc = yaml.safe_load(f)
         account_value = float(tc.get("trading", {}).get("initial_capital", 100_000))
-    account_value *= float(args.regime_multiplier)
-    print(f"[REGIME] multiplier={args.regime_multiplier} effective_nav={account_value}", flush=True)
+    # Regime de-gross removed from run_execution; weekly Two-Lane uses RiskPolicy.position_scale.
 
     _futures_mults = _load_futures_multipliers()
 
