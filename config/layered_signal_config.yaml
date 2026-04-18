@@ -1,4 +1,4 @@
-three_layer_engine_weight: 0.0  # 0.0-1.0 blend knob: 0.0 keeps current behavior, 1.0 uses only layered engine output
+three_layer_engine_weight: 0.3  # 0.0-1.0 blend knob: 0.0 keeps current behavior, 1.0 uses only layered engine output
 
 layer_weights:
   fundamental_cycle_weight: 0.6

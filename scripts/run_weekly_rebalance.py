@@ -75,23 +75,11 @@ def main() -> int:
         print("WARNING: News data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
 
     try:
-        from download_spy import ensure_spy_csv
+        from update_benchmarks import ensure_benchmarks
 
-        ensure_spy_csv()
-    except Exception as _be_spy:
-        print(f"WARNING: Could not ensure SPY benchmark CSV: {_be_spy}", file=sys.stderr, flush=True)
-    try:
-        from download_vix import ensure_vix_csv
-
-        ensure_vix_csv()
-    except Exception as _be_vix:
-        print(f"WARNING: Could not ensure VIX benchmark CSV: {_be_vix}", file=sys.stderr, flush=True)
-    try:
-        from download_smh import ensure_smh_csv
-
-        ensure_smh_csv()
-    except Exception as _be_smh:
-        print(f"WARNING: Could not ensure SMH benchmark CSV: {_be_smh}", file=sys.stderr, flush=True)
+        ensure_benchmarks()
+    except Exception as _be:
+        print(f"WARNING: Could not refresh benchmark CSVs: {_be}", file=sys.stderr, flush=True)
 
     import datetime as _dt
     _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"

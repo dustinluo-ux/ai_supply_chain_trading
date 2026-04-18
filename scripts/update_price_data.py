@@ -2,8 +2,8 @@
 Update Price CSVs — config-driven yfinance downloader.
 
 Reads the watchlist from data_config.yaml, downloads OHLCV via yfinance,
-and merges with existing CSVs (deduplicates by date). Always includes SPY
-for kill-switch and HMM regime detection.
+and merges with existing CSVs (deduplicates by date). SPY/VIX/SMH benchmarks
+live under DATA_DIR/benchmarks/; use scripts/update_benchmarks.py.
 
 Reuse origin:
   - graveyard/scripts/download_spy_yfinance.py (MultiIndex handling, CSV format)
@@ -12,7 +12,7 @@ Reuse origin:
 Usage:
     python scripts/update_price_data.py                     # defaults from YAML
     python scripts/update_price_data.py --start 2023-01-01  # override start
-    python scripts/update_price_data.py --tickers NVDA,AMD  # override watchlist
+    python scripts/update_price_data.py --tickers NVDA,AMD  # override watchlist only
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ sys.path.insert(0, str(ROOT))
 from src.data.csv_provider import CSV_SUBDIRS, find_csv_path, load_data_config
 
 DEFAULT_SUBDIR = "nasdaq/csv"
-REQUIRED_TICKERS = ["SPY"]
 
 
 def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -111,7 +110,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--tickers", type=str, default=None,
-        help="Comma-separated tickers (default: watchlist from data_config.yaml + SPY)",
+        help="Comma-separated tickers (default: watchlist from data_config.yaml)",
     )
     parser.add_argument("--start", type=str, default="2015-01-01")
     parser.add_argument("--end", type=str, default=datetime.date.today().isoformat())
@@ -127,11 +126,6 @@ def main() -> int:
     else:
         from src.utils.config_manager import get_config
         tickers = get_config().get_watchlist()
-
-    # Always include required tickers (SPY for kill-switch/regime)
-    for req in REQUIRED_TICKERS:
-        if req not in tickers:
-            tickers.append(req)
 
     config = load_data_config()
     data_dir = config["data_dir"]

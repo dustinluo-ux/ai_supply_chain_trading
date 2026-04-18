@@ -1,6 +1,6 @@
 # PROJECT STATUS — Current State & Readiness Assessment
 
-**Last Updated:** 2026-04-16
+**Last Updated:** 2026-04-18
 **Project:** AI Supply Chain Quantitative Trading System
 **Phase:** MVP Complete — Autonomous E2E Pipeline Operational
 
@@ -29,7 +29,7 @@ Autonomous quantitative trading pipeline for the AI/semiconductor supply chain u
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Stage 1: Data refresh | Complete | `update_price_data.py` + `update_news_data.py`; skip with `--skip-data` |
+| Stage 1: Data refresh | Complete | `update_price_data.py` + `update_news_data.py` + `update_benchmarks.py`; skip with `--skip-data` |
 | Stage 2: ML factory | Complete | Rolling 4-yr window; CatBoost IC=0.0958; `factory_winner.json` written atomically |
 | Stage 3: OOS backtest | Complete | `e2e_oos_backtest.json` written atomically |
 | Stage 3.5: Skeptic Gate | Complete | Bear-flag screen; WEIGHT_TRIGGER=0.15; >=2 flags = FAIL; skipped during optimizer trials |
@@ -51,9 +51,9 @@ Autonomous quantitative trading pipeline for the AI/semiconductor supply chain u
 - News: Pre-2025 neutral (0.5); 2025+ via Tiingo (requires TIINGO_API_KEY in .env)
 - Regime: Z-score gate; score_floor_contraction=0.65
 
-### Three-Layer Signal Engine (feature-flagged, off by default)
+### Three-Layer Signal Engine (active — `use_layered_engine: true`)
 
-A new signal architecture lives alongside the existing pipeline in `src/signals/layered_signal_engine.py`. Enable via `strategy_params.use_layered_engine: true`.
+Wired into the live pipeline via `src/core/target_weight_pipeline.py`. `strategy_params.use_layered_engine: true` set 2026-04-18. `panel_df` is built per weekly rebalance from `aux["indicator_rows"]` (technical signals) + point-in-time fundamentals merge from `quarterly_signals.parquet`.
 
 - **Layer 3 (technical/sentiment):** cross-sectional z-score → percentile rank for 9 signals (rsi_norm, macd_norm, cmf_norm, momentum_avg, volume_ratio_norm, news_sentiment, news_supply, sentiment_velocity, news_spike). Equal-weight composite.
 - **Layer 2 (fundamental cycle):** cross-sectional z-score → percentile rank for earnings_revision_30d, gross_margin_pct, inventory_days (negated), TES score. Quarterly cadence; forward-filled up to 91 days with `l2_stale` flag. Falls back to Layer 3 when <60% universe has non-stale data.
@@ -95,6 +95,7 @@ scripts/run_execution.py            # Execution spine (mock / paper / live)
 scripts/backtest_technical_library.py  # Standalone OOS backtest engine
 scripts/train_ml_model.py           # Manual ML retrain
 scripts/fetch_quarterly_fundamentals.py  # EODHD fundamental signals (--mode quarterly|weekly)
+scripts/update_benchmarks.py            # Refresh SPY/VIX/SMH benchmark CSVs (benchmarks-only; never in universe)
 ```
 
 ---

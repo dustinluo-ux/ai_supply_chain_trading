@@ -758,7 +758,7 @@ RegimeState {
 ### D024 — D-LAYERED-ENGINE: Three-layer cross-sectional signal architecture (2026-04-16)
 
 **ID:** D-LAYERED-ENGINE  
-**Status:** Implemented (feature-flagged, off by default)
+**Status:** Active — `use_layered_engine: true` set 2026-04-18; `panel_df` wiring complete in `target_weight_pipeline.py`
 
 #### Background
 
@@ -799,6 +799,30 @@ Fundamental data sparsity on the weekly cross-section. If `quarterly_signals.par
 - `scripts/fetch_quarterly_fundamentals.py` — EODHD fundamental fetcher, `--mode quarterly|weekly` (new)
 - `config/layered_signal_config.yaml` — all tunable parameters (new)
 - `src/core/target_weight_pipeline.py` — feature flag insertion, <20 lines, default false (modified)
+
+---
+
+---
+
+### D025 — Consolidate benchmark downloads into update_benchmarks.py
+
+**Date:** 2026-04-18  
+**ID:** D025  
+**Status:** Implemented
+
+#### Decision
+
+Replace three nonexistent `download_spy.py` / `download_vix.py` / `download_smh.py` script imports in `run_weekly_rebalance.py` with a single `scripts/update_benchmarks.py` module. Remove `REQUIRED_TICKERS = ["SPY"]` from `update_price_data.py`.
+
+#### Rationale
+
+SPY, VIX, and SMH are benchmark/regime tickers — not part of the 54-ticker trading universe. They must never appear in `data_config.yaml` watchlist or be passed to the signal/portfolio engine. They live exclusively at `trading_data/benchmarks/{ticker}.csv`. Three separate scripts for three tickers is redundant; one module with `BENCHMARK_TICKERS = ["SPY", "VIX", "SMH"]` is the correct shape. VIX maps to `^VIX` for yfinance. Atomic write (`.tmp` → size check → `os.replace`) preserved.
+
+#### Files
+
+- `scripts/update_benchmarks.py` — new; `ensure_benchmarks()` callable + `main()`
+- `scripts/run_weekly_rebalance.py` — single `ensure_benchmarks()` call replaces three broken imports
+- `scripts/update_price_data.py` — `REQUIRED_TICKERS` / SPY forced-download removed
 
 ---
 

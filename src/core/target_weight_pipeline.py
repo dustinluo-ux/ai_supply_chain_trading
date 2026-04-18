@@ -6,6 +6,7 @@ Phase 3 (DECISIONS.md D021): optional ML blend when use_ml true — load model o
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -421,6 +422,67 @@ def compute_target_weights(
                     _vol_triggered_dict[_t] = False
             scores_to_use = _scores_copy
 
+    # Build panel_df for layered engine from cached indicator rows + fundamentals
+    panel_df = None
+    try:
+        import pandas as _pd
+        from pathlib import Path as _Path
+
+        _rows = []
+        _indicator_rows = aux.get("indicator_rows") if isinstance(aux, dict) else {}
+        for _t, _row in (_indicator_rows or {}).items():
+            if _row is None:
+                continue
+            _entry = {"ticker": _t, "date": as_of}
+            for _col in ["rsi_norm", "macd_norm", "cmf_norm", "momentum_avg", "volume_ratio_norm"]:
+                _entry[_col] = float(_row.get(_col, 0.5)) if hasattr(_row, "get") else 0.5
+            # news signals
+            _ns = (data_context.get("news_signals") or {}).get(_t, {})
+            _dk = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
+            _nd = _ns.get(_dk) or {}
+            _entry["news_sentiment"] = float(_nd.get("sentiment_score", 0.5))
+            _entry["news_supply"] = float(_nd.get("supply_chain_score", 0.5))
+            _entry["news_spike"] = 0.0
+            _entry["sentiment_velocity"] = 0.0
+            # L1 required — default NaN (engine handles NaN as pass-through)
+            _entry["fcf_ttm"] = float("nan")
+            _entry["debt_to_equity"] = float("nan")
+            _rows.append(_entry)
+        if _rows:
+            panel_df = _pd.DataFrame(_rows)
+            # merge fundamentals from parquet if available
+            _data_dir = _Path(os.getenv("DATA_DIR", "C:/ai_supply_chain_trading/trading_data"))
+            _fund_path = _data_dir / "fundamentals" / "quarterly_signals.parquet"
+            if _fund_path.exists():
+                _fund = _pd.read_parquet(str(_fund_path))
+                _fund["period_end"] = _pd.to_datetime(_fund["period_end"])
+                _as_of_ts = _pd.Timestamp(as_of)
+                # latest period_end <= as_of per ticker (point-in-time)
+                _fund_pit = (
+                    _fund[_fund["period_end"] <= _as_of_ts]
+                    .sort_values("period_end")
+                    .groupby("ticker")
+                    .last()
+                    .reset_index()
+                )
+                _fund_cols = [
+                    "ticker", "fcf_ttm", "debt_to_equity", "fcf_yield", "roic",
+                    "fcf_conversion", "net_capex_sales", "net_debt_ebitda",
+                    "gross_margin_pct", "inventory_days", "inventory_days_accel",
+                    "gross_margin_delta", "last_rev_surprise_pct",
+                    "earnings_revision_30d", "last_earnings_date", "next_earnings_date",
+                ]
+                _fund_cols_present = [c for c in _fund_cols if c in _fund_pit.columns]
+                _fund_pit = _fund_pit[_fund_cols_present]
+                panel_df = panel_df.drop(columns=["fcf_ttm", "debt_to_equity"], errors="ignore")
+                panel_df = panel_df.merge(_fund_pit, on="ticker", how="left")
+                for _c in ["fcf_ttm", "debt_to_equity"]:
+                    if _c not in panel_df.columns:
+                        panel_df[_c] = float("nan")
+    except Exception as _panel_e:
+        logging.warning("panel_df construction failed (%s); layered engine will skip", _panel_e)
+        panel_df = None
+
     existing_alpha = dict(scores_to_use)
     three_layer_alpha: dict[str, float] = {}
     final_alpha = dict(scores_to_use)
@@ -443,7 +505,7 @@ def compute_target_weights(
                     return {k: float((v - _mn) / (_mx - _mn)) for k, v in _out.items()}
                 return {k: 0.5 for k in _out}
 
-            if "panel_df" in dir():
+            if panel_df is not None and not panel_df.empty:
                 _layered_out = compute_layered_positions(panel_df, _layered_cfg)
                 _as_of = pd.Timestamp(as_of).normalize()
                 _today = _layered_out[_layered_out["date"].dt.normalize() == _as_of]

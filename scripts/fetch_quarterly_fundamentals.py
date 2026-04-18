@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 import requests
+import yfinance as yf
 import yaml
 from dotenv import load_dotenv
 from src.fundamentals.quality_metrics import compute_quality_metrics
@@ -30,8 +31,7 @@ load_dotenv(ROOT / ".env")
 
 TOKEN = os.getenv("EODHD_API_KEY", "")
 if not TOKEN:
-    print("[ERROR] EODHD_API_KEY not found in .env", flush=True)
-    sys.exit(1)
+    print("[WARN] EODHD_API_KEY not set — EODHD fallback disabled, yfinance only", flush=True)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
 OUT_DIR = DATA_DIR / "fundamentals"
@@ -280,7 +280,150 @@ def _extract_earnings_revision_30d_and_next_date(data: dict[str, Any]) -> tuple[
     return (cur - prev) / abs(prev), next_earnings_date
 
 
-def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFrame | None:
+    yf_ticker = yf.Ticker(ticker)
+    try:
+        income_raw = yf_ticker.quarterly_income_stmt
+    except Exception:
+        income_raw = pd.DataFrame()
+    try:
+        balance_raw = yf_ticker.quarterly_balance_sheet
+    except Exception:
+        balance_raw = pd.DataFrame()
+    try:
+        cash_raw = yf_ticker.quarterly_cashflow
+    except Exception:
+        cash_raw = pd.DataFrame()
+
+    if (
+        (income_raw is None or income_raw.empty)
+        and (balance_raw is None or balance_raw.empty)
+        and (cash_raw is None or cash_raw.empty)
+    ):
+        return None
+
+    def _prep_quarters(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        out = df.T.copy()
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out[~out.index.isna()]
+        return out.sort_index(ascending=False)
+
+    income_q = _prep_quarters(income_raw)
+    balance_q = _prep_quarters(balance_raw)
+    cash_q = _prep_quarters(cash_raw)
+
+    idx = income_q.index.union(balance_q.index).union(cash_q.index)
+    idx = pd.DatetimeIndex(sorted(idx, reverse=True))
+    if len(idx) == 0:
+        return None
+
+    income_q = income_q.reindex(idx)
+    balance_q = balance_q.reindex(idx)
+    cash_q = cash_q.reindex(idx)
+
+    revenue = income_q.get("Total Revenue", pd.Series(np.nan, index=idx))
+    gross_profit = income_q.get("Gross Profit", pd.Series(np.nan, index=idx))
+    net_income = income_q.get("Net Income", pd.Series(np.nan, index=idx))
+    ebitda = income_q.get("EBITDA", pd.Series(np.nan, index=idx))
+    eps_basic = income_q.get("Basic EPS", pd.Series(np.nan, index=idx))
+    eps_diluted = income_q.get("Diluted EPS", pd.Series(np.nan, index=idx))
+
+    total_assets = balance_q.get("Total Assets", pd.Series(np.nan, index=idx))
+    cash_equiv = balance_q.get("Cash And Cash Equivalents", pd.Series(np.nan, index=idx))
+    short_term_debt = balance_q.get("Current Debt", pd.Series(np.nan, index=idx))
+    long_term_debt = balance_q.get("Long Term Debt", pd.Series(np.nan, index=idx))
+    current_liabilities = balance_q.get("Current Liabilities", pd.Series(np.nan, index=idx))
+    inventory = balance_q.get("Inventory", pd.Series(np.nan, index=idx))
+
+    fcf_q = cash_q.get("Free Cash Flow", pd.Series(np.nan, index=idx))
+    capex = cash_q.get("Capital Expenditure", pd.Series(np.nan, index=idx))
+    r_and_d = cash_q.get("Research And Development", pd.Series(np.nan, index=idx))
+
+    gross_margin_pct = gross_profit / revenue.replace(0.0, np.nan)
+    inventory_days = inventory / (revenue.replace(0.0, np.nan) / 90.0)
+    inventory_days = inventory_days.where(~inventory.isna(), np.nan)
+
+    eps_proxy = eps_basic.where(~eps_basic.isna(), eps_diluted)
+    prev_eps_proxy = eps_proxy.shift(-1)
+    last_eps_surprise_pct = (eps_proxy - prev_eps_proxy) / prev_eps_proxy.abs().replace(0.0, np.nan)
+
+    try:
+        earnings_history = yf_ticker.earnings_history
+    except Exception:
+        earnings_history = pd.DataFrame()
+    last_rev_surprise_pct = pd.Series(np.nan, index=idx)
+    if isinstance(earnings_history, pd.DataFrame) and not earnings_history.empty:
+        candidates: list[tuple[pd.Timestamp, float]] = []
+        for dt_col in ("quarter", "date", "asOfDate"):
+            if dt_col in earnings_history.columns:
+                ts_vals = pd.to_datetime(earnings_history[dt_col], errors="coerce")
+                break
+        else:
+            ts_vals = pd.to_datetime(earnings_history.index, errors="coerce")
+        for i, ts in enumerate(ts_vals):
+            if pd.isna(ts):
+                continue
+            row = earnings_history.iloc[i]
+            rev_actual = _safe_float(
+                row.get("revenueActual")
+                or row.get("revenue_actual")
+                or row.get("Revenue Actual")
+            )
+            rev_est = _safe_float(
+                row.get("revenueEstimate")
+                or row.get("revenue_estimate")
+                or row.get("Revenue Estimate")
+            )
+            if rev_actual is None or rev_est in (None, 0.0):
+                continue
+            candidates.append((pd.Timestamp(ts).normalize(), (rev_actual - rev_est) / abs(rev_est)))
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            last_val = float(candidates[-1][1])
+            last_rev_surprise_pct = pd.Series(last_val, index=idx)
+
+    ydf = pd.DataFrame(
+        {
+            "ticker": ticker,
+            "period_end": idx,
+            "source_date": idx,
+            "gross_margin_pct": gross_margin_pct.values,
+            "inventory_days": inventory_days.values,
+            "last_eps_surprise_pct": last_eps_surprise_pct.values,
+            "earnings_revision_30d": np.nan,
+            "last_earnings_date": pd.NaT,
+            "next_earnings_date": pd.NaT,
+            "fcf_ttm": np.nan,
+            "debt_to_equity": np.nan,
+            "inventory_days_accel": np.nan,
+            "gross_margin_delta": np.nan,
+            "last_rev_surprise_pct": last_rev_surprise_pct.values,
+            "_net_income": net_income.values,
+            "_ebitda": ebitda.values,
+            "_r_and_d": r_and_d.values,
+            "_capex": capex.values,
+            "_total_assets": total_assets.values,
+            "_cash": cash_equiv.values,
+            "_short_term_debt": short_term_debt.values,
+            "_long_term_debt": long_term_debt.values,
+            "_current_liabilities": current_liabilities.values,
+            "_market_cap": np.nan if market_cap is None else float(market_cap),
+            "_fcf_ttm": fcf_q.rolling(window=4, min_periods=1).sum().values,
+            "_revenue": revenue.values,
+        }
+    )
+
+    ydf = ydf.sort_values("period_end", ascending=False).reset_index(drop=True)
+    ydf = compute_quality_metrics(ydf)
+    ydf = ydf.reindex(columns=OUT_COLUMNS)
+    if ydf.empty:
+        return None
+    return ydf
+
+
+def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[dict[str, Any]]:
     financials = data.get("Financials", {})
     if not isinstance(financials, dict):
         return []
@@ -437,6 +580,34 @@ def _extract_rows_for_ticker(ticker: str, data: dict[str, Any]) -> list[dict[str
     return ticker_df.to_dict(orient="records")
 
 
+def _extract_rows_for_ticker(ticker: str, suffix_map: dict[str, str]) -> list[dict[str, Any]]:
+    market_cap = None
+    try:
+        info = yf.Ticker(ticker).info
+        if isinstance(info, dict):
+            market_cap = _safe_float(info.get("marketCap"))
+    except Exception:
+        market_cap = None
+
+    ydf = _extract_yfinance(ticker, market_cap)
+    if ydf is not None and len(ydf) >= 1:
+        print(f"[yfinance] {ticker}: {len(ydf)} quarters", flush=True)
+        return ydf.to_dict(orient="records")
+
+    print(f"[EODHD fallback] {ticker}", flush=True)
+    eod_ticker = _normalize_eodhd_ticker(ticker, suffix_map)
+    data = _fetch_fundamentals_one(eod_ticker)
+    time.sleep(0.25)
+    if not data:
+        print(f"[WARN] {ticker}: no data from yfinance or EODHD", flush=True)
+        return []
+    rows = _extract_rows_for_ticker_eodhd(eod_ticker, data)
+    if not rows:
+        print(f"[WARN] {ticker}: no rows from yfinance or EODHD", flush=True)
+        return []
+    return rows
+
+
 def _validate_output_frame(df: pd.DataFrame) -> None:
     if list(df.columns) != OUT_COLUMNS:
         raise ValueError(f"Unexpected output columns: {df.columns.tolist()}")
@@ -543,16 +714,8 @@ def main() -> None:
     tickers_zero = 0
 
     for idx, base_ticker in enumerate(tickers, start=1):
-        ticker = _normalize_eodhd_ticker(base_ticker, suffix_map)
-        data = _fetch_fundamentals_one(ticker)
-        time.sleep(0.25)
-
-        if not data:
-            tickers_zero += 1
-            print(f"[WARN] {idx}/{len(tickers)} {ticker}: zero data", flush=True)
-            continue
-
-        rows = _extract_rows_for_ticker(ticker, data)
+        ticker = base_ticker.strip().upper()
+        rows = _extract_rows_for_ticker(ticker, suffix_map)
         if not rows:
             tickers_zero += 1
             print(f"[WARN] {idx}/{len(tickers)} {ticker}: zero data", flush=True)

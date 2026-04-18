@@ -127,7 +127,8 @@
       "Bash(mkdir -p scripts/research outputs/archive)",
       "Bash(mv scripts/optimize_params.py scripts/model_duel.py scripts/run_tail_hedge_backtest.py scripts/run_calibration.py scripts/research/)",
       "Bash(mv outputs/tail_hedge_backtest*.csv outputs/pit_universe_reconstruction.csv outputs/pit_new_discoveries.csv outputs/archive/)",
-      "Bash(\"C:/Users/dusro/anaconda3/envs/wealth/python.exe\" -m pytest tests/test_resilience_layer.py -q)"
+      "Bash(\"C:/Users/dusro/anaconda3/envs/wealth/python.exe\" -m pytest tests/test_resilience_layer.py -q)",
+      "Bash(C:\\\\Users\\\\dusro\\\\anaconda3\\\\envs\\\\wealth\\\\python.exe *)"
     ]
   },
   "hooks": {

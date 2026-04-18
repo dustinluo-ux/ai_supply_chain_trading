@@ -173,6 +173,7 @@ python scripts/backtest_technical_library.py --start 2024-01-01 --end 2024-12-31
 **Canonical data root (outside repo):**
 - `C:\ai_supply_chain_trading\trading_data\stock_market_data\` — price CSVs
 - `C:\ai_supply_chain_trading\trading_data\news\` — news JSON / Tiingo parquets
+- `C:\ai_supply_chain_trading\trading_data\benchmarks\` — SPY / VIX / SMH CSVs (regime/risk only; never in universe)
 
 **Output artifacts:**
 - `outputs/e2e_oos_backtest.json` — latest OOS backtest result
