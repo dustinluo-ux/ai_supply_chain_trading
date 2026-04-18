@@ -112,7 +112,8 @@ scripts/update_benchmarks.py            # Refresh SPY/VIX/SMH benchmark CSVs (be
 | `outputs/agent_audit.json` | Taleb + Damodaran per-ticker advisory |
 | `outputs/fills/fills.jsonl` | Order fill ledger |
 | `outputs/drawdown_tracker.json` | Peak NAV, current drawdown, flatten_active |
-| `outputs/risk_metadata_history.csv` | Weekly RiskOverlay log |
+| `outputs/execution_plan_latest.json` | Two-Lane FinalExecutionPlan (long orders + MNQ overlay, audit_log) |
+| `outputs/risk_metadata_history.csv` | Weekly risk metadata row (RiskPolicy constraints; legacy CSV schema) |
 | `models/factory_winner.json` | Best model from last factory run |
 | `trading_data/fundamentals/quarterly_signals.parquet` | EODHD fundamental signals for layered engine (earnings revision, gross margin, inventory, FCF, leverage) |
 

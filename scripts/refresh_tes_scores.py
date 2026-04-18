@@ -1,170 +1,183 @@
 """
-Batch TES scoring for watchlist tickers → data/tes_scores.json (D023).
+Refresh TES proxy scores (Damodaran anchor) for universe tickers → DATA_DIR/tes_scores.json.
 
-Run: python scripts/refresh_tes_scores.py
+See docs/DECISIONS.md D023. Fail-open defaults; atomic write.
 """
 from __future__ import annotations
 
+import argparse
 import json
-import logging
+import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from auditor.financial_fetcher import _load_auditor_config, fetch_tes_components_from_sec
-from lib.shared_core.tes_scorer import build_tes_components
+import yaml
+from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("refresh_tes_scores")
+load_dotenv(ROOT / ".env")
+
+UNIVERSE_PATH = ROOT / "config" / "universe.yaml"
+STRATEGY_PARAMS_PATH = ROOT / "config" / "strategy_params.yaml"
+DATA_DIR = Path(os.getenv("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
+OUT_FILE = DATA_DIR / "tes_scores.json"
+TMP_FILE = DATA_DIR / "tes_scores.json.tmp"
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _read_yaml(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        obj = yaml.safe_load(f) or {}
+    if not isinstance(obj, dict):
+        return {}
+    return obj
 
 
-def _load_watchlist() -> list[str]:
-    path = ROOT / "config" / "data_config.yaml"
-    with open(path, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    wl = (cfg.get("universe_selection") or {}).get("watchlist") or []
-    return [str(t).strip() for t in wl if str(t).strip()]
+def _flatten_tickers(obj: Any) -> list[str]:
+    out: list[str] = []
+    if isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, str):
+                out.append(item.strip())
+            else:
+                out.extend(_flatten_tickers(item))
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            out.extend(_flatten_tickers(v))
+    return out
+
+
+def _load_universe_tickers() -> list[str]:
+    universe = _read_yaml(UNIVERSE_PATH)
+    tickers: list[str] = []
+    if "pillars" in universe:
+        tickers.extend(_flatten_tickers(universe.get("pillars")))
+    if "global_equities" in universe:
+        tickers.extend(_flatten_tickers(universe.get("global_equities")))
+    if "global" in (universe.get("pillars") or {}):
+        tickers.extend(_flatten_tickers((universe.get("pillars") or {}).get("global")))
+    tickers = [t for t in tickers if t and isinstance(t, str)]
+    return sorted(set(tickers))
+
+
+def _load_tes_config() -> tuple[bool, float, float | None]:
+    """tes_enabled (default True), tes_min_mult (default 0.5), optional tes_score_cap."""
+    tes_enabled = True
+    tes_min_mult = 0.5
+    tes_score_cap: float | None = None
+    if not STRATEGY_PARAMS_PATH.exists():
+        return tes_enabled, tes_min_mult, tes_score_cap
+    try:
+        raw = _read_yaml(STRATEGY_PARAMS_PATH)
+        tes = raw.get("tes") or {}
+        if "tes_enabled" in tes:
+            tes_enabled = bool(tes["tes_enabled"])
+        tes_min_mult = float(tes.get("tes_min_mult", 0.5))
+        if tes.get("tes_score_cap") is not None:
+            tes_score_cap = float(tes["tes_score_cap"])
+    except Exception:
+        pass
+    return tes_enabled, tes_min_mult, tes_score_cap
+
+
+def _anchor_failed(res) -> bool:
+    d = getattr(res, "details", None) or {}
+    return bool(d.get("error"))
+
+
+def _normalized_anchor_score(res) -> float:
+    """Normalized [0,1] fundamentals proxy from Damodaran anchor (success path only)."""
+    mx = max(int(getattr(res, "max_score", 1) or 1), 1)
+    sc = int(getattr(res, "score", 0) or 0)
+    return max(0.0, min(1.0, float(sc) / float(mx)))
 
 
 def _compute_multiplier(
-    tes_score: float | None,
+    s: float,
+    failed: bool,
+    S: float,
     tes_min_mult: float,
-    tes_score_cap: float,
 ) -> float:
-    if tes_score is None or tes_score == 0.0:
+    if failed:
         return 1.0
-    s = float(tes_score_cap)
-    if s <= 0:
+    if s <= 0.0:
+        return float(max(0.0, min(1.0, tes_min_mult)))
+    if S <= 0:
         return 1.0
-    raw = tes_min_mult + (1.0 - tes_min_mult) * (float(tes_score) / s)
-    return max(tes_min_mult, min(1.0, raw))
-
-
-def _score_one_us_ticker(
-    ticker: str,
-    auditor_cfg: dict[str, Any],
-) -> dict[str, Any]:
-    audited_at = _now_iso()
-    try:
-        from src.data.sec_filing_parser import SECFilingParser
-
-        parser = SECFilingParser()
-        cik = parser._ticker_to_cik(ticker)  # noqa: SLF001
-    except Exception as exc:
-        return {
-            "tes_score": None,
-            "multiplier": 1.0,
-            "data_confidence": "ERROR",
-            "reason": f"CIK resolution failed: {exc}",
-            "audited_at": audited_at,
-        }
-    if not cik:
-        return {
-            "tes_score": None,
-            "multiplier": 1.0,
-            "data_confidence": "ERROR",
-            "reason": "CIK not resolved for ticker",
-            "audited_at": audited_at,
-        }
-    try:
-        raw = fetch_tes_components_from_sec(cik, auditor_config=auditor_cfg)
-        built = build_tes_components(raw, auditor_config_path=None)
-        ts = built.get("tes_score")
-        conf = str(built.get("data_confidence", "STUB"))
-        tes_min = float(auditor_cfg.get("tes_min_mult", 0.5))
-        cap_s = float(auditor_cfg.get("tes_score_cap", 0.10))
-        try:
-            ts_f = float(ts) if ts is not None else None
-        except (TypeError, ValueError):
-            ts_f = None
-        mult = _compute_multiplier(ts_f, tes_min, cap_s)
-        return {
-            "tes_score": ts_f,
-            "multiplier": mult,
-            "data_confidence": conf,
-            "audited_at": audited_at,
-        }
-    except Exception as exc:
-        return {
-            "tes_score": None,
-            "multiplier": 1.0,
-            "data_confidence": "ERROR",
-            "reason": str(exc),
-            "audited_at": audited_at,
-        }
+    raw = tes_min_mult + (1.0 - tes_min_mult) * (s / S)
+    return float(max(tes_min_mult, min(1.0, raw)))
 
 
 def main() -> int:
-    auditor_cfg = _load_auditor_config()
-    rel_path = str(auditor_cfg.get("tes_scores_path", "data/tes_scores.json"))
-    out_path = Path(rel_path)
-    if not out_path.is_absolute():
-        out_path = ROOT / out_path
+    parser = argparse.ArgumentParser(description="Refresh TES proxy scores → DATA_DIR/tes_scores.json")
+    parser.add_argument("--dry-run", action="store_true", help="Print scores; do not write file")
+    args = parser.parse_args()
 
-    watchlist = _load_watchlist()
-    out: dict[str, Any] = {}
-    skipped = 0
-    errors = 0
+    tes_enabled, tes_min_mult, tes_score_cap = _load_tes_config()
+    if not tes_enabled and not args.dry_run:
+        print("[TES] tes_enabled=false in strategy_params — nothing written.", flush=True)
+        return 0
 
-    for raw_t in watchlist:
-        t = raw_t.upper()
-        audited_at = _now_iso()
-        if "." in raw_t:
-            out[t] = {
-                "tes_score": None,
-                "multiplier": 1.0,
-                "data_confidence": "SKIPPED",
-                "reason": "non-US ticker",
-                "audited_at": audited_at,
-            }
-            skipped += 1
-            logger.info(
-                "%s tes_score=%s multiplier=%s confidence=%s",
-                t,
-                out[t]["tes_score"],
-                out[t]["multiplier"],
-                out[t]["data_confidence"],
-            )
-            continue
+    tickers = _load_universe_tickers()
+    if not tickers:
+        print("[ERROR] No tickers in config/universe.yaml", flush=True)
+        return 1
 
-        entry = _score_one_us_ticker(t, auditor_cfg)
-        out[t] = entry
-        if entry.get("data_confidence") == "ERROR":
-            errors += 1
-        logger.info(
-            "%s tes_score=%s multiplier=%s confidence=%s",
-            t,
-            entry.get("tes_score"),
-            entry.get("multiplier"),
-            entry.get("data_confidence"),
-        )
+    analysis_date = date.today().isoformat()
+    from src.agents.damodaran_anchor import anchor_ticker
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    text = json.dumps(out, indent=2, sort_keys=False)
-    if not text or not text.strip():
-        raise RuntimeError("refusing to write empty TES scores payload")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(out_path)
+    audited_at = datetime.now(timezone.utc).isoformat()
+    per_ticker: list[tuple[str, bool, float]] = []
+    success_scores: list[float] = []
 
-    n = len(watchlist)
-    print(
-        f"Summary: {n} tickers processed, {skipped} skipped (non-US), {errors} errors"
-    )
-    print(f"Wrote {out_path}")
+    for t in tickers:
+        res = anchor_ticker(t, analysis_date)
+        failed = _anchor_failed(res)
+        if failed:
+            s = 0.5
+        else:
+            s = _normalized_anchor_score(res)
+            success_scores.append(s)
+        per_ticker.append((t, failed, s))
+
+    mx = max(success_scores) if success_scores else 0.0
+    S = mx if mx > 0 else 1.0
+    if tes_score_cap is not None:
+        S = max(S, float(tes_score_cap))
+
+    rows: dict[str, dict[str, Any]] = {}
+    for t, failed, s in per_ticker:
+        conf = "STUB" if failed else "ESTIMATED"
+        mult = _compute_multiplier(s, failed, S, tes_min_mult)
+        rows[t.upper()] = {
+            "tes_score": float(s),
+            "data_confidence": conf,
+            "audited_at": audited_at,
+            "multiplier": mult,
+        }
+
+    if args.dry_run:
+        print(json.dumps(rows, indent=2, default=str))
+        print("[DRY-RUN] no file written", flush=True)
+        return 0
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(rows, indent=2, default=str)
+    if len(body) < 10:
+        print("[ERROR] serialized output too small", flush=True)
+        return 1
+    TMP_FILE.write_text(body, encoding="utf-8")
+    if TMP_FILE.stat().st_size < 10:
+        print("[ERROR] temp file unexpectedly small", flush=True)
+        return 1
+    os.replace(TMP_FILE, OUT_FILE)
+    print(f"[TES] wrote {OUT_FILE} ({len(rows)} tickers)", flush=True)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

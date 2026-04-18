@@ -85,6 +85,13 @@ def main() -> int:
                         help="Stage 4: disable SMH hedge.")
     parser.add_argument("--skip-gate", action="store_true", default=False, dest="skip_gate",
                         help="Stage 3.5: skip Skeptic Gate (use for optimizer/backtest-only runs).")
+    parser.add_argument(
+        "--auto-rebalance",
+        action="store_true",
+        default=False,
+        dest="auto_rebalance",
+        help="Stage 5.5: run weekly rebalance dry-run after successful Stage 4 (only when gate is active).",
+    )
     parser.add_argument("--ibkr-port", type=int, default=7497, dest="ibkr_port",
                         help="Stage 4: IBKR TWS port (default 7497 paper, 7496 live).")
     parser.add_argument(
@@ -506,6 +513,31 @@ def main() -> int:
     _exec_code = int(_exit_tuple[0])
     if _exec_code != 0:
         print(f"WARNING: run_execution exit {_exec_code}", file=sys.stderr, flush=True)
+    elif not args.skip_gate and args.auto_rebalance:
+        try:
+            import run_weekly_rebalance
+
+            _saved_reb = sys.argv
+            try:
+                sys.argv = ["run_weekly_rebalance.py", "--dry-run"]
+                _reb_code = int(run_weekly_rebalance.main())
+            finally:
+                sys.argv = _saved_reb
+            if _reb_code != 0:
+                print(
+                    f"WARNING: run_weekly_rebalance dry-run exit {_reb_code}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return _reb_code
+            print("[STAGE 5.5] Auto-rebalance: DRY-RUN complete", flush=True)
+        except Exception as _re:
+            print(
+                f"WARNING: Stage 5.5 auto-rebalance failed: {_re}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
 
     weights_path = ROOT / "outputs" / "last_valid_weights.json"
     top3_parts: list[str] = []

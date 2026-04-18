@@ -84,7 +84,7 @@ def _cross_section_rank01(series: pd.Series, dates: pd.Series) -> pd.Series:
 
 
 def _load_tes_series(tickers: pd.Series) -> pd.Series:
-    tes_map = _load_tes_multipliers({"tes_enabled": True, "tes_scores_path": "data/tes_scores.json"})
+    tes_map = _load_tes_multipliers()
     if not tes_map:
         logger.warning("TES scores unavailable; tes_score set to NaN")
     out = tickers.astype(str).str.upper().map(tes_map).astype(float)

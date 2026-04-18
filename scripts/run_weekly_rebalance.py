@@ -301,8 +301,6 @@ def _finalize_rebalance_audit(
     regime_state: dict,
     _fill_records: list,
     _exit_code: int,
-    plan=None,
-    constraints=None,
 ) -> None:
     import datetime as _dt
 
@@ -320,34 +318,11 @@ def _finalize_rebalance_audit(
             "meta_weights": regime_state.get("meta_weights"),
         },
     }
-
-    _metrics: dict = {}
-    if constraints is not None:
-        _metrics["position_scale"] = str(constraints.position_scale)
-        _metrics["beta_cap"] = str(constraints.beta_cap)
-        _metrics["stop_loss_active"] = constraints.stop_loss_active
-        _metrics["margin_headroom_pct"] = str(constraints.margin_headroom_pct)
-        _metrics["risk_audit_log"] = list(constraints.audit_log)
-    if plan is not None:
-        _metrics["overlay_count"] = len(plan.overlay_orders)
-        _metrics["plan_audit_log"] = list(plan.audit_log)
-        _metrics["long_positions"] = sum(1 for v in plan.long_orders.values() if float(v) > 0)
-        if plan.overlay_orders:
-            _metrics["overlays"] = [
-                {"symbol": o.symbol, "contracts": o.contracts, "reason": o.reason}
-                for o in plan.overlay_orders
-            ]
-
-    _output_paths: dict = {}
-    _plan_path = ROOT / "outputs" / "execution_plan_latest.json"
-    if _plan_path.exists():
-        _output_paths["execution_plan"] = str(_plan_path)
-
     log_audit_record(
         run_id=_run_id,
-        model_metrics=_metrics,
+        model_metrics={},
         config=_rebalance_config,
-        output_paths=_output_paths,
+        output_paths={},
         trade_summary=_fill_records,
     )
     from src.monitoring.telegram_alerts import send_alert
@@ -606,7 +581,9 @@ def main() -> int:
     import pandas as pd
     import run_execution
     from src.execution.planner import ExecutionPlanner
-    from src.risk.policy import RiskPolicy
+    from src.risk.policy import RiskPolicy, _benchmarks_dir, _load_benchmark_close
+
+    _spy_bench = _load_benchmark_close(_benchmarks_dir() / "SPY.csv")
 
     _plan_path = ROOT / "outputs" / "execution_plan_latest.json"
     _fill_records: list = []
@@ -650,6 +627,8 @@ def main() -> int:
                 _constraints_d,
                 nav=Decimal(str(_nav_d)),
                 nq_price=_nq_d,
+                prices_dict=prices_dict,
+                spy_series=_spy_bench,
             )
         )
         _write_execution_plan_json(_plan_d, _plan_path, target=_tgt_d)
@@ -663,9 +642,22 @@ def main() -> int:
             regime_state=regime_state,
             _fill_records=_fill_records,
             _exit_code=_exit_code,
-            plan=_plan_d,
-            constraints=_constraints_d,
         )
+        try:
+            from src.execution.performance_logger import update_regime_ledger
+
+            _reg = str(regime_state.get("regime_state", "UNKNOWN"))
+            _cid = json.dumps(regime_state, separators=(",", ":"), default=str)[:512]
+            update_regime_ledger(
+                regime=_reg,
+                combination_id=_cid,
+                weekly_return=0.0,
+                weekly_drawdown=0.0,
+                ledger_path=None,
+                timestamp=pd.Timestamp(as_of).to_pydatetime(),
+            )
+        except Exception:
+            pass
         return _exit_code
 
     _cfg2 = load_data_config()
@@ -723,6 +715,8 @@ def main() -> int:
             _constraints,
             nav=Decimal(str(_nav_usd)),
             nq_price=_nq_px,
+            prices_dict=_prices2,
+            spy_series=_spy_bench,
         )
     )
     _write_execution_plan_json(_plan, _plan_path, target=_target_pf)
@@ -746,9 +740,22 @@ def main() -> int:
         regime_state=regime_state,
         _fill_records=_fill_records,
         _exit_code=_exit_code,
-        plan=_plan,
-        constraints=_constraints,
     )
+    try:
+        from src.execution.performance_logger import update_regime_ledger
+
+        _reg = str(regime_state.get("regime_state", "UNKNOWN"))
+        _cid = json.dumps(regime_state, separators=(",", ":"), default=str)[:512]
+        update_regime_ledger(
+            regime=_reg,
+            combination_id=_cid,
+            weekly_return=0.0,
+            weekly_drawdown=0.0,
+            ledger_path=None,
+            timestamp=pd.Timestamp(_as_capped).to_pydatetime(),
+        )
+    except Exception:
+        pass
     return _exit_code
 
 

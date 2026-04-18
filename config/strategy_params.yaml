@@ -57,18 +57,23 @@ risk_overlay:
   vix_multiplier: 0.6
 regime:
   score_floor_contraction: 0.65
+# TES offline tilt (D023): refresh_tes_scores.py → DATA_DIR/tes_scores.json
+tes:
+  tes_enabled: true
+  tes_min_mult: 0.5
+  tes_score_cap: null
 optimizer_promotion:
   top_n: 3
-  score_floor: 0.0
+  score_floor: 0.3
   no_llm: true
   track: A
-  no_hedge: false
-  news_weight: 0.0
-  ml_blend_weight: 0.2
+  no_hedge: true
+  news_weight: 0.1
+  ml_blend_weight: 0.3
   master_score_weights:
-    trend: 0.5
-    momentum: 0.25
-    volume: 0.15
+    trend: 0.3
+    momentum: 0.4
+    volume: 0.2
     volatility: 0.1
-  promoted_at: '2026-04-17T14:18:41.628380+00:00'
+  promoted_at: '2026-04-18T06:41:20.719165+00:00'
   source_results: C:/Users/User/OneDrive/Programming/ai_supply_chain_trading/outputs/optimizer_results.json

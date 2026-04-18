@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,30 +28,38 @@ MIN_OBS = 30
 logger = logging.getLogger(__name__)
 
 
-def _load_auditor_config_for_tes() -> dict[str, Any]:
-    path = Path(__file__).resolve().parents[2] / "config" / "auditor_config.yaml"
+def _load_strategy_params_tes_enabled() -> bool:
+    """Master switch from config/strategy_params.yaml tes.tes_enabled (default True if absent)."""
+    path = Path(__file__).resolve().parents[2] / "config" / "strategy_params.yaml"
     if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def _load_tes_multipliers(config: dict[str, Any]) -> dict[str, float]:
-    """
-    Load precomputed TES multipliers from data/tes_scores.json.
-    Returns {ticker: multiplier} with float values in [tes_min_mult, 1.0].
-    Returns {} (all neutral) if tes_enabled=False or file missing.
-    Logs a WARNING if audited_at is older than 14 days for any ticker.
-    """
-    if not config.get("tes_enabled", False):
-        return {}
-    path = Path(config.get("tes_scores_path", "data/tes_scores.json"))
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parents[2] / path
-    if not path.exists():
-        logger.warning("TES scores file not found at %s — all multipliers neutral", path)
-        return {}
+        return True
     try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        tes = raw.get("tes") or {}
+        if "tes_enabled" in tes:
+            return bool(tes["tes_enabled"])
+    except Exception:
+        pass
+    return True
+
+
+def _load_tes_multipliers(config: dict[str, Any] | None = None) -> dict[str, float]:
+    """
+    Load precomputed TES multipliers from DATA_DIR/tes_scores.json (D023).
+    Returns {ticker: multiplier}. Empty dict = neutral (1.0) everywhere.
+    Backward compat: if ``config`` passes tes_enabled=False, skip load.
+    """
+    try:
+        if config is not None and config.get("tes_enabled") is False:
+            return {}
+        if not _load_strategy_params_tes_enabled():
+            return {}
+        data_dir = Path(os.environ.get("DATA_DIR", "C:/ai_supply_chain_trading/trading_data"))
+        path = data_dir / "tes_scores.json"
+        if not path.exists():
+            logger.warning("TES scores file not found at %s — all multipliers neutral", path)
+            return {}
         data = json.loads(path.read_text(encoding="utf-8"))
         out: dict[str, float] = {}
         now = datetime.now(timezone.utc)
@@ -357,13 +366,31 @@ def hrp_alpha_tilt(
 
     # Iterative cap at liquidity — bounded to prevent infinite oscillation when
     # sum(caps) < 1.0 (infeasible: excess can never be fully absorbed).
-    cap_t = {t: liquidity_cap.get(t, BASE_CAP) for t in w}
-    # TES position-cap tilt (D023): scale liquidity cap down for low-TES tickers
-    tes = tes_multipliers or {}
-    if tes:
-        cap_t = {
-            t: cap_t[t] * tes.get(str(t).upper(), 1.0) for t in cap_t
-        }
+    # D023: TES cap tilt — fail-open (neutral multipliers on any failure).
+    try:
+        if tes_multipliers is None:
+            tes = _load_tes_multipliers()
+        else:
+            tes = dict(tes_multipliers)
+    except Exception as exc:
+        logger.warning("TES load failed in hrp_alpha_tilt: %s — neutral multipliers", exc)
+        tes = {}
+    cap_t = {}
+    for t in w:
+        base = float(liquidity_cap.get(t, BASE_CAP))
+        m = float(tes.get(str(t).upper(), 1.0))
+        cap_t[t] = min(base, base * m)
+    if w:
+        keys = set(tes.keys())
+        n_with_file = sum(1 for t in w if str(t).upper() in keys)
+        applied = [float(tes.get(str(t).upper(), 1.0)) for t in w]
+        logger.info(
+            "TES tilt (hrp_alpha_tilt): %d/%d basket tickers with TES file entry; mult min=%.4f max=%.4f",
+            n_with_file,
+            len(w),
+            min(applied),
+            max(applied),
+        )
     for _cap_iter in range(50):
         capped = {t for t in w if w[t] > cap_t[t] + 1e-9}
         uncapped = {t for t in w if t not in capped}
@@ -425,8 +452,7 @@ class PortfolioEngine:
                 )
             except Exception:
                 pass
-        auditor_cfg = _load_auditor_config_for_tes()
-        tes_m = _load_tes_multipliers(auditor_cfg)
+        tes_m = _load_tes_multipliers()
         fut_m = _load_futures_multipliers()
         intent: Intent
         try:
@@ -515,15 +541,30 @@ class PortfolioEngine:
         intent_tickers = [t for t, _ in ranked]
         intent_weights = {t: w for (t, _), w in zip(ranked, weights_list)}
 
-        tes = tes_multipliers or {}
-        if tes:
-            max_w = 1.0 / max(len(intent_tickers), 1)
-            for t in list(intent_weights.keys()):
-                mult = tes.get(str(t).upper(), 1.0)
-                intent_weights[t] = min(intent_weights[t], max_w * mult)
-            total = sum(intent_weights.values())
-            if total > 0:
-                intent_weights = {t: w / total for t, w in intent_weights.items()}
+        try:
+            if tes_multipliers is None:
+                tes = _load_tes_multipliers()
+            else:
+                tes = dict(tes_multipliers)
+        except Exception as exc:
+            logger.warning("TES load failed in _build_inverse_atr: %s — neutral multipliers", exc)
+            tes = {}
+        for t in list(intent_weights.keys()):
+            intent_weights[t] *= float(tes.get(str(t).upper(), 1.0))
+        total = sum(intent_weights.values())
+        if total > 0:
+            intent_weights = {t: w / total for t, w in intent_weights.items()}
+        if intent_weights:
+            keys = set(tes.keys())
+            n_with_file = sum(1 for t in intent_weights if str(t).upper() in keys)
+            applied = [float(tes.get(str(t).upper(), 1.0)) for t in intent_weights]
+            logger.info(
+                "TES tilt (_build_inverse_atr): %d/%d tickers with TES file entry; mult min=%.4f max=%.4f",
+                n_with_file,
+                len(intent_weights),
+                min(applied),
+                max(applied),
+            )
 
         # Hard single-position ceiling (config-driven, post-TES guardrail)
         if max_single_weight < 1.0:
