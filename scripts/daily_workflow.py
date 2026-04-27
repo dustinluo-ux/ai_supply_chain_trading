@@ -1,7 +1,7 @@
 """
 Master Health Dashboard — daily workflow runner.
 
-Pipeline (steps 1-4 run sequentially; all non-fatal):
+Pipeline (steps 1-4 run sequentially; critical step failures return non-zero):
   Step 1: update_price_data.py     — refresh price CSVs (watchlist + SPY)
   Step 2: update_news_data.py      — fetch latest Marketaux news
   Step 3: generate_daily_weights.py — compute signals → outputs/daily_signals.csv
@@ -29,6 +29,7 @@ _SYS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SYS_ROOT))
 
 from src.core.config import NEWS_DIR as _NEWS_DIR
+from src.utils.atomic_io import atomic_write_json
 
 ROOT = _SYS_ROOT
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -609,6 +610,19 @@ def main() -> int:
 
     py = sys.executable
     scripts_dir = ROOT / "scripts"
+    hard_failures: list[dict] = []
+    soft_warnings: list[dict] = []
+
+    def _record_step(name: str, returncode: int, *, critical: bool) -> None:
+        if int(returncode) == 0:
+            return
+        item = {"step": name, "exit_code": int(returncode)}
+        if critical:
+            hard_failures.append(item)
+            logger.error("%s failed with exit code %s", name, returncode)
+        else:
+            soft_warnings.append(item)
+            logger.warning("%s warning exit code %s", name, returncode)
 
     # Step 1: Price update (watchlist + SPY)
     r1 = subprocess.run(
@@ -617,6 +631,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("update_price_data.py exit code: %s", r1.returncode)
+    _record_step("update_price_data.py", r1.returncode, critical=True)
 
     # Step 2: News update (watchlist only)
     r2 = subprocess.run(
@@ -625,6 +640,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("update_news_data.py exit code: %s", r2.returncode)
+    _record_step("update_news_data.py", r2.returncode, critical=False)
 
     # Step 3: Generate daily weights → outputs/daily_signals.csv
     r3 = subprocess.run(
@@ -633,6 +649,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("generate_daily_weights.py exit code: %s", r3.returncode)
+    _record_step("generate_daily_weights.py", r3.returncode, critical=True)
 
     # Step 3.4: Refresh regime_status.json before optimizer runs (all days)
     # Ensures score_floor and regime are current when portfolio_optimizer reads them.
@@ -645,6 +662,7 @@ def main() -> int:
         errors="replace",
     )
     logger.info("regime_monitor (pre-optimizer) stdout: %s", r34.stdout.strip())
+    _record_step("regime_monitor.py pre-optimizer", r34.returncode, critical=True)
 
     # Step 3.5: Portfolio optimizer (volatility-adjusted alpha tilt)
     execution_paused = False
@@ -654,6 +672,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("portfolio_optimizer.py exit code: %s", r35.returncode)
+    _record_step("portfolio_optimizer.py", r35.returncode, critical=True)
     if r35.returncode != 0:
         logger.warning("portfolio_optimizer failed — last_valid_weights.json unchanged")
     else:
@@ -674,6 +693,7 @@ def main() -> int:
             errors="replace",
         )
         logger.info("regime_monitor stdout: %s", r_regime.stdout.strip())
+        _record_step("regime_monitor.py intraweek", r_regime.returncode, critical=True)
 
         regime_status_path = ROOT / "outputs" / "regime_status.json"
         if regime_status_path.exists():
@@ -700,14 +720,15 @@ def main() -> int:
                             ps["cash_weight"] = 1.0
                             ps["regime"] = "EMERGENCY"
                             ps["last_updated"] = datetime.now(timezone.utc).isoformat()
-                            state_path.write_text(json.dumps(ps, indent=2))
+                            atomic_write_json(state_path, ps)
                         except Exception as e:
                             logger.warning(
                                 "Could not update portfolio_state.json: %s", e
                             )
 
-                    fills_path = ROOT / "outputs" / "fills" / "fills.jsonl"
                     try:
+                        from src.execution.fill_ledger import append_fill_record
+
                         ps = (
                             json.loads(state_path.read_text())
                             if state_path.exists()
@@ -716,24 +737,28 @@ def main() -> int:
                         holdings = ps.get("holdings", {})
                         if holdings:
                             now_iso = datetime.now(timezone.utc).isoformat()
-                            with open(fills_path, "a", encoding="utf-8") as fh:
-                                for ticker, pos in holdings.items():
-                                    shares = pos.get("shares", 0)
-                                    if shares > 0:
-                                        record = {
-                                            "run_id": now_iso,
-                                            "timestamp": now_iso,
-                                            "ticker": ticker,
-                                            "side": "SELL",
-                                            "qty_requested": shares,
-                                            "qty_filled": 0,
-                                            "avg_fill_price": 0.0,
-                                            "status": "pending_emergency",
-                                            "order_comment": "EMERGENCY_LIQUIDATION",
-                                        }
-                                        fh.write(json.dumps(record) + "\n")
+                            orders_written = 0
+                            for ticker, pos in holdings.items():
+                                shares = int(pos.get("shares", 0) or 0)
+                                if shares > 0:
+                                    append_fill_record(
+                                        run_id=now_iso,
+                                        timestamp=now_iso,
+                                        ticker=ticker,
+                                        side="SELL",
+                                        qty_requested=shares,
+                                        qty_filled=0,
+                                        avg_fill_price=0.0,
+                                        order_id=None,
+                                        stop_order_id=None,
+                                        status="pending_emergency",
+                                        fill_check_passed=False,
+                                        fill_check_reason="emergency liquidation pending execution",
+                                        order_comment="EMERGENCY_LIQUIDATION",
+                                    )
+                                    orders_written += 1
                             print(
-                                f"[EMERGENCY] {len(holdings)} SELL orders written to fills ledger",
+                                f"[EMERGENCY] {orders_written} SELL orders written to fills ledger",
                                 flush=True,
                             )
                     except Exception as e:
@@ -823,8 +848,12 @@ def main() -> int:
                 timeout=120,
             )
             logger.info("paper execution exit code: %s", r3b.returncode)
+            _record_step("run_execution.py paper", r3b.returncode, critical=True)
         except Exception as _e:
             logger.warning("paper execution skipped — TWS offline or timeout: %s", _e)
+            hard_failures.append(
+                {"step": "run_execution.py paper", "error": str(_e)}
+            )
     else:
         logger.info("paper execution skipped (not Monday / auto_paper=False)")
 
@@ -845,8 +874,12 @@ def main() -> int:
                 timeout=60,
             )
             logger.info("sync_fills_from_ibkr.py exit code: %s", r3c.returncode)
+            _record_step("sync_fills_from_ibkr.py", r3c.returncode, critical=True)
         except Exception as _e:
             logger.warning("fill sync skipped — TWS offline or timeout: %s", _e)
+            hard_failures.append(
+                {"step": "sync_fills_from_ibkr.py", "error": str(_e)}
+            )
     else:
         logger.info("fill sync skipped (not Tuesday)")
 
@@ -857,6 +890,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("update_signal_db.py exit code: %s", r4.returncode)
+    _record_step("update_signal_db.py", r4.returncode, critical=True)
 
     # Step 5: Fill reconciliation (default paths: fills.jsonl, last_signal.json, fill_reconciliation_YYYY-MM-DD.md)
     r5 = subprocess.run(
@@ -865,6 +899,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("reconcile_fills.py exit code: %s", r5.returncode)
+    _record_step("reconcile_fills.py", r5.returncode, critical=True)
     if r5.returncode != 0:
         logger.warning(
             "reconcile_fills.py exited non-zero — check outputs/fills/fills.jsonl and ledger"
@@ -877,6 +912,7 @@ def main() -> int:
         capture_output=False,
     )
     logger.info("risk_report.py exit code: %s", r6.returncode)
+    _record_step("risk_report.py", r6.returncode, critical=True)
 
     # Step 7: Command Center
     news_dir = Path(_NEWS_DIR)
@@ -908,7 +944,18 @@ def main() -> int:
         today_str=today_str,
     )
 
-    print("Daily workflow complete.", flush=True)
+    status_payload = {
+        "status": "FAIL" if hard_failures else "PASS",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "hard_failures": hard_failures,
+        "soft_warnings": soft_warnings,
+    }
+    atomic_write_json(ROOT / "outputs" / "daily_workflow_status.json", status_payload)
+
+    if hard_failures:
+        print("Daily workflow complete: FAIL", flush=True)
+        return 1
+    print("Daily workflow complete: PASS", flush=True)
     return 0
 
 

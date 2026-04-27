@@ -285,6 +285,8 @@ def main() -> int:
 
     print(f"\n[OPTIMIZER] Results written to {results_path}", flush=True)
 
+    final_exit_code = 0
+
     try:
         from run_promoter import main as promoter_main
 
@@ -295,13 +297,15 @@ def main() -> int:
         finally:
             sys.argv = _saved_argv
         if _pc != 0:
+            final_exit_code = 1
             print(
-                f"[OPTIMIZER][WARN] run_promoter.main() exit {_pc}; continuing.",
+                f"[OPTIMIZER][ERROR] run_promoter.main() exit {_pc}",
                 file=sys.stderr,
                 flush=True,
             )
     except Exception as _pe:
-        print(f"[OPTIMIZER][WARN] Promotion failed: {_pe}", file=sys.stderr, flush=True)
+        final_exit_code = 1
+        print(f"[OPTIMIZER][ERROR] Promotion failed: {_pe}", file=sys.stderr, flush=True)
 
     try:
         _py = sys.executable
@@ -324,8 +328,9 @@ def main() -> int:
         ]
         _sr = subprocess.run(_sch, capture_output=True, text=True)
         if _sr.returncode != 0:
+            final_exit_code = 1
             print(
-                f"[OPTIMIZER][WARN] schtasks exit {_sr.returncode}: "
+                f"[OPTIMIZER][ERROR] schtasks exit {_sr.returncode}: "
                 f"{(_sr.stderr or _sr.stdout or '').strip()}",
                 file=sys.stderr,
                 flush=True,
@@ -347,8 +352,9 @@ def main() -> int:
         ]
         _sr_o = subprocess.run(_sch_open, capture_output=True, text=True)
         if _sr_o.returncode != 0:
+            final_exit_code = 1
             print(
-                f"[OPTIMIZER][WARN] schtasks risk-open exit {_sr_o.returncode}: "
+                f"[OPTIMIZER][ERROR] schtasks risk-open exit {_sr_o.returncode}: "
                 f"{(_sr_o.stderr or _sr_o.stdout or '').strip()}",
                 file=sys.stderr,
                 flush=True,
@@ -369,20 +375,22 @@ def main() -> int:
         ]
         _sr_c = subprocess.run(_sch_close, capture_output=True, text=True)
         if _sr_c.returncode != 0:
+            final_exit_code = 1
             print(
-                f"[OPTIMIZER][WARN] schtasks risk-close exit {_sr_c.returncode}: "
+                f"[OPTIMIZER][ERROR] schtasks risk-close exit {_sr_c.returncode}: "
                 f"{(_sr_c.stderr or _sr_c.stdout or '').strip()}",
                 file=sys.stderr,
                 flush=True,
             )
     except Exception as _se:
+        final_exit_code = 1
         print(
-            f"[OPTIMIZER][WARN] Scheduler registration failed: {_se}",
+            f"[OPTIMIZER][ERROR] Scheduler registration failed: {_se}",
             file=sys.stderr,
             flush=True,
         )
 
-    return 0
+    return final_exit_code
 
 
 if __name__ == "__main__":

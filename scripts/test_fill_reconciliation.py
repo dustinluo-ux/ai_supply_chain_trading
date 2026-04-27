@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -130,6 +131,45 @@ def _check_5() -> tuple[bool, str]:
     return True, "read_fill_ledger(non-existent) returns []"
 
 
+def _check_6() -> tuple[bool, str]:
+    from src.execution.fill_ledger import read_fill_ledger, write_fill_ledger_atomic
+
+    records = [
+        {
+            "run_id": "atomic_test",
+            "ticker": "AAPL",
+            "side": "BUY",
+            "qty_requested": 1,
+            "qty_filled": 1,
+            "status": "full",
+        },
+        {
+            "run_id": "atomic_test",
+            "ticker": "MSFT",
+            "side": "SELL",
+            "qty_requested": 2,
+            "qty_filled": 0,
+            "status": "unknown",
+        },
+    ]
+    temp_dir_path = ROOT / "outputs" / f"_fill_ledger_test_{os.getpid()}"
+    temp_dir_path.mkdir(parents=True, exist_ok=True)
+    try:
+        ledger_path = temp_dir_path / "fills.jsonl"
+        write_fill_ledger_atomic(records, ledger_path)
+        reread = read_fill_ledger(ledger_path)
+        tmp_files = list(temp_dir_path.glob("*.tmp"))
+    finally:
+        for path in temp_dir_path.glob("*"):
+            path.unlink(missing_ok=True)
+        temp_dir_path.rmdir()
+    if reread != records:
+        return False, f"atomic rewrite changed records: {reread}"
+    if tmp_files:
+        return False, f"atomic rewrite left temp files: {tmp_files}"
+    return True, "write_fill_ledger_atomic round-trips records"
+
+
 def main() -> int:
     all_ok = True
     result_1_and_2 = _check_1_and_2()
@@ -158,8 +198,12 @@ def main() -> int:
     print(f"PASS 5: {msg5}" if ok5 else f"FAIL 5: {msg5}", flush=True)
     if not ok5:
         all_ok = False
+    ok6, msg6 = _check_6()
+    print(f"PASS 6: {msg6}" if ok6 else f"FAIL 6: {msg6}", flush=True)
+    if not ok6:
+        all_ok = False
     if all_ok:
-        print("PASS: all 5 checks passed", flush=True)
+        print("PASS: all 6 checks passed", flush=True)
         return 0
     print("FAIL: one or more checks failed", flush=True)
     return 1

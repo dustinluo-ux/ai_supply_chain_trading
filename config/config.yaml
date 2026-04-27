@@ -11,7 +11,7 @@ data:
 news:
   enabled: true          # Set false to disable news in pipeline (news_dir becomes None)
   data_dir: "C:/ai_supply_chain_trading/trading_data/news"  # Directory read by target_weight_pipeline and signal_engine
-  source: "marketaux"  # Options: "marketaux", "tiingo"
+  source: "tiingo"  # Options: "marketaux", "tiingo"
   marketaux:
     requests_per_day: 100  # Free tier limit
     articles_per_request: 3  # Free tier limit

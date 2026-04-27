@@ -14,14 +14,19 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.utils.atomic_io import atomic_write_yaml
+
 DEFAULT_RESULTS = ROOT / "outputs" / "optimizer_results.json"
 STRATEGY_PARAMS = ROOT / "config" / "strategy_params.yaml"
 STRATEGY_BAK = ROOT / "config" / "strategy_params.yaml.bak"
 
 
 def main() -> int:
-    import yaml
 
     parser = argparse.ArgumentParser(
         description="Promote optimizer winner into strategy_params.yaml."
@@ -74,13 +79,8 @@ def main() -> int:
         "source_results": str(results_path.as_posix()),
     }
 
-    tmp = STRATEGY_PARAMS.with_name(STRATEGY_PARAMS.name + ".tmp")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    with open(tmp, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
     shutil.copy2(STRATEGY_PARAMS, STRATEGY_BAK)
-    tmp.replace(STRATEGY_PARAMS)
+    atomic_write_yaml(STRATEGY_PARAMS, cfg)
 
     print(f"[PROMOTER] Promoted: {params} -> config/strategy_params.yaml", flush=True)
 
@@ -107,12 +107,7 @@ def main() -> int:
                 _lcfg["layer_weights"]["technical_sentiment_weight"] = float(
                     _lw["technical_sentiment_weight"]
                 )
-        _ltmp = _layered_cfg_path.with_name(_layered_cfg_path.name + ".tmp")
-        with open(_ltmp, "w", encoding="utf-8") as f:
-            yaml.dump(
-                _lcfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True
-            )
-        _ltmp.replace(_layered_cfg_path)
+        atomic_write_yaml(_layered_cfg_path, _lcfg)
         print(
             f"[PROMOTER] Layer weights promoted -> config/layered_signal_config.yaml",
             flush=True,

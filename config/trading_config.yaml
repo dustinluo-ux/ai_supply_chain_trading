@@ -35,10 +35,14 @@ trading:
 
   # Hedge (SMH short equity for beta hedge; not options). Leave disabled until paper validation.
   hedge:
-    hedge_enabled: false        # set true only after paper validation
+    hedge_enabled: true
     hedge_ratio: 1.0
     annual_borrow_rate: 0.05
     beta_lookback_days: 60
+
+options_hedge:
+  options_hedge_enabled: true
+  max_options_pct: 0.10          # max NAV fraction spent on put premium; also in instruments.yaml
 
 # Position sizing (Stage 4): ATR-based. Position $ = (Equity * risk_pct) / (ATR * atr_multiplier)
 position_sizing:

@@ -17,6 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.utils.atomic_io import atomic_write_json
+
 
 def _main() -> int:
     parser = argparse.ArgumentParser(
@@ -108,7 +110,7 @@ def _main() -> int:
                 ps = _json.loads(state_path.read_text())
                 ps["last_nav"] = nav
                 ps["last_nav_fetched_at"] = datetime.now(timezone.utc).isoformat()
-                state_path.write_text(_json.dumps(ps, indent=2))
+                atomic_write_json(state_path, ps)
             except Exception:
                 pass
     else:
@@ -410,8 +412,7 @@ def _main() -> int:
     out_dir = ROOT / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
     valid_path = out_dir / "last_valid_weights.json"
-    with open(valid_path, "w", encoding="utf-8") as f:
-        json.dump({"as_of": as_of, "weights": weights}, f, indent=2)
+    atomic_write_json(valid_path, {"as_of": as_of, "weights": weights})
 
     # 12. Write last_optimized_weights.json
     opt_method = (
@@ -433,8 +434,7 @@ def _main() -> int:
         "metadata": metadata,
     }
     opt_path = out_dir / "last_optimized_weights.json"
-    with open(opt_path, "w", encoding="utf-8") as f:
-        json.dump(optimized, f, indent=2)
+    atomic_write_json(opt_path, optimized)
 
     # Update portfolio_state.json if it exists
     if state_path.exists():
@@ -466,7 +466,7 @@ def _main() -> int:
                         sh = int((nav * w) / float(close_val))
                         holdings[t] = {"shares": sh, "avg_cost": 0.0}
                 ps["holdings"] = holdings
-            state_path.write_text(_json.dumps(ps, indent=2))
+            atomic_write_json(state_path, ps)
         except Exception:
             pass
 

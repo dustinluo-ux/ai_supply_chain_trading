@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.monitoring.incident_logger import log_incident
 from src.core.portfolio_engine import _load_futures_multipliers
+from src.utils.atomic_io import atomic_write_json
 from src.data.csv_provider import (
     load_data_config,
     find_csv_path,
@@ -298,15 +299,12 @@ def _run_pods(
                 )
         try:
             _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
-            _frozen_pods_path.write_text(
-                json.dumps(
-                    {
-                        "as_of": datetime.now(timezone.utc).isoformat(),
-                        "frozen_pods": current_frozen,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            atomic_write_json(
+                _frozen_pods_path,
+                {
+                    "as_of": datetime.now(timezone.utc).isoformat(),
+                    "frozen_pods": current_frozen,
+                },
             )
         except Exception:
             pass
@@ -411,15 +409,12 @@ def _run_pods(
             try:
                 _frozen_pods_path = ROOT / "outputs" / "frozen_pods.json"
                 _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
-                _frozen_pods_path.write_text(
-                    json.dumps(
-                        {
-                            "as_of": datetime.now(timezone.utc).isoformat(),
-                            "frozen_pods": current_frozen,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
+                atomic_write_json(
+                    _frozen_pods_path,
+                    {
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "frozen_pods": current_frozen,
+                    },
                 )
             except Exception:
                 pass
@@ -621,9 +616,7 @@ def _write_execution_status(
         data["degraded_missing"] = []
         data["warnings"] = []
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_write_json(path, data)
     except Exception as e:
         import logging
 
@@ -648,8 +641,7 @@ def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
         "flatten_active": False,
     }
     if not tracker_path.exists():
-        tracker_path.parent.mkdir(parents=True, exist_ok=True)
-        tracker_path.write_text(json.dumps(default, indent=2), encoding="utf-8")
+        atomic_write_json(tracker_path, default)
         return default
     try:
         with open(tracker_path, "r", encoding="utf-8") as f:
@@ -662,8 +654,7 @@ def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
     tracker["current_nav"] = account_value
     tracker["drawdown"] = (account_value - peak) / peak if peak > 0 else 0.0
     tracker["last_updated"] = datetime.now(timezone.utc).isoformat()
-    tracker_path.parent.mkdir(parents=True, exist_ok=True)
-    tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+    atomic_write_json(tracker_path, tracker)
     return tracker
 
 
@@ -1043,8 +1034,7 @@ def main() -> tuple[int, list]:
                     "flatten_active": False,
                     "last_updated": datetime.now(timezone.utc).isoformat(),
                 }
-                _dd_path.parent.mkdir(parents=True, exist_ok=True)
-                _dd_path.write_text(json.dumps(_fresh, indent=2), encoding="utf-8")
+                atomic_write_json(_dd_path, _fresh)
                 print(
                     "[STOP-LOSS] Reset: peak_nav and flatten_active cleared. Normal execution continues.",
                     flush=True,
@@ -1089,8 +1079,7 @@ def main() -> tuple[int, list]:
             except Exception:
                 pass
             tracker["flatten_active"] = True
-            _tracker_path.parent.mkdir(parents=True, exist_ok=True)
-            _tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+            atomic_write_json(_tracker_path, tracker)
             _is_live_executor = (
                 getattr(executor, "ib", None) is not None
                 and getattr(executor.ib, "isConnected", lambda: False)()
@@ -1124,9 +1113,7 @@ def main() -> tuple[int, list]:
                     _status.update(_safe_result)
                     _status["cancelled_order_ids"] = _cancelled_ids
                     try:
-                        _status_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(_status_path, "w", encoding="utf-8") as _f:
-                            json.dump(_status, _f, indent=2)
+                        atomic_write_json(_status_path, _status)
                     except Exception:
                         pass
                 except Exception as _cancel_err:
@@ -1180,16 +1167,13 @@ def main() -> tuple[int, list]:
             futures_multipliers=_futures_mults,
         )
         # Persist for next --rebalance
-        LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(LAST_VALID_WEIGHTS_PATH, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "as_of": str(as_of.date()),
-                    "weights": optimal_weights_series.to_dict(),
-                },
-                f,
-                indent=2,
-            )
+        atomic_write_json(
+            LAST_VALID_WEIGHTS_PATH,
+            {
+                "as_of": str(as_of.date()),
+                "weights": optimal_weights_series.to_dict(),
+            },
+        )
 
     # Successful completion: write execution_status for dashboard (RESILIENCE_SPEC Section 2)
     _ibkr_state = "CONNECTED" if args.mode == "paper" else "UNKNOWN"

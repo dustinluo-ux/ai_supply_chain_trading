@@ -129,7 +129,7 @@ Set `EDGAR_IDENTITY` or `EDGAR_EMAIL` in `.env` for SEC user-agent when audits r
 
 ## Workflow Rules (Cursor Agents)
 
-- Cursor does all real code work. Claude Code does planning/Cursor prompts only.
+- Cursor does all real code work. Codex does planning/Cursor prompts only.
 - Three Cursor agents: **Architect** → **Engineer** → **Validator**
 - Every Cursor prompt opens with: "Reference INDEX.md and maintain Evidence Discipline for this task."
 - Per-repo canon: Pulse/Auditor → `ai_supply_chain_trading/docs/INDEX.md`

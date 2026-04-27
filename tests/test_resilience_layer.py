@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -11,6 +12,20 @@ import pytest
 
 from src.core.state import PipelineState, VendorEvent
 from src.data import resilience_layer
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def repo_temp_dir() -> Path:
+    path = ROOT / "outputs" / f"_resilience_layer_test_{os.getpid()}"
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        yield path
+    finally:
+        for child in path.glob("*"):
+            child.unlink(missing_ok=True)
+        path.rmdir()
 
 
 def _five_row_ohlcv() -> pd.DataFrame:
@@ -86,8 +101,8 @@ def test_pipeline_state_to_dict_json_serializable() -> None:
     assert d["warnings"] == ["w"]
 
 
-def test_save_atomic_roundtrip(tmp_path: Path) -> None:
-    p = tmp_path / "state.json"
+def test_save_atomic_roundtrip(repo_temp_dir: Path) -> None:
+    p = repo_temp_dir / "state.json"
     st = PipelineState(
         run_id="r1",
         started_at=datetime.now(timezone.utc),

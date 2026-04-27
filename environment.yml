@@ -406,4 +406,5 @@ dependencies:
       - xgboost==3.2.0
       - yarl==1.20.1
       - yfinance==0.2.66
+      - edgartools>=3.0.0
 prefix: C:\Users\dusro\anaconda3\envs\wealth

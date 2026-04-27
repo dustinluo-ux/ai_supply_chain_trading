@@ -1,18 +1,28 @@
-three_layer_engine_weight: 0.3  # 0.0-1.0 blend knob: 0.0 keeps current behavior, 1.0 uses only layered engine output
-
+three_layer_engine_weight: 0.5
+stance_weights:
+  bullish: 1.1
+  neutral: 1.0
+  bearish: 0.8
+intra_layer_reversion:
+  weight: 0.05
+  lookback_days: 7
+layer_etf_gate:
+  momentum_days: 20
+  tanh_scale: 0.05
+  gate_min: 0.5
+  gate_max: 1.5
 layer_weights:
-  fundamental_cycle_weight: 0.6
-  technical_sentiment_weight: 0.4
-
+  fundamental_cycle_weight: 0.7
+  technical_sentiment_weight: 0.3
 fundamental_ffill_days: 91
 min_layer2_coverage: 0.6
-
 quality_filter:
   max_leverage_ratio: 3.0
-  fcf_yield_min: -999.0  # disabled at default; set to 0.0 to require positive FCF yield
-  net_debt_ebitda_max: 8.0  # loose cap; only extreme leverage fails; tighten e.g. to 4.0 for stricter filter
-  roic_min: -999.0  # disabled at default; set to 0.0 to require positive ROIC
-
+  fcf_yield_min: -999.0
+  net_debt_ebitda_max: 8.0
+  roic_min: -999.0
+quality_audit:
+  edgar_audit_cap: 0.5
 macro_regime:
   expansion_threshold: 0.5
   contraction_threshold: 0.0
@@ -20,10 +30,9 @@ macro_regime:
     EXPANSION: 1.0
     LATE_CYCLE: 0.7
     CONTRACTION: 0.4
-
 earnings_event:
   pre_event_days: 2
   earnings_size_down: 0.5
   post_earnings_window: 5
-  miss_threshold: 0.10
+  miss_threshold: 0.1
   post_earnings_miss_multiplier: 0.7

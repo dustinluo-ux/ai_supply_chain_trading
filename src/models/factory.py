@@ -44,6 +44,9 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+import yaml
+from src.utils.atomic_io import atomic_write_json, atomic_write_yaml
+
 # Optional: from .base_predictor import BaseReturnPredictor (for return type when implemented)
 
 
@@ -104,7 +107,6 @@ def get_best_model(
     - config/model_config.yaml (training.*, tracks.A).
     - scripts/train_ml_model.py:106–125 (save path, tracks.A.model_path update).
     """
-    import yaml
     from datetime import datetime, timezone, timedelta
 
     config_path = Path(config_path)
@@ -227,22 +229,16 @@ def get_best_model(
     if "A" not in config["tracks"]:
         config["tracks"]["A"] = {}
     config["tracks"]["A"]["model_path"] = str(save_path.resolve())
-    with open(config_path_abs, "w", encoding="utf-8") as f:
-        yaml.dump(
-            config, f, default_flow_style=False, sort_keys=False, allow_unicode=True
-        )
+    atomic_write_yaml(config_path_abs, config)
 
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "model_type": model_type,
-                "ic": ic,
-                "model_path": str(save_path.resolve()),
-                "selected_at": datetime.now(timezone.utc).isoformat(),
-            },
-            f,
-            indent=2,
-        )
+    atomic_write_json(
+        cache_file,
+        {
+            "model_type": model_type,
+            "ic": ic,
+            "model_path": str(save_path.resolve()),
+            "selected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     return (model, model_type, ic)

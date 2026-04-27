@@ -1,72 +1,600 @@
-# Canonical 54-ticker global universe. Edit here, then run
-# scripts/sync_universe.py to propagate to data_config.yaml.
-
 pillars:
   compute:
-    - NVDA
-    - AMD
-    - AVGO
-    - TSM
-    - ASML
-    - ARM
-    - MRVL
-    - INTC
-    - SNPS
-    - CDNS
-    - MU
-    - QCOM
-    - AMAT
-    - TXN
+  - NVDA
+  - AMD
+  - AVGO
+  - TSM
+  - ASML
+  - ARM
+  - MRVL
+  - INTC
+  - SNPS
+  - CDNS
+  - MU
+  - QCOM
+  - AMAT
+  - TXN
+  - KLAC
+  - LRCX
+  - APLD
+  - BITF
+  - BTDR
+  - CIFR
+  - CLSK
+  - CORZ
+  - CRWV
+  - HUT
+  - IREN
+  - RIOT
+  - SNDK
+  - TSEM
   energy:
-    - CEG
-    - VST
-    - GEV
-    - CCJ
-    - OKLO
-    - UUUU
-    - LEU
-    - BEP
-    - SMR
+  - CEG
+  - VST
+  - GEV
+  - CCJ
+  - OKLO
+  - UUUU
+  - LEU
+  - BEP
+  - SMR
+  - AES
+  - CLNE
+  - D
+  - ETR
+  - NEE
+  - NRG
+  - SO
+  - XEL
+  - BE
+  - BW
+  - EQT
+  - LBRT
+  - PSIX
+  - PUMP
+  - SLNW
   infra:
-    - VRT
-    - MOD
-    - ANET
-    - ALAB
-    - CRDO
-    - CLS
-    - LITE
-    - NVT
-    - FIX
-    - EME
-    - SMCI
-    - CSCO
-    - DELL
+  - VRT
+  - MOD
+  - ANET
+  - ALAB
+  - CRDO
+  - CLS
+  - LITE
+  - NVT
+  - FIX
+  - EME
+  - SMCI
+  - CSCO
+  - DELL
+  - AMT
+  - CCI
+  - DBRG
+  - DLR
+  - EQIX
+  - IRON
+  - SBAC
+  - T
+  - VZ
+  - COHR
+  - KRC
+  - WYFI
   adoption:
-    - PLTR
-    - PATH
-    - MSFT
-    - GOOGL
-    - META
-    - AMZN
-    - ISRG
-    - TER
-    - TEAM
-    - ORCL
-    - IBM
+  - PLTR
+  - PATH
+  - MSFT
+  - GOOGL
+  - META
+  - AMZN
+  - ISRG
+  - TER
+  - TEAM
+  - ORCL
+  - IBM
   global:
-    - 9988.HK   # Alibaba
-    - 0700.HK   # Tencent
-    - 1810.HK   # Xiaomi
-    - SAP.DE    # SAP
-    - 6861.T    # Keyence
-    - 6758.T    # Sony
-
+  - 9988.HK
+  - 0700.HK
+  - 1810.HK
+  - SAP.DE
+  - 6861.T
+  - 6758.T
+  application:
+  - ACN
+  - DDOG
+  - DUOL
+  - INFY
+  - NYT
+  - SNOW
+  - WBD
+  - WIT
+  model:
+  - AAPL
+  - BIDU
+  - AI
+  - SOUN
 benchmark: SPY
-
 ibkr_symbols:
-  "9988.HK": "9988 STK SEHK"
-  "0700.HK": "700 STK SEHK"
-  "1810.HK": "1810 STK SEHK"
-  "SAP.DE": "SAP STK IBIS"
- # "6861.TSE": "6861.JP"  # Change the KEY to .TSE
- # "6758.TSE": "6758.JP"  # Change the KEY to .TSE
+  9988.HK: 9988 STK SEHK
+  0700.HK: 700 STK SEHK
+  1810.HK: 1810 STK SEHK
+  SAP.DE: SAP STK IBIS
+  6861.T: 6861 STK TSEJ
+  6758.T: 6758 STK TSEJ
+ticker_meta:
+  ACN:
+    stance: bearish
+    supply_chain_layer: application
+    type: stock
+  DDOG:
+    stance: neutral
+    supply_chain_layer: application
+    type: stock
+  DUOL:
+    stance: bullish
+    supply_chain_layer: application
+    type: stock
+  INFY:
+    stance: bearish
+    supply_chain_layer: application
+    type: stock
+  NYT:
+    stance: bearish
+    supply_chain_layer: application
+    type: stock
+  SNOW:
+    stance: neutral
+    supply_chain_layer: application
+    type: stock
+  WBD:
+    stance: bearish
+    supply_chain_layer: application
+    type: stock
+  WIT:
+    stance: bearish
+    supply_chain_layer: application
+    type: stock
+  KLAC:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  LRCX:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  AES:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  CLNE:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  D:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  ETR:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  NEE:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  NRG:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  SO:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  XEL:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  AMT:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  CCI:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  DBRG:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  DLR:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  EQIX:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  IRON:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  SBAC:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  T:
+    stance: bearish
+    supply_chain_layer: infrastructure
+    type: stock
+  VZ:
+    stance: bearish
+    supply_chain_layer: infrastructure
+    type: stock
+  AAPL:
+    stance: neutral
+    supply_chain_layer: model
+    type: stock
+  BIDU:
+    stance: neutral
+    supply_chain_layer: model
+    type: stock
+  AI:
+    stance: neutral
+    supply_chain_layer: model
+    type: stock
+  SOUN:
+    stance: neutral
+    supply_chain_layer: model
+    type: stock
+  AIQ:
+    stance: bullish
+    supply_chain_layer: application
+    type: etf
+  ARKQ:
+    stance: neutral
+    supply_chain_layer: application
+    type: etf
+  BOTZ:
+    stance: bullish
+    supply_chain_layer: application
+    type: etf
+  ROBO:
+    stance: neutral
+    supply_chain_layer: application
+    type: etf
+  SOXX:
+    stance: bullish
+    supply_chain_layer: compute
+    type: etf
+  ICLN:
+    stance: bullish
+    supply_chain_layer: energy
+    type: etf
+  XLU:
+    stance: bullish
+    supply_chain_layer: energy
+    type: etf
+  SRVR:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: etf
+  CHAT:
+    stance: bullish
+    supply_chain_layer: model
+    type: etf
+  0700.HK:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  1810.HK:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  6758.T:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  6861.T:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  9988.HK:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  ALAB:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  AMAT:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  AMD:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  AMZN:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  ANET:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  ARM:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  ASML:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  AVGO:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  BEP:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  CCJ:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  CDNS:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  CEG:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  CLS:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  CRDO:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  CSCO:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  DELL:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  EME:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  FIX:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  GEV:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  GOOGL:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  IBM:
+    stance: neutral
+    supply_chain_layer: adoption
+    type: stock
+  INTC:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  ISRG:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  LEU:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  LITE:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  META:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  MOD:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  MRVL:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  MSFT:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  MU:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  NVDA:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  NVT:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  OKLO:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  ORCL:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  PATH:
+    stance: neutral
+    supply_chain_layer: adoption
+    type: stock
+  PLTR:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  QCOM:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  SAP.DE:
+    stance: bullish
+    supply_chain_layer: global
+    type: stock
+  SMCI:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  SMR:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  SNPS:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  TEAM:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  TER:
+    stance: bullish
+    supply_chain_layer: adoption
+    type: stock
+  TSM:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  TXN:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  UUUU:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  VRT:
+    stance: bullish
+    supply_chain_layer: infra
+    type: stock
+  VST:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  APLD:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  BITF:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  BTDR:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  CIFR:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  CLSK:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  CORZ:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  CRWV:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  HUT:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  IREN:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  RIOT:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  SNDK:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  TSEM:
+    stance: bullish
+    supply_chain_layer: compute
+    type: stock
+  BE:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  BW:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  EQT:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  LBRT:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  PSIX:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  PUMP:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  SLNW:
+    stance: bullish
+    supply_chain_layer: energy
+    type: stock
+  COHR:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  KRC:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+  WYFI:
+    stance: bullish
+    supply_chain_layer: infrastructure
+    type: stock
+layer_etfs:
+  application:
+  - AIQ
+  - ARKQ
+  - BOTZ
+  - ROBO
+  compute:
+  - SMH
+  - SOXX
+  energy:
+  - ICLN
+  - XLU
+  infrastructure:
+  - SRVR
+  - VPN
+  model:
+  - CHAT

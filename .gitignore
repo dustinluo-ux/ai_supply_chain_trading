@@ -71,3 +71,16 @@ cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code hooks (removed, but .turn_counter may persist)
+.claude/hooks/.turn_counter
+
+# Pytest temp directories (Windows permission-blocked)
+.codex_pytest_tmp*/
+.codex_contract_tmp*/
+.pytest_tmp/
+outputs/_pytest_tmp*/
+outputs/_atomic_io_test_*/
+outputs/_contract_resolver_test_*/
+outputs/_resilience_layer_test_*/
+outputs/_fill_ledger_test_*/

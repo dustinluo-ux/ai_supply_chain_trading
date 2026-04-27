@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pandas as pd
+from src.utils.atomic_io import atomic_write_json
 
 
 def main() -> int:
@@ -128,9 +130,11 @@ def main() -> int:
                     "score",
                     "vol_triggered",
                 ]
-            )
+        )
         for _r in rows:
             _writer.writerow(_r)
+        _f.flush()
+        os.fsync(_f.fileno())
 
     # UI: today's snapshot for health table (overwrite each run)
     _last_signal = {}
@@ -144,10 +148,7 @@ def main() -> int:
             "vol_20d": _vol_20d.get(_ticker) if _ticker in _vol_20d else None,
             "vol_triggered": bool(_vt),
         }
-    import json
-
-    with open(_out_dir / "last_signal.json", "w", encoding="utf-8") as _jf:
-        json.dump(_last_signal, _jf, indent=2)
+    atomic_write_json(_out_dir / "last_signal.json", _last_signal)
 
     writer = csv.writer(sys.stdout)
     writer.writerow(

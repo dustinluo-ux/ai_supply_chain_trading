@@ -12,13 +12,16 @@ Fail-fast on any step failure (non-zero return or subprocess exception).
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.utils.atomic_io import atomic_write_json
+
 OUTPUTS_DIR = ROOT / "outputs"
 STATUS_PATH = OUTPUTS_DIR / "maintenance_status.json"
 
@@ -42,10 +45,7 @@ def _should_retrain() -> bool:
 
 
 def _write_status(payload: dict) -> None:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATUS_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(STATUS_PATH)
+    atomic_write_json(STATUS_PATH, payload)
 
 
 def _run_subprocess(

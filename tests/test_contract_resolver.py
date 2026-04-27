@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,9 +12,22 @@ from ib_insync import Future, Option, Stock
 
 from src.data.contract_resolver import resolve
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 @pytest.fixture
-def instruments_path(tmp_path: Path) -> Path:
+def repo_temp_dir() -> Path:
+    path = ROOT / "outputs" / f"_contract_resolver_test_{os.getpid()}"
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        yield path
+    finally:
+        for child in path.glob("*"):
+            child.unlink(missing_ok=True)
+        path.rmdir()
+
+@pytest.fixture
+def instruments_path(repo_temp_dir: Path) -> Path:
     cfg = {
         "equities": {"use_watchlist": False, "exchange": "SMART", "currency": "USD"},
         "futures": {
@@ -38,14 +52,14 @@ def instruments_path(tmp_path: Path) -> Path:
         },
         "allocation_limits": {"max_futures_pct": 0.2, "max_options_pct": 0.1},
     }
-    p = tmp_path / "instruments.yaml"
+    p = repo_temp_dir / "instruments.yaml"
     p.write_text(yaml.dump(cfg), encoding="utf-8")
     return p
 
 
 @pytest.fixture
-def instruments_with_watchlist(tmp_path: Path) -> tuple[Path, Path]:
-    inst = tmp_path / "instruments.yaml"
+def instruments_with_watchlist(repo_temp_dir: Path) -> tuple[Path, Path]:
+    inst = repo_temp_dir / "instruments.yaml"
     inst.write_text(
         yaml.dump(
             {
@@ -56,7 +70,7 @@ def instruments_with_watchlist(tmp_path: Path) -> tuple[Path, Path]:
         ),
         encoding="utf-8",
     )
-    dc = tmp_path / "data_config.yaml"
+    dc = repo_temp_dir / "data_config.yaml"
     dc.write_text(
         yaml.dump({"universe_selection": {"watchlist": ["AMD", "NVDA"]}}),
         encoding="utf-8",

@@ -2,6 +2,7 @@
 IB Executor - Interactive Brokers order execution
 """
 
+import os
 import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -58,6 +59,127 @@ class IBExecutor(BaseExecutor):
         except Exception:
             return {}
 
+    def _load_execution_config(self) -> Dict:
+        """Read execution guardrails from config/trading_config.yaml."""
+        path = ROOT / "config" / "trading_config.yaml"
+        if not path.exists():
+            return {}
+        try:
+            import yaml
+
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            return (cfg.get("trading", {}) or {}).get("execution", {}) or {}
+        except Exception:
+            return {}
+
+    def validate_order_request(
+        self,
+        ticker: str,
+        quantity: int,
+        side: str,
+        order_type: str = "MARKET",
+        limit_price: Optional[float] = None,
+    ) -> None:
+        """Fail before any broker call if an order request is structurally unsafe."""
+        if not getattr(self.ib, "isConnected", lambda: False)():
+            raise RuntimeError("IBKR preflight failed: broker is not connected")
+
+        symbol = (ticker or "").strip().upper()
+        if not symbol:
+            raise ValueError("IBKR preflight failed: ticker is required")
+        if not all(ch.isalnum() or ch in "._-" for ch in symbol):
+            raise ValueError(f"IBKR preflight failed: invalid ticker {ticker!r}")
+
+        try:
+            qty = int(quantity)
+        except (TypeError, ValueError):
+            raise ValueError(f"IBKR preflight failed: invalid quantity {quantity!r}")
+        if qty <= 0:
+            raise ValueError("IBKR preflight failed: quantity must be positive")
+
+        side_u = (side or "").strip().upper()
+        if side_u not in {"BUY", "SELL"}:
+            raise ValueError(f"IBKR preflight failed: unsupported side {side!r}")
+
+        order_type_u = (order_type or "").strip().upper()
+        if order_type_u not in {"MARKET", "LIMIT"}:
+            raise ValueError(
+                f"IBKR preflight failed: unsupported order type {order_type!r}"
+            )
+        if order_type_u == "LIMIT":
+            if limit_price is None or float(limit_price) <= 0:
+                raise ValueError("IBKR preflight failed: LIMIT order needs price > 0")
+
+        account = (self.account or "").strip()
+        if not account or account == "U123456":
+            raise RuntimeError("IBKR preflight failed: real account id is not set")
+        if account.upper().startswith("U") and os.environ.get("ALLOW_LIVE_IBKR") != "1":
+            raise RuntimeError(
+                "IBKR preflight failed: live account blocked unless ALLOW_LIVE_IBKR=1"
+            )
+
+        exec_cfg = self._load_execution_config()
+        max_qty = int(exec_cfg.get("max_order_quantity", 0) or 0)
+        max_position_size = int(exec_cfg.get("max_position_size", 0) or 0)
+        if max_qty <= 0:
+            max_qty = max_position_size
+        if max_qty > 0 and qty > max_qty:
+            raise RuntimeError(
+                f"IBKR preflight failed: quantity {qty} exceeds max {max_qty}"
+            )
+
+    def submit_contract_order(
+        self,
+        contract: Any,
+        ticker: str,
+        quantity: int,
+        side: str,
+        order_type: str = "MARKET",
+        limit_price: Optional[float] = None,
+        order_comment: Optional[str] = None,
+    ) -> Dict:
+        """Submit an already-resolved IB contract after common preflight checks."""
+        self.validate_order_request(ticker, quantity, side, order_type, limit_price)
+
+        if order_type.upper() == "MARKET":
+            order = MarketOrder(side.upper(), int(quantity))
+        elif order_type.upper() == "LIMIT":
+            if limit_price is None:
+                raise ValueError("limit_price required for LIMIT orders")
+            order = LimitOrder(side.upper(), int(quantity), float(limit_price))
+        else:
+            raise ValueError(f"Unsupported order type: {order_type}")
+
+        order.account = self.account
+        if order_comment is not None and isinstance(order_comment, str):
+            order.orderRef = order_comment[:128]
+
+        trade = self.ib.placeOrder(contract, order)
+        logger.info(
+            "Contract order submitted: %s %s %s (%s) ref=%r",
+            side.upper(),
+            quantity,
+            ticker,
+            order_type,
+            order_comment,
+        )
+        return {
+            "order_id": str(trade.order.orderId),
+            "ticker": ticker,
+            "quantity": int(quantity),
+            "side": side.upper(),
+            "order_type": order_type,
+            "status": trade.orderStatus.status,
+            "filled_quantity": trade.orderStatus.filled,
+            "filled_price": (
+                trade.orderStatus.avgFillPrice
+                if trade.orderStatus.avgFillPrice > 0
+                else None
+            ),
+            "order_comment": order_comment,
+        }
+
     def submit_order(
         self,
         ticker: str,
@@ -103,6 +225,8 @@ class IBExecutor(BaseExecutor):
                 quantity,
             )
             return False
+
+        self.validate_order_request(ticker, quantity, side, order_type, limit_price)
 
         try:
             # Create contract

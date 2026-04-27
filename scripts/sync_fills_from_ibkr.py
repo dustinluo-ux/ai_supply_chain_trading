@@ -3,7 +3,7 @@ Sync fill ledger with TWS executions for a given date.
 
 After market fills, connect to TWS, query executions for that date, and update
 outputs/fills/fills.jsonl — replacing records where qty_filled=0 with actual
-fill quantities and prices. Exit 0 always (never raises).
+fill quantities and prices. Returns nonzero if the ledger cannot be updated.
 
 Usage:
   python scripts/sync_fills_from_ibkr.py [--date YYYY-MM-DD]
@@ -14,7 +14,6 @@ Default date: today. TWS must be running.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -65,7 +64,11 @@ def _main() -> int:
         print("WARNING: IBKR_PAPER_ACCOUNT not set; sync may fail.", flush=True)
 
     # 2. Read existing fills
-    from src.execution.fill_ledger import read_fill_ledger, FILLS_PATH
+    from src.execution.fill_ledger import (
+        FILLS_PATH,
+        read_fill_ledger,
+        write_fill_ledger_atomic,
+    )
 
     records = read_fill_ledger()
     if not records:
@@ -169,13 +172,10 @@ def _main() -> int:
 
     # 8. Rewrite fills.jsonl
     try:
-        FILLS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(FILLS_PATH, "w", encoding="utf-8") as f:
-            for r in records:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        write_fill_ledger_atomic(records, FILLS_PATH)
     except Exception as e:
-        print(f"WARNING: Could not write {FILLS_PATH}: {e}", flush=True)
-        return 0
+        print(f"ERROR: Could not write {FILLS_PATH}: {e}", flush=True)
+        return 1
 
     still_pending = len(pending_idxs) - synced
     print(

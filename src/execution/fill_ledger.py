@@ -8,6 +8,7 @@ Helpers: append_fill_record(), read_fill_ledger().
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -57,7 +58,28 @@ def append_fill_record(
     FILLS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(FILLS_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
     return record
+
+
+def write_fill_ledger_atomic(
+    records: list[dict[str, Any]], path: Path | str | None = None
+) -> None:
+    """Replace a fill ledger atomically with complete JSON-Lines content."""
+    p = Path(path) if path is not None else FILLS_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            for record in records:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 def read_fill_ledger(path: Path | str | None = None) -> list[dict[str, Any]]:

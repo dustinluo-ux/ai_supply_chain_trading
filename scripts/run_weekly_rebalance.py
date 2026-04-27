@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 from src.data.csv_provider import load_data_config, load_prices
 from src.utils.audit_logger import log_audit_record
+from src.utils.atomic_io import atomic_write_json, atomic_write_text, atomic_write_yaml
 
 
 def _as_of_capped_for_overlay(ts) -> pd.Timestamp:
@@ -193,15 +194,8 @@ def _execution_plan_to_dict(plan, target) -> dict:
 
 
 def _write_execution_plan_json(plan, path: Path, target=None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
     payload = json.dumps(_execution_plan_to_dict(plan, target), indent=2)
-    if not payload or len(payload) < 10:
-        raise ValueError("execution plan JSON would be empty")
-    tmp.write_text(payload, encoding="utf-8")
-    if tmp.stat().st_size < 10:
-        raise ValueError("execution plan temp file unexpectedly small")
-    os.replace(tmp, path)
+    atomic_write_text(path, payload, min_bytes=10)
 
 
 def _target_from_weights_or_aux(weights_series, as_of_ts, aux):
@@ -227,7 +221,6 @@ def _submit_plan_to_ib(
 ) -> list:
     """Submit equity deltas and MNQ overlay via IBExecutor / ib_insync (best-effort)."""
     import run_execution
-    from ib_insync import MarketOrder
     from src.data.contract_resolver import resolve as contract_resolve
     from src.execution.fill_ledger import append_fill_record
 
@@ -305,13 +298,31 @@ def _submit_plan_to_ib(
                 fc = contract_resolve("MNQ", "future", ib)
                 side = "SELL" if int(ov.contracts) < 0 else "BUY"
                 q = abs(int(ov.contracts))
-                order = MarketOrder(side, q)
-                order.account = executor.account
-                order.orderRef = "weekly_rebalance_overlay"[:128]
-                trade = ib.placeOrder(fc, order)
+                res = executor.submit_contract_order(
+                    fc,
+                    "MNQ",
+                    q,
+                    side,
+                    order_type="MARKET",
+                    order_comment="weekly_rebalance_overlay",
+                )
                 print(
-                    f"[PLAN] overlay MNQ {side} {q} orderId={trade.order.orderId}",
+                    f"[PLAN] overlay MNQ {side} {q} orderId={res.get('order_id')}",
                     flush=True,
+                )
+                append_fill_record(
+                    run_id=fill_run_id,
+                    ticker="MNQ",
+                    side=side,
+                    qty_requested=q,
+                    qty_filled=int(res.get("filled_quantity") or 0),
+                    avg_fill_price=res.get("filled_price"),
+                    order_id=str(res.get("order_id")) if res.get("order_id") else None,
+                    stop_order_id=None,
+                    status=str(res.get("status") or "submitted"),
+                    fill_check_passed=False,
+                    fill_check_reason="weekly_rebalance_overlay",
+                    order_comment=res.get("order_comment"),
                 )
             except Exception as ex:
                 print(f"[PLAN][WARN] overlay submit failed: {ex}", flush=True)
@@ -345,10 +356,14 @@ def _submit_plan_to_ib(
                         flush=True,
                     )
                     continue
-                order = MarketOrder("BUY", contracts)
-                order.account = executor.account
-                order.orderRef = "weekly_rebalance_put_hedge"[:128]
-                trade = ib.placeOrder(fc, order)
+                res = executor.submit_contract_order(
+                    fc,
+                    "SMH",
+                    contracts,
+                    "BUY",
+                    order_type="MARKET",
+                    order_comment="weekly_rebalance_put_hedge",
+                )
                 print(
                     f"[PLAN] put_hedge SMH BUY {contracts}× ATM put @ {mid:.2f}",
                     flush=True,
@@ -358,16 +373,14 @@ def _submit_plan_to_ib(
                     ticker="SMH_PUT",
                     side="BUY",
                     qty_requested=contracts,
-                    qty_filled=0,
-                    avg_fill_price=mid,
-                    order_id=(
-                        str(trade.order.orderId) if trade and trade.order else None
-                    ),
+                    qty_filled=int(res.get("filled_quantity") or 0),
+                    avg_fill_price=res.get("filled_price") or mid,
+                    order_id=str(res.get("order_id")) if res.get("order_id") else None,
                     stop_order_id=None,
-                    status="submitted",
+                    status=str(res.get("status") or "submitted"),
                     fill_check_passed=False,
                     fill_check_reason="weekly_rebalance_put_hedge",
-                    order_comment="weekly_rebalance_put_hedge",
+                    order_comment=res.get("order_comment"),
                 )
             except Exception as ex:
                 print(f"[PLAN][WARN] put hedge submit failed: {ex}", flush=True)
@@ -674,14 +687,7 @@ def main() -> int:
             _mc["training"]["train_end"] = str(_train_end)
             _mc["training"]["test_start"] = str(_test_start)
             _mc["training"]["test_end"] = str(_test_end)
-            with open(_model_cfg_path, "w", encoding="utf-8") as _f_mc:
-                yaml.dump(
-                    _mc,
-                    _f_mc,
-                    default_flow_style=False,
-                    sort_keys=False,
-                    allow_unicode=True,
-                )
+            atomic_write_yaml(_model_cfg_path, _mc)
             _winner_model, _winner_type, _winner_ic = get_best_model(
                 prices_dict=_prices_dict,
                 news_signals=_news_signals if _news_signals else None,
@@ -768,12 +774,10 @@ def main() -> int:
         )
         out_dir = ROOT / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
-        with open(out_dir / "last_valid_weights.json", "w", encoding="utf-8") as f:
-            json.dump(
-                {"as_of": str(as_of.date()), "weights": weights_result.to_dict()},
-                f,
-                indent=2,
-            )
+        atomic_write_json(
+            out_dir / "last_valid_weights.json",
+            {"as_of": str(as_of.date()), "weights": weights_result.to_dict()},
+        )
 
     import pandas as pd
     import run_execution
@@ -902,14 +906,10 @@ def main() -> int:
         score_floor=_score_floor,
     )
     (ROOT / "outputs").mkdir(parents=True, exist_ok=True)
-    with open(
-        ROOT / "outputs" / "last_valid_weights.json", "w", encoding="utf-8"
-    ) as _f_lw:
-        json.dump(
-            {"as_of": str(_as2.date()), "weights": _weights_series.to_dict()},
-            _f_lw,
-            indent=2,
-        )
+    atomic_write_json(
+        ROOT / "outputs" / "last_valid_weights.json",
+        {"as_of": str(_as2.date()), "weights": _weights_series.to_dict()},
+    )
 
     _constraints = RiskPolicy().evaluate(_as_capped)
     _aux_d = _aux if isinstance(_aux, dict) else {}

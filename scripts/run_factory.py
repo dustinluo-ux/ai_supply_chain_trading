@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 CONFIG_PATH = ROOT / "config" / "model_config.yaml"
 
+from src.utils.atomic_io import atomic_write_yaml
+
 
 def _patch_model_config_training_window(config_path: Path, train_years: int) -> None:
     """Rolling window: train [today-N years, today-365d], test [today-365d, today]. Writes YAML."""
@@ -34,10 +36,7 @@ def _patch_model_config_training_window(config_path: Path, train_years: int) -> 
     _cfg["training"]["train_end"] = str(_train_end)
     _cfg["training"]["test_start"] = str(_test_start)
     _cfg["training"]["test_end"] = str(_test_end)
-    with open(config_path, "w", encoding="utf-8") as _f:
-        yaml.dump(
-            _cfg, _f, default_flow_style=False, sort_keys=False, allow_unicode=True
-        )
+    atomic_write_yaml(config_path, _cfg)
 
 
 def main() -> int:

@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from src.utils.atomic_io import atomic_write_json
 
 
 def _get_watchlist() -> list[str]:
@@ -330,9 +333,7 @@ def main() -> int:
                         oos_cagr = float(oos_cagr)
                     mdd = result.get("max_drawdown")
                     oos_maxdd = float(mdd) if mdd is not None else None
-                    oos_out.parent.mkdir(parents=True, exist_ok=True)
-                    with open(oos_out, "w", encoding="utf-8") as _fj:
-                        json.dump(_json_subset_from_backtest(result), _fj, indent=2)
+                    atomic_write_json(oos_out, _json_subset_from_backtest(result))
                 else:
                     if oos_out.exists():
                         try:
@@ -553,19 +554,15 @@ def main() -> int:
                 flush=True,
             )
 
-        _tmp_audit = _agent_audit_path.with_name(_agent_audit_path.name + ".tmp")
-        with open(_tmp_audit, "w", encoding="utf-8") as _aj:
-            json.dump(
-                {
-                    "taleb": taleb_json,
-                    "damodaran": damodaran_json,
-                    "bull_bear_debate": debate_json,
-                    "three_layer_offset": three_layer_offset,
-                },
-                _aj,
-                indent=2,
-            )
-        _tmp_audit.replace(_agent_audit_path)
+        atomic_write_json(
+            _agent_audit_path,
+            {
+                "taleb": taleb_json,
+                "damodaran": damodaran_json,
+                "bull_bear_debate": debate_json,
+                "three_layer_offset": three_layer_offset,
+            },
+        )
     except Exception as _e36:
         print(
             f"WARNING: Stage 3.6 agent audit skipped: {_e36}",
@@ -623,8 +620,9 @@ def main() -> int:
         sys.argv = _saved
     _exit_tuple = _ex if isinstance(_ex, tuple) else (_ex, [])
     _exec_code = int(_exit_tuple[0])
+    execution_failed = _exec_code != 0
     if _exec_code != 0:
-        print(f"WARNING: run_execution exit {_exec_code}", file=sys.stderr, flush=True)
+        print(f"ERROR: run_execution exit {_exec_code}", file=sys.stderr, flush=True)
     elif not args.skip_gate and args.auto_rebalance:
         try:
             import run_weekly_rebalance
@@ -675,7 +673,10 @@ def main() -> int:
     oos_line_start = oos_start or "?"
     oos_line_end = oos_end or "?"
 
-    if oos_sharpe is None:
+    if execution_failed:
+        status = "FAIL"
+        exit_code = _exec_code if _exec_code != 0 else 1
+    elif oos_sharpe is None:
         status = "WARN"
         exit_code = 0
     elif oos_sharpe > 0:

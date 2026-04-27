@@ -1,6 +1,6 @@
 optimizer:
-  strategy: random
-  n_trials: 30
+  strategy: bayesian
+  n_trials: 40
   min_sharpe: 0.0               # reject trial if OOS Sharpe below this
   results_path: outputs/optimizer_results.json
   run_interval_days: 30         # used by auto-scheduler (schtasks)
@@ -35,6 +35,34 @@ search_space:
       momentum: 0.40
       volume: 0.20
       volatility: 0.10
+    - trend: 0.25
+      momentum: 0.25
+      volume: 0.25
+      volatility: 0.25
+    - trend: 0.20
+      momentum: 0.20
+      volume: 0.20
+      volatility: 0.40
+    - trend: 0.45
+      momentum: 0.35
+      volume: 0.10
+      volatility: 0.10
+
+  # L2/L3 blend: how much weight the 3-layer engine gets vs the base technical score.
+  # three_layer_engine_weight=0.0 → pure technical; 1.0 → pure layered engine output.
+  three_layer_engine_weight: [0.2, 0.3, 0.4, 0.5]
+
+  # Within the layered engine: split between L2 fundamentals and L1 technical/sentiment.
+  # Must sum to 1.0 — defined as preset combos to enforce constraint.
+  layer_weights:
+    - fundamental_cycle_weight: 0.7
+      technical_sentiment_weight: 0.3
+    - fundamental_cycle_weight: 0.6
+      technical_sentiment_weight: 0.4
+    - fundamental_cycle_weight: 0.5
+      technical_sentiment_weight: 0.5
+    - fundamental_cycle_weight: 0.4
+      technical_sentiment_weight: 0.6
 
 # Dimensions that are tunable but fixed for this run.
 # Move any entry into search_space (as a list) to include it in optimization.
@@ -49,9 +77,16 @@ fixed_params:
   risk_pct: 0.02                # fraction of equity risked per position (ATR sizing)
   atr_multiplier: 2.0           # stop distance in ATRs; source: trading_config.yaml
 
+  intra_layer_reversion_weight: 0.05
+
   # --- Normalization ---
   rolling_window: 252           # trading days for unbounded indicator normalization (~1yr)
                                 # source: config/technical_master_score.yaml
+
+  # --- Portfolio construction: EWMA vol ---
+  # RiskMetrics lambda=0.94 corresponds to span=38. Source: portfolio_engine.py.
+  # Move to search_space as [20, 30, 38, 50] to include in optimization.
+  ewma_span: 38
 
   # --- ML model factory ---
   # The factory runs a tournament: Ridge vs XGBoost vs CatBoost.
