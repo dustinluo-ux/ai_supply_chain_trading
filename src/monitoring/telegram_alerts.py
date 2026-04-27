@@ -24,12 +24,17 @@ _CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 def send_alert(alert_type: str, payload: dict) -> None:
     """Send a Telegram message. alert_type: regime_change | rebalance_complete | fill_miss | ic_degradation."""
     if not _TOKEN or not _CHAT_ID:
-        print("[telegram_alerts] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing; skipping send.", file=sys.stderr)
+        print(
+            "[telegram_alerts] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing; skipping send.",
+            file=sys.stderr,
+        )
         return
     try:
         import requests
     except ImportError:
-        print("[telegram_alerts] requests not installed; skipping send.", file=sys.stderr)
+        print(
+            "[telegram_alerts] requests not installed; skipping send.", file=sys.stderr
+        )
         return
     url = f"https://api.telegram.org/bot{_TOKEN}/sendMessage"
     if alert_type == "regime_change":
@@ -91,8 +96,8 @@ def send_alert(alert_type: str, payload: dict) -> None:
         )
     elif alert_type == "stop_loss":
         drawdown = payload.get("drawdown", 0.0)
-        peak_nav = payload.get("peak_nav", 0)
-        current_nav = payload.get("current_nav", 0)
+        _peak_nav = payload.get("peak_nav", 0)  # noqa: F841
+        _current_nav = payload.get("current_nav", 0)  # noqa: F841
         text = (
             "🚨 STOP-LOSS TRIGGERED — Portfolio drawdown "
             f"{drawdown:.1%} hit -10% floor. FLATTEN ALL initiated."
@@ -109,11 +114,21 @@ def send_alert(alert_type: str, payload: dict) -> None:
             f"Reason: {reason}"
         )
     else:
-        print(f"[telegram_alerts] Unknown alert_type={alert_type!r}; skipping.", file=sys.stderr)
+        print(
+            f"[telegram_alerts] Unknown alert_type={alert_type!r}; skipping.",
+            file=sys.stderr,
+        )
         return
     try:
-        r = requests.post(url, json={"chat_id": _CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        r = requests.post(
+            url,
+            json={"chat_id": _CHAT_ID, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
         if not r.ok:
-            print(f"[telegram_alerts] sendMessage failed: {r.status_code} {r.text}", file=sys.stderr)
+            print(
+                f"[telegram_alerts] sendMessage failed: {r.status_code} {r.text}",
+                file=sys.stderr,
+            )
     except Exception as e:
         print(f"[telegram_alerts] send failed: {e}", file=sys.stderr)

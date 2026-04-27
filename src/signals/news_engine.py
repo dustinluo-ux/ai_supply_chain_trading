@@ -7,6 +7,7 @@ Multi-Strategy News Alpha Engine.
 - Deduplication: Levenshtein fuzzy match on headlines (DualStream / Marketaux + Tiingo).
 - News warm-up: Strategy B uses 30-day baseline; cold start = neutral (0.5).
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ if os.environ.get("SKIP_FINBERT_FOR_LLM_TEST") == "1":
 else:
     try:
         from transformers import pipeline as hf_pipeline
+
         HAS_FINBERT = True
     except ImportError:
         HAS_FINBERT = False
@@ -128,6 +130,7 @@ def sentiment_finbert(text: str) -> float:
 # ---------------------------------------------------------------------------
 try:
     import spacy
+
     HAS_SPACY = True
 except ImportError:
     HAS_SPACY = False
@@ -137,13 +140,26 @@ _NLP = None
 # High-impact phrases for Strategy D (institutional-grade Event-Driven; override technical choppiness for 48h)
 # Earnings: beat/miss, guidance, earnings call
 EARNINGS_PHRASES = [
-    "beat estimates", "missed revenue", "guidance hike", "earnings call",
-    "earnings announcement", "earnings report", "quarterly earnings",
+    "beat estimates",
+    "missed revenue",
+    "guidance hike",
+    "earnings call",
+    "earnings announcement",
+    "earnings report",
+    "quarterly earnings",
 ]
 # M&A: acquisition, merger, buyout, takeover bid
 MA_PHRASES = ["acquisition", "merger", "buyout", "takeover bid", "m&a", "takeover"]
 # Leadership: CEO/CFO/board
-LEADERSHIP_PHRASES = ["ceo step down", "new cfo", "board reshuffle", "ceo change", "ceo resignation", "new ceo", "chief executive"]
+LEADERSHIP_PHRASES = [
+    "ceo step down",
+    "new cfo",
+    "board reshuffle",
+    "ceo change",
+    "ceo resignation",
+    "new ceo",
+    "chief executive",
+]
 HIGH_IMPACT_PHRASES: list[str] = (
     EARNINGS_PHRASES
     + MA_PHRASES
@@ -173,7 +189,11 @@ class EventDetector:
             except OSError:
                 try:
                     import subprocess
-                    subprocess.run(["python", "-m", "spacy", "download", self.model_name], check=True)
+
+                    subprocess.run(
+                        ["python", "-m", "spacy", "download", self.model_name],
+                        check=True,
+                    )
                     _NLP = spacy.load(self.model_name)
                 except Exception as e:
                     logger.warning("spacy load failed: %s", e)
@@ -202,7 +222,9 @@ class EventDetector:
             result["Leadership"] = True
         if any(x in text_lower for x in ("lawsuit", "litigation", "sued")):
             result["Lawsuit"] = True
-        if "fda" in text_lower and any(x in text_lower for x in ("approval", "rejection", "approve", "reject")):
+        if "fda" in text_lower and any(
+            x in text_lower for x in ("approval", "rejection", "approve", "reject")
+        ):
             result["FDA"] = True
         for phrase in HIGH_IMPACT_PHRASES:
             if phrase in text_lower:
@@ -230,9 +252,11 @@ class EventDetector:
 # ---------------------------------------------------------------------------
 try:
     import Levenshtein
+
     HAS_LEVENSHTEIN = True
 except ImportError:
     HAS_LEVENSHTEIN = False
+
 
 def _headline_similarity(a: str, b: str) -> float:
     if not HAS_LEVENSHTEIN or not a or not b:
@@ -243,7 +267,9 @@ def _headline_similarity(a: str, b: str) -> float:
     return Levenshtein.ratio(a, b)
 
 
-def deduplicate_articles(articles: list[dict], headline_key: str = "title") -> list[dict]:
+def deduplicate_articles(
+    articles: list[dict], headline_key: str = "title"
+) -> list[dict]:
     """
     Deduplicate by headline fuzzy matching (Levenshtein). Keeps first occurrence.
     Used for DualStream (Marketaux + Tiingo) to avoid double-counting.
@@ -251,13 +277,18 @@ def deduplicate_articles(articles: list[dict], headline_key: str = "title") -> l
     """
     if not articles or not HAS_LEVENSHTEIN:
         return articles
-    threshold = get_config().get_param("strategy_params.deduplication.similarity_threshold", 0.85)
+    threshold = get_config().get_param(
+        "strategy_params.deduplication.similarity_threshold", 0.85
+    )
     out = []
     for art in articles:
         h = (art.get(headline_key) or "").strip()
         is_dup = False
         for kept in out:
-            if _headline_similarity(h, (kept.get(headline_key) or "").strip()) >= threshold:
+            if (
+                _headline_similarity(h, (kept.get(headline_key) or "").strip())
+                >= threshold
+            ):
                 is_dup = True
                 break
         if not is_dup:
@@ -268,7 +299,9 @@ def deduplicate_articles(articles: list[dict], headline_key: str = "title") -> l
 # ---------------------------------------------------------------------------
 # Load news from data/news/{ticker}_news.json
 # ---------------------------------------------------------------------------
-def load_ticker_news(news_dir: Path | str | None, ticker: str, dedupe: bool = True) -> list[dict]:
+def load_ticker_news(
+    news_dir: Path | str | None, ticker: str, dedupe: bool = True
+) -> list[dict]:
     """
     Load articles for a ticker from data/news/{ticker}_news.json.
     When dedupe=True (default), Levenshtein fuzzy matching on headlines is applied
@@ -276,6 +309,7 @@ def load_ticker_news(news_dir: Path | str | None, ticker: str, dedupe: bool = Tr
     """
     if news_dir is None:
         from src.utils.data_manager import get_path
+
         news_dir = get_path("news")
     news_dir = Path(news_dir)
     path = news_dir / f"{ticker}_news.json"
@@ -389,8 +423,18 @@ def strategy_surprise(
     cutoff_baseline = as_of - pd.Timedelta(days=baseline_days)
     cutoff_recent = as_of - pd.Timedelta(days=recent_days)
     # 1-day lag: baseline = previous 30 days only (exclude today/as_of)
-    baseline_vals = [s for a, s in articles_with_sentiment if (d := _parse_date(a.get("publishedAt"))) is not None and cutoff_baseline <= d < as_of]
-    recent_vals = [s for a, s in articles_with_sentiment if _parse_date(a.get("publishedAt")) is not None and _parse_date(a.get("publishedAt")) >= cutoff_recent]
+    baseline_vals = [
+        s
+        for a, s in articles_with_sentiment
+        if (d := _parse_date(a.get("publishedAt"))) is not None
+        and cutoff_baseline <= d < as_of
+    ]
+    recent_vals = [
+        s
+        for a, s in articles_with_sentiment
+        if _parse_date(a.get("publishedAt")) is not None
+        and _parse_date(a.get("publishedAt")) >= cutoff_recent
+    ]
     if len(baseline_vals) < 1:
         return 0.5
     baseline_mean = float(np.mean(baseline_vals))
@@ -433,7 +477,9 @@ def strategy_sector_relative(
     sector_tickers = [t for t, s in sector_map.items() if sector_map.get(t) == sector]
     if not sector_tickers:
         sector_tickers = list(ticker_sentiments.keys())
-    sector_sentiments = [ticker_sentiments[t] for t in sector_tickers if t in ticker_sentiments]
+    sector_sentiments = [
+        ticker_sentiments[t] for t in sector_tickers if t in ticker_sentiments
+    ]
     if not sector_sentiments:
         return 0.5
     threshold = np.percentile(sector_sentiments, 100 * (1 - top_pct))
@@ -503,6 +549,7 @@ def compute_news_composite(
     """
     if news_dir is None:
         from src.utils.data_manager import get_path
+
         news_dir = get_path("news")
     news_dir = Path(news_dir)
     # Optional testing: skip slow FinBERT to exercise Gemini bridge only (env SKIP_FINBERT_FOR_LLM_TEST=1).
@@ -514,7 +561,11 @@ def compute_news_composite(
     cfg = get_config()
     baseline_days = int(cfg.get_param("strategy_params.sentiment.baseline_days", 30))
     cutoff = as_of - pd.Timedelta(days=baseline_days)
-    articles = [a for a in articles if (d := _parse_date(a.get("publishedAt"))) is not None and cutoff <= d <= as_of]
+    articles = [
+        a
+        for a in articles
+        if (d := _parse_date(a.get("publishedAt"))) is not None and cutoff <= d <= as_of
+    ]
     if not articles:
         return _empty_news_result()
     # FinBERT on title + description (or content)
@@ -534,30 +585,54 @@ def compute_news_composite(
         if use_events:
             ev = detector.detect(text)
             articles_with_events.append((a, ev))
-    event_priority_hours = int(cfg.get_param("strategy_params.sentiment.event_priority_hours", 48))
-    sector_top_pct = float(cfg.get_param("strategy_params.sentiment.sector_top_pct", 0.10))
+    event_priority_hours = int(
+        cfg.get_param("strategy_params.sentiment.event_priority_hours", 48)
+    )
+    sector_top_pct = float(
+        cfg.get_param("strategy_params.sentiment.sector_top_pct", 0.10)
+    )
     # Strategy A
-    buzz_norm, buzz_active = strategy_buzz(articles, as_of, window_24h=True, mean_days=20, std_threshold=2.0)
+    buzz_norm, buzz_active = strategy_buzz(
+        articles, as_of, window_24h=True, mean_days=20, std_threshold=2.0
+    )
     # Strategy B (baseline_days from config; current = signal_horizon_days for grid: 1 vs 5)
     surprise = strategy_surprise(
-        articles_with_sentiment, as_of,
+        articles_with_sentiment,
+        as_of,
         baseline_days=baseline_days,
         recent_days=signal_horizon_days,
     )
     # Strategy C (needs sector_sentiments for universe)
     sector_top10 = 0.5
     if sector_sentiments is not None:
-        sector_top10 = strategy_sector_relative(sector_sentiments, ticker, sector_map=sector_map, top_pct=sector_top_pct)
+        sector_top10 = strategy_sector_relative(
+            sector_sentiments, ticker, sector_map=sector_map, top_pct=sector_top_pct
+        )
     # Strategy D
-    event_priority = strategy_event_priority(articles_with_events, as_of, priority_hours=event_priority_hours)
+    event_priority = strategy_event_priority(
+        articles_with_events, as_of, priority_hours=event_priority_hours
+    )
     # Current / baseline for reporting (Surprise Lag Rule: baseline excludes as_of; recent = signal_horizon_days)
     as_of_ts = pd.Timestamp(as_of)
     baseline_cut = as_of_ts - pd.Timedelta(days=baseline_days)
     recent_cut = as_of_ts - pd.Timedelta(days=signal_horizon_days)
-    baseline_vals = [s for a, s in articles_with_sentiment if (d := _parse_date(a.get("publishedAt"))) is not None and baseline_cut <= d < as_of_ts]
-    recent_vals = [s for a, s in articles_with_sentiment if (d := _parse_date(a.get("publishedAt"))) is not None and d >= recent_cut]
-    sentiment_baseline = float(np.mean(baseline_vals)) if len(baseline_vals) >= 1 else 0.5
-    sentiment_current = float(np.mean(recent_vals)) if recent_vals else sentiment_baseline
+    baseline_vals = [
+        s
+        for a, s in articles_with_sentiment
+        if (d := _parse_date(a.get("publishedAt"))) is not None
+        and baseline_cut <= d < as_of_ts
+    ]
+    recent_vals = [
+        s
+        for a, s in articles_with_sentiment
+        if (d := _parse_date(a.get("publishedAt"))) is not None and d >= recent_cut
+    ]
+    sentiment_baseline = (
+        float(np.mean(baseline_vals)) if len(baseline_vals) >= 1 else 0.5
+    )
+    sentiment_current = (
+        float(np.mean(recent_vals)) if recent_vals else sentiment_baseline
+    )
 
     # Gated LLM (Gemini): only when enabled and (supply-chain keyword or sentiment surprise)
     llm_category: Any = None
@@ -565,28 +640,51 @@ def compute_news_composite(
     llm_relationships: Any = None
     llm_reasoning: Any = None
     new_network_links: list[dict[str, Any]] = []
-    llm_enabled_config = bool(cfg.get_param("strategy_params.llm_analysis.enabled", False))
-    trigger_threshold = float(cfg.get_param("strategy_params.llm_analysis.trigger_threshold", 0.2))
-    surprise_abs = abs(sentiment_current - sentiment_baseline)
-    aggregated_text = " ".join((a.get("title") or "") + " " + (a.get("description") or "") for a in articles[:20]).lower()
-    supply_chain_keyword = any(
-        phrase in aggregated_text for phrase in ("supply chain", "supplier", "shortage", "supply disruption")
+    llm_enabled_config = bool(
+        cfg.get_param("strategy_params.llm_analysis.enabled", False)
     )
-    trigger_llm = llm_enabled_config and (supply_chain_keyword or surprise_abs > trigger_threshold)
+    trigger_threshold = float(
+        cfg.get_param("strategy_params.llm_analysis.trigger_threshold", 0.2)
+    )
+    surprise_abs = abs(sentiment_current - sentiment_baseline)
+    aggregated_text = " ".join(
+        (a.get("title") or "") + " " + (a.get("description") or "")
+        for a in articles[:20]
+    ).lower()
+    supply_chain_keyword = any(
+        phrase in aggregated_text
+        for phrase in ("supply chain", "supplier", "shortage", "supply disruption")
+    )
+    trigger_llm = llm_enabled_config and (
+        supply_chain_keyword or surprise_abs > trigger_threshold
+    )
     # Optional testing: force LLM path to verify Gemini without waiting for gate (env FORCE_LLM_TRIGGER=1).
     force_trigger = os.environ.get("FORCE_LLM_TRIGGER") == "1" and bool(articles)
     if force_trigger:
         trigger_llm = True
     if llm_enabled and trigger_llm:
-        reason = "FORCE_LLM_TRIGGER (test)" if force_trigger else ("supply_chain_keyword" if supply_chain_keyword else f"surprise_abs {surprise_abs:.3f} > threshold {trigger_threshold}")
+        reason = (
+            "FORCE_LLM_TRIGGER (test)"
+            if force_trigger
+            else (
+                "supply_chain_keyword"
+                if supply_chain_keyword
+                else f"surprise_abs {surprise_abs:.3f} > threshold {trigger_threshold}"
+            )
+        )
         logger.info("LLM Triggered: %s (ticker=%s)", reason, ticker)
+
         # Select 1–2 articles: most recent or max |sentiment - baseline|
         def _article_priority(item: tuple[dict, float]) -> float:
             a, sent = item
             return abs(sent - sentiment_baseline)
-        selected = sorted(articles_with_sentiment, key=_article_priority, reverse=True)[:2]
+
+        selected = sorted(articles_with_sentiment, key=_article_priority, reverse=True)[
+            :2
+        ]
         try:
             from src.signals.llm_bridge import GeminiAnalyzer
+
             analyzer = GeminiAnalyzer()
             for art, _ in selected:
                 headline = (art.get("title") or "").strip()
@@ -598,19 +696,41 @@ def compute_news_composite(
                     llm_sentiment = out.sentiment
                     llm_relationships = out.relationships
                     llm_reasoning = out.reasoning
-                    for entity in (out.relationships.get("upstream") or []):
+                    for entity in out.relationships.get("upstream") or []:
                         if entity and isinstance(entity, str):
-                            new_network_links.append({"source_ticker": ticker, "target_entity": entity, "direction": "upstream"})
-                    for entity in (out.relationships.get("downstream") or []):
+                            new_network_links.append(
+                                {
+                                    "source_ticker": ticker,
+                                    "target_entity": entity,
+                                    "direction": "upstream",
+                                }
+                            )
+                    for entity in out.relationships.get("downstream") or []:
                         if entity and isinstance(entity, str):
-                            new_network_links.append({"source_ticker": ticker, "target_entity": entity, "direction": "downstream"})
-                    logger.info("LLM deep_analyze: category=%s sentiment=%.2f links=%d", llm_category, llm_sentiment, len(new_network_links))
+                            new_network_links.append(
+                                {
+                                    "source_ticker": ticker,
+                                    "target_entity": entity,
+                                    "direction": "downstream",
+                                }
+                            )
+                    logger.info(
+                        "LLM deep_analyze: category=%s sentiment=%.2f links=%d",
+                        llm_category,
+                        llm_sentiment,
+                        len(new_network_links),
+                    )
                     break
         except Exception as exc:
             logger.warning("LLM gate failed (skipping): %s", exc)
 
     # Composite: simple average of (buzz_norm, surprise, sector_top10, event_priority or 0.5)
-    comp_vals = [buzz_norm, surprise, sector_top10, event_priority if event_priority > 0 else 0.5]
+    comp_vals = [
+        buzz_norm,
+        surprise,
+        sector_top10,
+        event_priority if event_priority > 0 else 0.5,
+    ]
     news_composite = float(np.clip(np.mean(comp_vals), 0.0, 1.0))
     return {
         "news_composite": news_composite,
@@ -620,7 +740,12 @@ def compute_news_composite(
         "event_priority": event_priority,
         "sentiment_current": sentiment_current,
         "sentiment_baseline": sentiment_baseline,
-        "strategies": {"buzz": buzz_norm, "surprise": surprise, "sector": sector_top10, "event": event_priority},
+        "strategies": {
+            "buzz": buzz_norm,
+            "surprise": surprise,
+            "sector": sector_top10,
+            "event": event_priority,
+        },
         "llm_category": llm_category,
         "llm_sentiment": llm_sentiment,
         "llm_relationships": llm_relationships,

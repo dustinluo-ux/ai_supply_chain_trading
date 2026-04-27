@@ -7,6 +7,7 @@ Usage:
     python scripts/run_optimizer.py --n-trials 2        # smoke test
     python scripts/run_optimizer.py --skip-data         # skip price/news refresh per trial
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,8 +16,7 @@ import random
 import re
 import subprocess
 import sys
-import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _load_optimizer_config() -> dict:
     import yaml
+
     p = ROOT / "config" / "optimizer_config.yaml"
     if not p.exists():
         raise FileNotFoundError(f"optimizer_config.yaml not found: {p}")
@@ -39,14 +40,17 @@ def _run_trial(trial_params: dict, skip_data: bool, n_trial: int, n_total: int) 
     argv = [
         sys.executable,
         str(ROOT / "scripts" / "run_e2e_pipeline.py"),
-        "--skip-model",         # optimizer varies portfolio params, not the model per trial
-        "--skip-gate",          # gate uses live fundamentals; not valid for historical optimization
-        "--top-n", str(trial_params.get("top_n", 5)),
-        "--score-floor", str(trial_params.get("score_floor", 0.0)),
-        "--track", str(trial_params.get("track", "A")),
+        "--skip-model",  # optimizer varies portfolio params, not the model per trial
+        "--skip-gate",  # gate uses live fundamentals; not valid for historical optimization
+        "--top-n",
+        str(trial_params.get("top_n", 5)),
+        "--score-floor",
+        str(trial_params.get("score_floor", 0.0)),
+        "--track",
+        str(trial_params.get("track", "A")),
     ]
     if skip_data or n_trial > 1:
-        argv.append("--skip-data")   # only refresh data on first trial
+        argv.append("--skip-data")  # only refresh data on first trial
     if trial_params.get("no_llm", True):
         argv.append("--no-llm")
     if trial_params.get("no_hedge", False):
@@ -79,15 +83,22 @@ def _run_trial(trial_params: dict, skip_data: bool, n_trial: int, n_total: int) 
         exit_code = proc.returncode
     except subprocess.TimeoutExpired:
         print(f"  [WARN] Trial {n_trial} timed out (2400s)", flush=True)
-        return {"params": trial_params, "oos_sharpe": None, "oos_cagr": None,
-                "oos_maxdd": None, "status": "TIMEOUT", "exit_code": -1, "stdout": ""}
+        return {
+            "params": trial_params,
+            "oos_sharpe": None,
+            "oos_cagr": None,
+            "oos_maxdd": None,
+            "status": "TIMEOUT",
+            "exit_code": -1,
+            "stdout": "",
+        }
 
     result = _parse_summary(stdout)
     result["params"] = trial_params
     result["exit_code"] = exit_code
     result["stdout"] = stdout[-2000:]
     if stderr:
-        result["stderr"] = stderr[-500:]
+        result["stderr"] = stderr[-5000:]
     return result
 
 
@@ -101,12 +112,21 @@ def _parse_summary(stdout: str) -> dict:
         except Exception:
             return None
 
-    oos_sharpe = _extract(r"OOS Sharpe:\s*([\-\d\.]+|N/A)", stdout,
-                          lambda x: None if x == "N/A" else float(x))
-    oos_cagr   = _extract(r"OOS CAGR:\s*([\-\d\.]+|N/A)%?", stdout,
-                          lambda x: None if x == "N/A" else float(x) / 100.0)
-    oos_maxdd  = _extract(r"Max Drawdown:\s*([\-\d\.]+|N/A)%?", stdout,
-                          lambda x: None if x == "N/A" else float(x) / 100.0)
+    oos_sharpe = _extract(
+        r"OOS Sharpe:\s*([\-\d\.]+|N/A)",
+        stdout,
+        lambda x: None if x == "N/A" else float(x),
+    )
+    oos_cagr = _extract(
+        r"OOS CAGR:\s*([\-\d\.]+|N/A)%?",
+        stdout,
+        lambda x: None if x == "N/A" else float(x) / 100.0,
+    )
+    oos_maxdd = _extract(
+        r"Max Drawdown:\s*([\-\d\.]+|N/A)%?",
+        stdout,
+        lambda x: None if x == "N/A" else float(x) / 100.0,
+    )
 
     status = "UNKNOWN"
     if "STATUS: PASS" in stdout:
@@ -116,24 +136,46 @@ def _parse_summary(stdout: str) -> dict:
     elif "STATUS: FAIL" in stdout:
         status = "FAIL"
 
-    return {"oos_sharpe": oos_sharpe, "oos_cagr": oos_cagr,
-            "oos_maxdd": oos_maxdd, "status": status}
+    return {
+        "oos_sharpe": oos_sharpe,
+        "oos_cagr": oos_cagr,
+        "oos_maxdd": oos_maxdd,
+        "status": status,
+    }
 
 
 def _composite_score(result: dict, min_sharpe: float, weights: dict) -> float:
     sharpe = result.get("oos_sharpe")
-    cagr   = result.get("oos_cagr")
-    maxdd  = result.get("oos_maxdd")
+    cagr = result.get("oos_cagr")
+    maxdd = result.get("oos_maxdd")
     if sharpe is None:
         return -999.0
     if sharpe < min_sharpe:
         return -999.0
     w_sharpe = float(weights.get("sharpe", 0.5))
-    w_cagr   = float(weights.get("cagr",   0.3))
-    w_maxdd  = float(weights.get("maxdd",  0.2))
-    cagr_v  = float(cagr)  if cagr  is not None else 0.0
+    w_cagr = float(weights.get("cagr", 0.3))
+    w_maxdd = float(weights.get("maxdd", 0.2))
+    cagr_v = float(cagr) if cagr is not None else 0.0
     maxdd_v = float(maxdd) if maxdd is not None else 0.0
     return w_sharpe * sharpe + w_cagr * cagr_v + w_maxdd * (1.0 - abs(maxdd_v))
+
+
+def _optuna_suggest_trial_params(trial, search_space: dict) -> dict:
+    """
+    Build trial_params dict from search_space using Optuna.
+    Scalar lists → suggest_categorical; list-of-dict presets → suggest_int index.
+    """
+    out: dict = {}
+    for key, val in search_space.items():
+        if not isinstance(val, list) or len(val) == 0:
+            continue
+        first = val[0]
+        if isinstance(first, dict):
+            idx = trial.suggest_int(f"{key}_idx", 0, len(val) - 1)
+            out[key] = val[idx]
+        else:
+            out[key] = trial.suggest_categorical(key, val)
+    return out
 
 
 def main() -> int:
@@ -141,50 +183,104 @@ def main() -> int:
     opt = cfg.get("optimizer", {})
     search_space = cfg.get("search_space", {})
 
-    parser = argparse.ArgumentParser(description="Autonomous random-search optimizer.")
+    parser = argparse.ArgumentParser(
+        description="Autonomous optimizer (Optuna TPE / Bayesian)."
+    )
     parser.add_argument("--n-trials", type=int, default=int(opt.get("n_trials", 30)))
-    parser.add_argument("--skip-data", action="store_true", default=False,
-                        help="Skip price/news refresh (pass --skip-data on every trial).")
-    parser.add_argument("--results-path", type=str, default=str(opt.get("results_path",
-                        "outputs/optimizer_results.json")))
+    parser.add_argument(
+        "--skip-data",
+        action="store_true",
+        default=False,
+        help="Skip price/news refresh (pass --skip-data on every trial).",
+    )
+    parser.add_argument(
+        "--results-path",
+        type=str,
+        default=str(opt.get("results_path", "outputs/optimizer_results.json")),
+    )
     args = parser.parse_args()
 
-    min_sharpe        = float(opt.get("min_sharpe", 0.0))
-    composite_weights = opt.get("composite_weights", {"sharpe": 0.5, "cagr": 0.3, "maxdd": 0.2})
-    results_path      = ROOT / args.results_path
+    min_sharpe = float(opt.get("min_sharpe", 0.0))
+    composite_weights = opt.get(
+        "composite_weights", {"sharpe": 0.5, "cagr": 0.3, "maxdd": 0.2}
+    )
+    results_path = ROOT / args.results_path
 
-    rng = random.Random(int(time.time()))
+    import optuna
+
     trials: list[dict] = []
 
-    for i in range(1, args.n_trials + 1):
-        params  = _sample_trial(search_space, rng)
-        result  = _run_trial(params, skip_data=args.skip_data, n_trial=i, n_total=args.n_trials)
-        result["composite"] = _composite_score(result, min_sharpe, composite_weights)
+    def objective(trial: optuna.Trial) -> float:
+        params = _optuna_suggest_trial_params(trial, search_space)
+        n_trial = trial.number + 1
+        try:
+            result = _run_trial(
+                params,
+                skip_data=args.skip_data,
+                n_trial=n_trial,
+                n_total=args.n_trials,
+            )
+        except Exception as exc:
+            print(f"  [WARN] Trial {n_trial} raised: {exc}", flush=True)
+            result = {
+                "params": params,
+                "oos_sharpe": None,
+                "oos_cagr": None,
+                "oos_maxdd": None,
+                "status": "ERROR",
+                "exit_code": -1,
+                "stdout": "",
+            }
+            result["composite"] = -999.0
+            trials.append(result)
+            return -999.0
+        score = _composite_score(result, min_sharpe, composite_weights)
+        result["composite"] = score
         trials.append(result)
-        print(f"  Sharpe={result['oos_sharpe']}  composite={result['composite']:.4f}", flush=True)
+        print(
+            f"  Sharpe={result['oos_sharpe']}  composite={result['composite']:.4f}",
+            flush=True,
+        )
+        return float(score)
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    study.optimize(objective, n_trials=args.n_trials)
 
     ranked = sorted(trials, key=lambda x: x["composite"], reverse=True)
-    best   = ranked[0]
+    best = ranked[0]
 
     print("\n[OPTIMIZER] === TOP 5 RESULTS ===", flush=True)
     for r in ranked[:5]:
-        print(f"  composite={r['composite']:.4f}  sharpe={r['oos_sharpe']}  "
-              f"params={r['params']}", flush=True)
+        print(
+            f"  composite={r['composite']:.4f}  sharpe={r['oos_sharpe']}  "
+            f"params={r['params']}",
+            flush=True,
+        )
     print(f"\n[OPTIMIZER] WINNER: {best['params']}", flush=True)
-    print(f"  Sharpe={best['oos_sharpe']}  CAGR={best['oos_cagr']}  "
-          f"MaxDD={best['oos_maxdd']}", flush=True)
+    print(
+        f"  Sharpe={best['oos_sharpe']}  CAGR={best['oos_cagr']}  "
+        f"MaxDD={best['oos_maxdd']}",
+        flush=True,
+    )
 
     # Atomic write
     results_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = results_path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({
-            "run_at": datetime.now(timezone.utc).isoformat(),
-            "n_trials": args.n_trials,
-            "winner": best,
-            "ranked": ranked,
-            "trials": trials,
-        }, f, indent=2)
+        json.dump(
+            {
+                "run_at": datetime.now(timezone.utc).isoformat(),
+                "n_trials": args.n_trials,
+                "winner": best,
+                "ranked": ranked,
+                "trials": trials,
+            },
+            f,
+            indent=2,
+        )
     tmp.replace(results_path)
 
     print(f"\n[OPTIMIZER] Results written to {results_path}", flush=True)
@@ -280,7 +376,11 @@ def main() -> int:
                 flush=True,
             )
     except Exception as _se:
-        print(f"[OPTIMIZER][WARN] Scheduler registration failed: {_se}", file=sys.stderr, flush=True)
+        print(
+            f"[OPTIMIZER][WARN] Scheduler registration failed: {_se}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     return 0
 

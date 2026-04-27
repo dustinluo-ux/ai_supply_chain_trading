@@ -4,6 +4,7 @@ Loads eodhd_global_backfill.parquet, filters by tickers and date range,
 applies cross-sectional z-score normalization per date, rescales to [0, 1].
 Returns (result_dict, DataQualityReport). DEGRADED source per RESILIENCE_SPEC.
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,13 +46,29 @@ def load_eodhd_news_signals(
             msg = f"Parquet not found at: {path}"
             logger.warning("[EODHD] %s", msg)
             _load_warnings.append(f"eodhd_news: {msg}")
-            return {}, DataQualityReport(degraded_missing=["eodhd_news"], warnings=[msg])
+            return {}, DataQualityReport(
+                degraded_missing=["eodhd_news"], warnings=[msg]
+            )
         df = pd.read_parquet(path, engine="fastparquet")
-        if df.empty or "Date" not in df.columns or "Ticker" not in df.columns or "Sentiment" not in df.columns:
+        if (
+            df.empty
+            or "Date" not in df.columns
+            or "Ticker" not in df.columns
+            or "Sentiment" not in df.columns
+        ):
             return {}, DataQualityReport()
-        df = df[df["Ticker"].isin(tickers) & (df["Date"] >= start_date) & (df["Date"] <= end_date)].copy()
+        df = df[
+            df["Ticker"].isin(tickers)
+            & (df["Date"] >= start_date)
+            & (df["Date"] <= end_date)
+        ].copy()
         if df.empty:
-            logger.info("[EODHD] No rows in range %s–%s for %s tickers", start_date, end_date, len(tickers))
+            logger.info(
+                "[EODHD] No rows in range %s–%s for %s tickers",
+                start_date,
+                end_date,
+                len(tickers),
+            )
             return {}, DataQualityReport()
         row_count = len(df)
         out: dict[str, dict[str, dict[str, Any]]] = {}
@@ -70,14 +87,27 @@ def load_eodhd_news_signals(
             z = (sents - mean_s) / std_s
             rescaled = np.clip((z + 3.0) / 6.0, 0.0, 1.0)
             for t in rescaled.index:
-                out.setdefault(t, {})[str(date_str)] = {"sentiment_score": float(rescaled[t])}
+                out.setdefault(t, {})[str(date_str)] = {
+                    "sentiment_score": float(rescaled[t])
+                }
         tickers_covered = len(out)
         date_min = min(d for d in df["Date"].astype(str))
         date_max = max(d for d in df["Date"].astype(str))
-        logger.info("[EODHD] Loaded: %s tickers, %s–%s, %s rows", tickers_covered, date_min, date_max, row_count)
+        logger.info(
+            "[EODHD] Loaded: %s tickers, %s–%s, %s rows",
+            tickers_covered,
+            date_min,
+            date_max,
+            row_count,
+        )
         return out, DataQualityReport()
     except Exception as e:
-        logger.error("[EODHD] Failed to load news signals: %s: %s", type(e).__name__, e, exc_info=True)
+        logger.error(
+            "[EODHD] Failed to load news signals: %s: %s",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         msg = f"eodhd_news: {type(e).__name__}: {e}"
         _load_warnings.append(msg)
         return {}, DataQualityReport(degraded_missing=["eodhd_news"], warnings=[msg])

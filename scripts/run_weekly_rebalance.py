@@ -22,21 +22,18 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
-import update_news_data
-import update_price_data
 from src.data.csv_provider import load_data_config, load_prices
 from src.utils.audit_logger import log_audit_record
 
 
-def _as_of_capped_for_overlay(ts) -> "pd.Timestamp":
+def _as_of_capped_for_overlay(ts) -> pd.Timestamp:
     """Clamp signal date to calendar today so forward-dated price rows do not skew RiskOverlay."""
-    import pandas as pd
-
     cap = pd.Timestamp(date.today())
     t = pd.Timestamp(ts).normalize()
     return t if t <= cap else cap
@@ -137,7 +134,10 @@ def _get_nq_price_or_none() -> Decimal | None:
         finally:
             ib.disconnect()
     except Exception as exc:
-        print(f"[PLAN][WARN] NQ live price unavailable, overlay skipped: {exc}", flush=True)
+        print(
+            f"[PLAN][WARN] NQ live price unavailable, overlay skipped: {exc}",
+            flush=True,
+        )
     return None
 
 
@@ -170,6 +170,16 @@ def _execution_plan_to_dict(plan, target) -> dict:
             }
             for o in plan.overlay_orders
         ],
+        "option_orders": [
+            {
+                "symbol": o.symbol,
+                "right": o.right,
+                "notional_usd": str(o.notional_usd),
+                "contracts": o.contracts,
+                "reason": o.reason,
+            }
+            for o in plan.option_orders
+        ],
         "audit_log": list(plan.audit_log),
     }
     if isinstance(target, TargetPortfolio):
@@ -194,12 +204,16 @@ def _write_execution_plan_json(plan, path: Path, target=None) -> None:
     os.replace(tmp, path)
 
 
-def _target_from_weights_or_aux(weights_series, as_of_ts, aux) -> "TargetPortfolio":
+def _target_from_weights_or_aux(weights_series, as_of_ts, aux):
     from src.risk.types import TargetPortfolio
 
     if isinstance(aux, dict) and aux.get("target_portfolio") is not None:
         return aux["target_portfolio"]
-    wmap = {str(k).upper(): Decimal(str(v)) for k, v in weights_series.items() if float(v) != 0.0}
+    wmap = {
+        str(k).upper(): Decimal(str(v))
+        for k, v in weights_series.items()
+        if float(v) != 0.0
+    }
     return TargetPortfolio(
         as_of=as_of_ts,
         weights=wmap,
@@ -208,7 +222,9 @@ def _target_from_weights_or_aux(weights_series, as_of_ts, aux) -> "TargetPortfol
     )
 
 
-def _submit_plan_to_ib(plan, nav: float, prices_dict: dict, as_of, fill_run_id: str) -> list:
+def _submit_plan_to_ib(
+    plan, nav: float, prices_dict: dict, as_of, fill_run_id: str
+) -> list:
     """Submit equity deltas and MNQ overlay via IBExecutor / ib_insync (best-effort)."""
     import run_execution
     from ib_insync import MarketOrder
@@ -263,8 +279,16 @@ def _submit_plan_to_ib(plan, nav: float, prices_dict: dict, as_of, fill_run_id: 
                     qty_requested=abs(int(dq)),
                     qty_filled=int(res.get("filled_quantity") or 0),
                     avg_fill_price=res.get("filled_price"),
-                    order_id=str(res["order_id"]) if res.get("order_id") is not None else None,
-                    stop_order_id=str(res["stop_order_id"]) if res.get("stop_order_id") is not None else None,
+                    order_id=(
+                        str(res["order_id"])
+                        if res.get("order_id") is not None
+                        else None
+                    ),
+                    stop_order_id=(
+                        str(res["stop_order_id"])
+                        if res.get("stop_order_id") is not None
+                        else None
+                    ),
                     status=str(res.get("status") or "submitted"),
                     fill_check_passed=False,
                     fill_check_reason="weekly_rebalance",
@@ -272,7 +296,10 @@ def _submit_plan_to_ib(plan, nav: float, prices_dict: dict, as_of, fill_run_id: 
                 )
         for ov in plan.overlay_orders:
             if str(ov.symbol).upper() != "MNQ" or int(ov.contracts) == 0:
-                print(f"[PLAN][SKIP] overlay submit not implemented for {ov.symbol}", flush=True)
+                print(
+                    f"[PLAN][SKIP] overlay submit not implemented for {ov.symbol}",
+                    flush=True,
+                )
                 continue
             try:
                 fc = contract_resolve("MNQ", "future", ib)
@@ -288,6 +315,62 @@ def _submit_plan_to_ib(plan, nav: float, prices_dict: dict, as_of, fill_run_id: 
                 )
             except Exception as ex:
                 print(f"[PLAN][WARN] overlay submit failed: {ex}", flush=True)
+        for opt_order in plan.option_orders:
+            if (
+                str(opt_order.symbol).upper() != "SMH"
+                or float(opt_order.notional_usd) <= 0
+            ):
+                continue
+            try:
+                fc = contract_resolve("SMH", "option", ib)
+                td = ib.reqMktData(fc, "", False, False)
+                ib.sleep(1.5)
+                bid = float(getattr(td, "bid", 0) or 0)
+                ask = float(getattr(td, "ask", 0) or 0)
+                last = float(getattr(td, "last", 0) or 0)
+                if bid > 0 and ask > 0:
+                    mid = (bid + ask) / 2.0
+                else:
+                    mid = last
+                if mid <= 0:
+                    print(
+                        "[PLAN][WARN] put hedge skipped: invalid option mid/last",
+                        flush=True,
+                    )
+                    continue
+                contracts = int(float(opt_order.notional_usd) / (mid * 100.0))
+                if contracts < 1:
+                    print(
+                        f"[PLAN][SKIP] put hedge notional too small for 1 contract (mid={mid:.2f})",
+                        flush=True,
+                    )
+                    continue
+                order = MarketOrder("BUY", contracts)
+                order.account = executor.account
+                order.orderRef = "weekly_rebalance_put_hedge"[:128]
+                trade = ib.placeOrder(fc, order)
+                print(
+                    f"[PLAN] put_hedge SMH BUY {contracts}× ATM put @ {mid:.2f}",
+                    flush=True,
+                )
+                append_fill_record(
+                    run_id=fill_run_id,
+                    ticker="SMH_PUT",
+                    side="BUY",
+                    qty_requested=contracts,
+                    qty_filled=0,
+                    avg_fill_price=mid,
+                    order_id=(
+                        str(trade.order.orderId) if trade and trade.order else None
+                    ),
+                    stop_order_id=None,
+                    status="submitted",
+                    fill_check_passed=False,
+                    fill_check_reason="weekly_rebalance_put_hedge",
+                    order_comment="weekly_rebalance_put_hedge",
+                )
+            except Exception as ex:
+                print(f"[PLAN][WARN] put hedge submit failed: {ex}", flush=True)
     finally:
         pass
     return out
@@ -299,6 +382,8 @@ def _finalize_rebalance_audit(
     tickers: str,
     args: argparse.Namespace,
     regime_state: dict,
+    plan,
+    constraints=None,
     _fill_records: list,
     _exit_code: int,
 ) -> None:
@@ -318,11 +403,26 @@ def _finalize_rebalance_audit(
             "meta_weights": regime_state.get("meta_weights"),
         },
     }
+    _metrics: dict = {}
+    if constraints is not None:
+        _metrics["position_scale"] = str(constraints.position_scale)
+        _metrics["beta_cap"] = str(constraints.beta_cap)
+        _metrics["stop_loss_active"] = constraints.stop_loss_active
+        _metrics["margin_headroom_pct"] = str(constraints.margin_headroom_pct)
+        _metrics["risk_audit_log"] = list(constraints.audit_log)
+    if plan is not None:
+        _metrics["overlay_count"] = len(getattr(plan, "overlay_orders", []) or [])
+        _metrics["option_orders"] = len(getattr(plan, "option_orders", []) or [])
+        _metrics["plan_audit_log"] = list(getattr(plan, "audit_log", []) or [])
+        _metrics["long_positions"] = sum(
+            1 for v in (getattr(plan, "long_orders", {}) or {}).values() if float(v) > 0
+        )
+    _plan_path = ROOT / "outputs" / "execution_plan_latest.json"
     log_audit_record(
         run_id=_run_id,
-        model_metrics={},
+        model_metrics=_metrics,
         config=_rebalance_config,
-        output_paths={},
+        output_paths={"execution_plan": str(_plan_path)} if _plan_path.exists() else {},
         trade_summary=_fill_records,
     )
     from src.monitoring.telegram_alerts import send_alert
@@ -355,53 +455,102 @@ def main() -> int:
 
     load_dotenv(ROOT / ".env")
 
-    # Update price data first (watchlist from config, end=today); continue on non-zero
-    _saved_argv = sys.argv
+    # Data refresh via unified update_all (prices + news + fundamentals + new ticker onboarding)
     try:
-        sys.argv = ["update_price_data.py"]
-        _update_code = update_price_data.main()
-    finally:
-        sys.argv = _saved_argv
-    if _update_code != 0:
-        print("WARNING: Price data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
+        import subprocess as _sp
 
-    _saved_argv2 = sys.argv
-    try:
-        sys.argv = ["update_news_data.py"]
-        _news_code = update_news_data.main()
-    finally:
-        sys.argv = _saved_argv2
-    if _news_code != 0:
-        print("WARNING: News data update returned non-zero exit code; continuing with possibly stale data.", file=sys.stderr)
+        _update_rc = _sp.call(
+            [
+                r"C:\Users\dusro\anaconda3\envs\wealth\python.exe",
+                str(ROOT / "scripts" / "update_all.py"),
+            ]
+        )
+        if _update_rc != 0:
+            print(
+                "WARNING: update_all returned non-zero; continuing with possibly stale data.",
+                file=sys.stderr,
+                flush=True,
+            )
+    except Exception as _ue:
+        print(
+            f"WARNING: update_all failed: {_ue}; continuing.",
+            file=sys.stderr,
+            flush=True,
+        )
 
     try:
         from update_benchmarks import ensure_benchmarks
 
         ensure_benchmarks()
     except Exception as _be:
-        print(f"WARNING: Could not refresh benchmark CSVs: {_be}", file=sys.stderr, flush=True)
+        print(
+            f"WARNING: Could not refresh benchmark CSVs: {_be}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     import datetime as _dt
+
     _run_id = f"rebalance_{_dt.datetime.now().isoformat().replace(':', '-').replace(' ', '_')}"
     parser = argparse.ArgumentParser(
         description="Weekly rebalance: canonical spine -> delta trades -> optional execution (delegates to run_execution)."
     )
-    parser.add_argument("--date", type=str, default=None, help="Signal date YYYY-MM-DD; default: latest Monday")
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Signal date YYYY-MM-DD; default: latest Monday",
+    )
     parser.add_argument("--top-n", type=int, default=3, help="Top N for portfolio")
-    parser.add_argument("--tickers", type=str, default=None, help="Comma-separated tickers; default: watchlist from data_config.yaml")
-    parser.add_argument("--dry-run", action="store_true", help="Do not submit orders (default)")
-    parser.add_argument("--live", action="store_true", help="Use IB paper account (implies --confirm-paper if not --dry-run)")
-    parser.add_argument("--confirm-paper", action="store_true", help="With --live: actually submit orders to paper account")
-    parser.add_argument("--no-llm", action="store_true", help="Disable LLM in target_weight_pipeline")
-    parser.add_argument("--track", type=str, default=None,
-                        help="Strategy track: D = 130/30 long/short. Default: Alpha (ML blend).")
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers; default: watchlist from data_config.yaml",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Do not submit orders (default)"
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Use IB paper account (implies --confirm-paper if not --dry-run)",
+    )
+    parser.add_argument(
+        "--confirm-paper",
+        action="store_true",
+        help="With --live: actually submit orders to paper account",
+    )
+    parser.add_argument(
+        "--no-llm", action="store_true", help="Disable LLM in target_weight_pipeline"
+    )
+    parser.add_argument(
+        "--track",
+        type=str,
+        default=None,
+        help="Strategy track: D = 130/30 long/short. Default: Alpha (ML blend).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["mock", "paper"],
+        default=None,
+        help="Compatibility alias for execution mode",
+    )
     args = parser.parse_args()
+    if args.mode == "mock":
+        args.live = False
+        args.dry_run = True
+    elif args.mode == "paper":
+        args.live = True
 
     tickers = args.tickers
     if not tickers:
         watchlist = _get_watchlist()
         if not watchlist:
-            print("ERROR: No tickers. Set --tickers or config/data_config.yaml universe_selection.watchlist.", flush=True)
+            print(
+                "ERROR: No tickers. Set --tickers or config/data_config.yaml universe_selection.watchlist.",
+                flush=True,
+            )
             return 1
         tickers = ",".join(watchlist)
     else:
@@ -420,7 +569,6 @@ def main() -> int:
     }
     try:
         import pandas as pd
-        import run_execution
         from src.execution.regime_controller import RegimeController
 
         _cfg_reg = load_data_config()
@@ -430,7 +578,15 @@ def main() -> int:
         if args.date:
             _as_reg = pd.to_datetime(args.date).normalize()
         elif _prices_reg:
-            _all_d_reg = sorted(set().union(*[df.index for df in _prices_reg.values() if df is not None and not df.empty]))
+            _all_d_reg = sorted(
+                set().union(
+                    *[
+                        df.index
+                        for df in _prices_reg.values()
+                        if df is not None and not df.empty
+                    ]
+                )
+            )
             _mons_reg = pd.date_range(min(_all_d_reg), max(_all_d_reg), freq="W-MON")
             _as_reg = _mons_reg[-1] if len(_mons_reg) else pd.Timestamp(_all_d_reg[-1])
         else:
@@ -438,7 +594,9 @@ def main() -> int:
         _as_reg_cap = _as_of_capped_for_overlay(_as_reg)
         _reg_ctrl = RegimeController(prices_dict=_prices_reg or {}, as_of=_as_reg_cap)
         regime_state = _reg_ctrl.compute(_as_reg_cap)
-        _reg_ctrl.write_regime_status(regime_state, ROOT / "outputs" / "regime_status.json")
+        _reg_ctrl.write_regime_status(
+            regime_state, ROOT / "outputs" / "regime_status.json"
+        )
     except Exception as _reg_e:
         print(f"[REGIME][WARN] {str(_reg_e)}", flush=True)
 
@@ -455,12 +613,16 @@ def main() -> int:
                 _cache = json.load(_f)
             _mt = _cache.get("model_type", "—")
             _ic = float(_cache.get("ic", 0))
-            print(f"[REBALANCE] Using cached factory winner: {_mt} IC={_ic:.4f}", flush=True)
+            print(
+                f"[REBALANCE] Using cached factory winner: {_mt} IC={_ic:.4f}",
+                flush=True,
+            )
         except Exception as _e:
             print(f"[REBALANCE][WARN] Could not read factory cache: {_e}", flush=True)
     else:
         try:
             from src.models.factory import get_best_model
+
             _data_cfg_path = ROOT / "config" / "data_config.yaml"
             _data_dir = ROOT / "data" / "stock_market_data"
             if _data_cfg_path.exists():
@@ -487,7 +649,9 @@ def main() -> int:
                     for _d, _payload in _by_date.items():
                         _news_signals.setdefault(_ticker, {})[_d] = {
                             "sentiment": float(_payload.get("sentiment_score", 0.5)),
-                            "supply_chain": float(_payload.get("supply_chain_score", 0.5)),
+                            "supply_chain": float(
+                                _payload.get("supply_chain_score", 0.5)
+                            ),
                         }
             except Exception:
                 pass
@@ -497,7 +661,9 @@ def main() -> int:
             try:
                 _train_start = _today.replace(year=_today.year - _train_years)
             except ValueError:
-                _train_start = _today.replace(month=2, day=28, year=_today.year - _train_years)
+                _train_start = _today.replace(
+                    month=2, day=28, year=_today.year - _train_years
+                )
             _train_end = _today - timedelta(days=365)
             _test_start = _train_end
             _test_end = _today
@@ -509,22 +675,34 @@ def main() -> int:
             _mc["training"]["test_start"] = str(_test_start)
             _mc["training"]["test_end"] = str(_test_end)
             with open(_model_cfg_path, "w", encoding="utf-8") as _f_mc:
-                yaml.dump(_mc, _f_mc, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                yaml.dump(
+                    _mc,
+                    _f_mc,
+                    default_flow_style=False,
+                    sort_keys=False,
+                    allow_unicode=True,
+                )
             _winner_model, _winner_type, _winner_ic = get_best_model(
                 prices_dict=_prices_dict,
                 news_signals=_news_signals if _news_signals else None,
                 config_path=_model_cfg_path,
             )
             if _winner_type != "tech_only":
-                print(f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} - model active", flush=True)
+                print(
+                    f"[REBALANCE] Factory winner: {_winner_type} IC={_winner_ic:.4f} - model active",
+                    flush=True,
+                )
             else:
-                print("[REBALANCE] Factory returned tech_only (no ML model passed IC gate)", flush=True)
+                print(
+                    "[REBALANCE] Factory returned tech_only (no ML model passed IC gate)",
+                    flush=True,
+                )
         except Exception as _e:
             print(f"[REBALANCE][WARN] Factory skipped: {_e}", flush=True)
 
     if args.track == "D":
-        import run_execution
         import pandas as pd
+
         config = load_data_config()
         data_dir = config["data_dir"]
         ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
@@ -556,14 +734,25 @@ def main() -> int:
                 model_cfg = yaml.safe_load(f)
             config_d = (model_cfg or {}).get("tracks", {}).get("D", {})
         from src.core.target_weight_pipeline import compute_target_weights
+
         _top_n_d = config_d.get("top_n", 15)
         _weights_series, aux = compute_target_weights(
-            as_of, ticker_list, prices_dict, data_dir,
-            top_n=_top_n_d, path="weekly", return_aux=True,
+            as_of,
+            ticker_list,
+            prices_dict,
+            data_dir,
+            top_n=_top_n_d,
+            path="weekly",
+            return_aux=True,
         )
         scores = pd.Series(aux.get("scores", {}))
-        scores_df = pd.DataFrame([aux.get("scores", {})], index=[as_of]) if scores.size else pd.DataFrame()
+        scores_df = (
+            pd.DataFrame([aux.get("scores", {})], index=[as_of])
+            if scores.size
+            else pd.DataFrame()
+        )
         from src.portfolio.long_short_optimizer import rebalance_long_short
+
         _bottom_n_d = int(regime_state.get("n_shorts", 0))
         print(
             f"[TRACK D] Regime={regime_state.get('regime_state', 'Expansion')} → n_shorts={_bottom_n_d}",
@@ -571,12 +760,20 @@ def main() -> int:
         )
         config_d_run = {**config_d, "bottom_n": _bottom_n_d}
         weights_result = rebalance_long_short(
-            scores, scores_df, prices_dict, regime_status, config_d_run,
+            scores,
+            scores_df,
+            prices_dict,
+            regime_status,
+            config_d_run,
         )
         out_dir = ROOT / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(out_dir / "last_valid_weights.json", "w", encoding="utf-8") as f:
-            json.dump({"as_of": str(as_of.date()), "weights": weights_result.to_dict()}, f, indent=2)
+            json.dump(
+                {"as_of": str(as_of.date()), "weights": weights_result.to_dict()},
+                f,
+                indent=2,
+            )
 
     import pandas as pd
     import run_execution
@@ -612,7 +809,9 @@ def main() -> int:
             sys.argv = argv
             result = run_execution.main()
             _exit_code = int(result[0] if isinstance(result, tuple) else result)
-            _fill_records = result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            _fill_records = (
+                result[1] if isinstance(result, tuple) and len(result) > 1 else []
+            )
         finally:
             sys.argv = old_argv
 
@@ -640,6 +839,8 @@ def main() -> int:
             tickers=tickers,
             args=args,
             regime_state=regime_state,
+            plan=_plan_d,
+            constraints=_constraints_d,
             _fill_records=_fill_records,
             _exit_code=_exit_code,
         )
@@ -701,8 +902,14 @@ def main() -> int:
         score_floor=_score_floor,
     )
     (ROOT / "outputs").mkdir(parents=True, exist_ok=True)
-    with open(ROOT / "outputs" / "last_valid_weights.json", "w", encoding="utf-8") as _f_lw:
-        json.dump({"as_of": str(_as2.date()), "weights": _weights_series.to_dict()}, _f_lw, indent=2)
+    with open(
+        ROOT / "outputs" / "last_valid_weights.json", "w", encoding="utf-8"
+    ) as _f_lw:
+        json.dump(
+            {"as_of": str(_as2.date()), "weights": _weights_series.to_dict()},
+            _f_lw,
+            indent=2,
+        )
 
     _constraints = RiskPolicy().evaluate(_as_capped)
     _aux_d = _aux if isinstance(_aux, dict) else {}
@@ -726,7 +933,9 @@ def main() -> int:
 
     if not args.dry_run and args.live and args.confirm_paper:
         try:
-            _fill_records = _submit_plan_to_ib(_plan, float(_nav_usd), _prices2, _as2, _run_id)
+            _fill_records = _submit_plan_to_ib(
+                _plan, float(_nav_usd), _prices2, _as2, _run_id
+            )
         except Exception as _sub_e:
             print(f"[PLAN][WARN] Live submit failed: {_sub_e}", flush=True)
             _exit_code = 1
@@ -738,6 +947,8 @@ def main() -> int:
         tickers=tickers,
         args=args,
         regime_state=regime_state,
+        plan=_plan,
+        constraints=_constraints,
         _fill_records=_fill_records,
         _exit_code=_exit_code,
     )

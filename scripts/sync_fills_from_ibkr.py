@@ -10,6 +10,7 @@ Usage:
 
 Default date: today. TWS must be running.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,10 +24,13 @@ sys.path.insert(0, str(ROOT))
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Sync fills from IBKR TWS executions.")
-    parser.add_argument("--date", type=str, default=None, help="Date YYYY-MM-DD (default: today)")
+    parser.add_argument(
+        "--date", type=str, default=None, help="Date YYYY-MM-DD (default: today)"
+    )
     args = parser.parse_args()
 
     from datetime import datetime, timezone
+
     if args.date:
         date_str = args.date
     else:
@@ -34,9 +38,11 @@ def _main() -> int:
 
     # 1. Load dotenv; read IBKR_PAPER_ACCOUNT and host/port
     from dotenv import load_dotenv
+
     load_dotenv(ROOT / ".env")
     import os
     import yaml
+
     paper_account = os.getenv("IBKR_PAPER_ACCOUNT", "").strip()
     host, port = "127.0.0.1", 7497
     trading_config_path = ROOT / "config" / "trading_config.yaml"
@@ -45,7 +51,9 @@ def _main() -> int:
             with open(trading_config_path, "r", encoding="utf-8") as f:
                 tc = yaml.safe_load(f) or {}
             if not paper_account:
-                paper_account = (tc.get("trading", {}).get("execution", {}) or {}).get("paper_account", "")
+                paper_account = (tc.get("trading", {}).get("execution", {}) or {}).get(
+                    "paper_account", ""
+                )
             ib = (tc.get("trading", {}) or {}).get("ib", {})
             if ib:
                 host = ib.get("host", host)
@@ -58,6 +66,7 @@ def _main() -> int:
 
     # 2. Read existing fills
     from src.execution.fill_ledger import read_fill_ledger, FILLS_PATH
+
     records = read_fill_ledger()
     if not records:
         print("No fills to sync.", flush=True)
@@ -65,9 +74,12 @@ def _main() -> int:
 
     # 3. Pending: qty_filled == 0 or status in ("failed", "unknown")
     pending_idxs = [
-        i for i, r in enumerate(records)
-        if (int(r.get("qty_filled") or 0) == 0
-        or (r.get("status") or "") in ("failed", "unknown"))
+        i
+        for i, r in enumerate(records)
+        if (
+            int(r.get("qty_filled") or 0) == 0
+            or (r.get("status") or "") in ("failed", "unknown")
+        )
     ]
     if not pending_idxs:
         print("All fills already reconciled.", flush=True)
@@ -76,9 +88,10 @@ def _main() -> int:
     # 4. Connect to TWS
     try:
         from ib_insync import IB, ExecutionFilter
+
         ib = IB()
         ib.connect(host, port, clientId=10)
-    except Exception as e:
+    except Exception as _e:  # noqa: F841
         print("WARNING: TWS not available.", flush=True)
         return 0
 
@@ -88,7 +101,7 @@ def _main() -> int:
         ef = ExecutionFilter(acctCode=paper_account, time=time_filter)
         tws_fills = ib.reqExecutions(ef)
         ib.disconnect()
-    except Exception as e:
+    except Exception as _e:  # noqa: F841
         try:
             ib.disconnect()
         except Exception:
@@ -107,7 +120,12 @@ def _main() -> int:
     tws_map: dict[tuple[str, str], list] = {}
     for fill in tws_fills:
         try:
-            sym = (getattr(fill.execution, "symbol", None) or getattr(fill, "contract", None) and getattr(fill.contract, "symbol", None) or "").strip()
+            sym = (
+                getattr(fill.execution, "symbol", None)
+                or getattr(fill, "contract", None)
+                and getattr(fill.contract, "symbol", None)
+                or ""
+            ).strip()
             side = _norm_side(getattr(fill.execution, "side", None) or "")
             if not sym or not side:
                 continue
@@ -129,8 +147,16 @@ def _main() -> int:
             continue
         fill = fills_list.pop(0)
         try:
-            shares = int(getattr(fill.execution, "shares", 0) or getattr(fill.execution, "cumQty", 0) or 0)
-            avg_price = float(getattr(fill.execution, "avgPrice", 0) or getattr(fill.execution, "price", 0) or 0)
+            shares = int(
+                getattr(fill.execution, "shares", 0)
+                or getattr(fill.execution, "cumQty", 0)
+                or 0
+            )
+            avg_price = float(
+                getattr(fill.execution, "avgPrice", 0)
+                or getattr(fill.execution, "price", 0)
+                or 0
+            )
         except (TypeError, ValueError, AttributeError):
             continue
         qty_req = int(r.get("qty_requested") or 0)
@@ -152,7 +178,10 @@ def _main() -> int:
         return 0
 
     still_pending = len(pending_idxs) - synced
-    print(f"Synced {synced} fill(s) from TWS. {still_pending} record(s) still pending.", flush=True)
+    print(
+        f"Synced {synced} fill(s) from TWS. {still_pending} record(s) still pending.",
+        flush=True,
+    )
     return 0
 
 

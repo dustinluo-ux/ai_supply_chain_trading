@@ -7,6 +7,7 @@ and news JSON article counts. Outputs a table and summary. Never fatal (exit 0).
 Usage:
   python scripts/check_data_integrity.py
 """
+
 from __future__ import annotations
 
 import json
@@ -104,6 +105,7 @@ def main() -> int:
     try:
         from rich.console import Console
         from rich.table import Table
+
         console = Console()
         table = Table(title="Data Integrity")
         table.add_column("Ticker")
@@ -117,7 +119,10 @@ def main() -> int:
     except ImportError:
         sep = "-" * 70
         print(sep, flush=True)
-        print(f"{'Ticker':<8} {'Pillar':<10} {'Price_Start_Date':<16} {'News_Article_Count':>18}  Gaps_Detected", flush=True)
+        print(
+            f"{'Ticker':<8} {'Pillar':<10} {'Price_Start_Date':<16} {'News_Article_Count':>18}  Gaps_Detected",
+            flush=True,
+        )
         print(sep, flush=True)
         for r in rows:
             print(f"{r[0]:<8} {r[1]:<10} {r[2]:<16} {r[3]:>18}  {r[4]}", flush=True)

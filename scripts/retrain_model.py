@@ -6,6 +6,7 @@ Usage:
   python scripts/retrain_model.py --skip-tournament --track A
   python scripts/retrain_model.py --train-end 2025-06-01 --test-months 6
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,13 +29,20 @@ IC_MONITOR_PATH = ROOT / "outputs" / "ic_monitor.json"
 def _load_news_signals():
     """Load EODHD news parquet for training; return {} if not found."""
     from src.core.config import NEWS_DIR
+
     eodhd_path = Path(NEWS_DIR) / "eodhd_global_backfill.parquet"
     if not eodhd_path.exists():
         return {}
     import pandas as pd
+
     df = pd.read_parquet(eodhd_path, engine="fastparquet")
     news_signals = {}
-    if not df.empty and "Ticker" in df.columns and "Date" in df.columns and "Sentiment" in df.columns:
+    if (
+        not df.empty
+        and "Ticker" in df.columns
+        and "Date" in df.columns
+        and "Sentiment" in df.columns
+    ):
         for ticker, grp in df.groupby("Ticker"):
             by_date = grp.groupby("Date")["Sentiment"].mean()
             news_signals[ticker] = {
@@ -45,14 +53,46 @@ def _load_news_signals():
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Walk-forward retrain: patch dates, train, gate by IC, update config and ic_monitor.")
-    parser.add_argument("--train-start", type=str, default="2022-01-01", help="Training start date")
-    parser.add_argument("--train-end", type=str, default=None, help="Training end date (default: today minus 90 days)")
-    parser.add_argument("--test-months", type=int, default=6, help="Test window length in months after train_end")
-    parser.add_argument("--skip-tournament", action="store_true", help="Use feature_names from config, skip tournament")
-    parser.add_argument("--track", type=str, choices=["A", "B"], default="A", help="Track to update (A=absolute, B=residual)")
-    parser.add_argument("--no-residual", action="store_true", help="Override residual_target to False (absolute target); track B is residual unless this is set")
-    parser.add_argument("--residual", action="store_true", help="Override residual_target to True for track A; track B is always residual")
+    parser = argparse.ArgumentParser(
+        description="Walk-forward retrain: patch dates, train, gate by IC, update config and ic_monitor."
+    )
+    parser.add_argument(
+        "--train-start", type=str, default="2022-01-01", help="Training start date"
+    )
+    parser.add_argument(
+        "--train-end",
+        type=str,
+        default=None,
+        help="Training end date (default: today minus 90 days)",
+    )
+    parser.add_argument(
+        "--test-months",
+        type=int,
+        default=6,
+        help="Test window length in months after train_end",
+    )
+    parser.add_argument(
+        "--skip-tournament",
+        action="store_true",
+        help="Use feature_names from config, skip tournament",
+    )
+    parser.add_argument(
+        "--track",
+        type=str,
+        choices=["A", "B"],
+        default="A",
+        help="Track to update (A=absolute, B=residual)",
+    )
+    parser.add_argument(
+        "--no-residual",
+        action="store_true",
+        help="Override residual_target to False (absolute target); track B is residual unless this is set",
+    )
+    parser.add_argument(
+        "--residual",
+        action="store_true",
+        help="Override residual_target to True for track A; track B is always residual",
+    )
     args = parser.parse_args()
 
     today = datetime.now(timezone.utc).date()
@@ -70,7 +110,9 @@ def main() -> int:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     orig_training = cfg.get("training", {}).copy()
-    residual_target = False if args.no_residual else (args.residual or args.track == "B")
+    residual_target = (
+        False if args.no_residual else (args.residual or args.track == "B")
+    )
     cfg["training"] = {
         **orig_training,
         "train_start": args.train_start,
@@ -80,8 +122,12 @@ def main() -> int:
         "residual_target": residual_target,
     }
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, dir=str(ROOT)) as tmp:
-        yaml.dump(cfg, tmp, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, dir=str(ROOT)
+    ) as tmp:
+        yaml.dump(
+            cfg, tmp, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
         temp_config_path = tmp.name
     try:
         from src.utils.config_manager import get_config
@@ -99,15 +145,23 @@ def main() -> int:
 
         news_signals = _load_news_signals()
         if news_signals:
-            print(f"[INFO] Loaded EODHD news: {sum(len(v) for v in news_signals.values())} ticker-days.", flush=True)
+            print(
+                f"[INFO] Loaded EODHD news: {sum(len(v) for v in news_signals.values())} ticker-days.",
+                flush=True,
+            )
         else:
-            print("[INFO] No EODHD news parquet; training with neutral news defaults.", flush=True)
+            print(
+                "[INFO] No EODHD news parquet; training with neutral news defaults.",
+                flush=True,
+            )
 
         config_path_str = str(Path(temp_config_path))
         with open(config_path_str) as f:
-            model_cfg = yaml.safe_load(f)
+            _model_cfg = yaml.safe_load(f)  # noqa: F841
         if not args.skip_tournament:
-            selector = FeatureSelector(ic_threshold=0.005, corr_threshold=0.70, n_keep=5)
+            selector = FeatureSelector(
+                ic_threshold=0.005, corr_threshold=0.70, n_keep=5
+            )
             selected = selector.tournament(
                 prices_dict,
                 news_signals,
@@ -117,13 +171,24 @@ def main() -> int:
             )
             print(f"[Factory] Selected features: {selected}", flush=True)
         else:
-            print(f"[retrain] --skip-tournament: using feature_names from config", flush=True)
+            print(
+                f"[retrain] --skip-tournament: using feature_names from config",
+                flush=True,
+            )
 
         pipeline = ModelTrainingPipeline(config_path_str)
         pipeline.config["training"]["save_models"] = False
-        model = pipeline.train(prices_dict, technical_signals=None, news_signals=news_signals)
+        model = pipeline.train(
+            prices_dict, technical_signals=None, news_signals=news_signals
+        )
 
-        ic, _ = pipeline.evaluate_ic(model, prices_dict, test_start=test_start, test_end=test_end, news_signals=news_signals)
+        ic, _ = pipeline.evaluate_ic(
+            model,
+            prices_dict,
+            test_start=test_start,
+            test_end=test_end,
+            news_signals=news_signals,
+        )
 
         passed = ic >= IC_GATE
         save_path = None
@@ -142,8 +207,17 @@ def main() -> int:
                 main_cfg["tracks"][args.track] = {}
             main_cfg["tracks"][args.track]["model_path"] = str(save_path.resolve())
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(main_cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            print(f"[Config] Updated tracks.{args.track}.model_path to {save_path}", flush=True)
+                yaml.dump(
+                    main_cfg,
+                    f,
+                    default_flow_style=False,
+                    sort_keys=False,
+                    allow_unicode=True,
+                )
+            print(
+                f"[Config] Updated tracks.{args.track}.model_path to {save_path}",
+                flush=True,
+            )
         else:
             print(f"[FAIL] IC={ic:.4f} below gate - keeping existing model", flush=True)
 

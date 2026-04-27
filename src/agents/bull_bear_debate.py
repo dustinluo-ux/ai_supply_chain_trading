@@ -3,6 +3,7 @@ Deterministic advisory-only Bull vs Bear debate scorer.
 
 This module enriches audit trails and never raises from public entry points.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -112,7 +113,9 @@ def run_debate(weights: dict[str, float], as_of_date: str) -> DebateResult:
         per_ticker: dict[str, TickerDebate] = {
             ticker: _score_ticker(ticker) for ticker in screened
         }
-        overall_bias = fmean([d.net_score for d in per_ticker.values()]) if per_ticker else 0.0
+        overall_bias = (
+            fmean([d.net_score for d in per_ticker.values()]) if per_ticker else 0.0
+        )
         return DebateResult(
             per_ticker=per_ticker,
             overall_bias=float(overall_bias),

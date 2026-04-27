@@ -10,15 +10,24 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 import sys
+
 sys.path.insert(0, str(ROOT))
 
-_BENCHMARKS_DIR = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / "benchmarks"
+_BENCHMARKS_DIR = (
+    Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
+    / "benchmarks"
+)
 VIX_PATH = _BENCHMARKS_DIR / "VIX.csv"
+
 
 def ensure_vix_csv():
     if not VIX_PATH.exists():
         import subprocess
-        subprocess.run([sys.executable, str(ROOT / "scripts" / "download_vix.py")], check=True)
+
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "download_vix.py")], check=True
+        )
+
 
 from src.hedging.hedging_strategy import TailHedge
 
@@ -82,12 +91,26 @@ def _eff_ratio(total_return: float, max_dd: float) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Tail-Hedge Overlay Backtest")
-    parser.add_argument("--expiry-days", type=int, default=45, help="Put expiry in days (default: 45)")
-    parser.add_argument("--target-delta", type=float, default=0.20, help="Put delta target (default: 0.20 = 20-delta, use 0.10 for 10-delta)")
-    parser.add_argument("--roll-weeks", type=int, default=ROLL_WEEKS, help="Roll frequency in weeks (default: 4)")
+    parser.add_argument(
+        "--expiry-days", type=int, default=45, help="Put expiry in days (default: 45)"
+    )
+    parser.add_argument(
+        "--target-delta",
+        type=float,
+        default=0.20,
+        help="Put delta target (default: 0.20 = 20-delta, use 0.10 for 10-delta)",
+    )
+    parser.add_argument(
+        "--roll-weeks",
+        type=int,
+        default=ROLL_WEEKS,
+        help="Roll frequency in weeks (default: 4)",
+    )
     args = parser.parse_args()
 
-    print(f"Config: expiry={args.expiry_days}d | delta={args.target_delta:.2f} | roll={args.roll_weeks}w")
+    print(
+        f"Config: expiry={args.expiry_days}d | delta={args.target_delta:.2f} | roll={args.roll_weeks}w"
+    )
 
     if not VIX_PATH.exists():
         ensure_vix_csv()
@@ -96,10 +119,13 @@ def main() -> int:
     vix_close = _load_benchmark_close(VIX_PATH)
 
     weekly_returns = _load_weekly_returns()
-    mondays = pd.date_range(pd.Timestamp("2022-01-03"), periods=len(weekly_returns), freq="W-MON")
+    mondays = pd.date_range(
+        pd.Timestamp("2022-01-03"), periods=len(weekly_returns), freq="W-MON"
+    )
 
     hedge = TailHedge(
-        smh_close, vix_close,
+        smh_close,
+        vix_close,
         portfolio_usd=PORTFOLIO_USD,
         roll_weeks=args.roll_weeks,
         expiry_days=args.expiry_days,
@@ -119,10 +145,14 @@ def main() -> int:
         smh_px = float(smh_close.asof(d))
         vix_px = float(vix_close.asof(d))
         step = hedge.step(d, smh_px, vix_px)
-        net_r = float(long_r) - float(step["hedge_cost_pct"]) + float(step["hedge_payoff_pct"])
+        net_r = (
+            float(long_r)
+            - float(step["hedge_cost_pct"])
+            + float(step["hedge_payoff_pct"])
+        )
 
-        long_equity *= (1.0 + float(long_r))
-        hedged_equity *= (1.0 + net_r)
+        long_equity *= 1.0 + float(long_r)
+        hedged_equity *= 1.0 + net_r
 
         total_cost_pct += float(step["hedge_cost_pct"])
         total_payoff_pct += float(step["hedge_payoff_pct"])
@@ -150,7 +180,11 @@ def main() -> int:
         )
 
     out_df = pd.DataFrame(rows)
-    out_path = ROOT / "outputs" / f"tail_hedge_backtest_{args.expiry_days}d_{int(args.target_delta*100)}delta.csv"
+    out_path = (
+        ROOT
+        / "outputs"
+        / f"tail_hedge_backtest_{args.expiry_days}d_{int(args.target_delta*100)}delta.csv"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(out_path, index=False)
 
@@ -168,18 +202,26 @@ def main() -> int:
     long_eff = _eff_ratio(long_total, long_mdd)
     hedged_eff = _eff_ratio(hedged_total, hedged_mdd)
 
-    avg_hedge_cost_yr = float(np.mean(out_df["hedge_cost_pct"]) * 52.0) if len(out_df) else 0.0
+    avg_hedge_cost_yr = (
+        float(np.mean(out_df["hedge_cost_pct"]) * 52.0) if len(out_df) else 0.0
+    )
     avg_payoff_event = float(total_payoff_pct / roll_events) if roll_events > 0 else 0.0
 
     print("\n=== TAIL-HEDGE OVERLAY RESULTS (2022-2024) ===")
     print("                      Long-Only    Hedged-Long")
-    print(f"Total Return          {long_total*100:6.1f}%       {hedged_total*100:6.1f}%")
+    print(
+        f"Total Return          {long_total*100:6.1f}%       {hedged_total*100:6.1f}%"
+    )
     print(f"Max Drawdown          {long_mdd*100:6.1f}%       {hedged_mdd*100:6.1f}%")
     print(f"Sharpe                {long_sharpe:6.2f}         {hedged_sharpe:6.2f}")
     print(f"Efficiency Ratio      {long_eff:6.2f}         {hedged_eff:6.2f}")
     print("")
     print(f"Roll events:          {roll_events:2d}")
-    warn = " [WARNING] Theta bleed exceeds 5%/yr — consider 15-Delta puts or extending roll_weeks" if avg_hedge_cost_yr > 0.05 else ""
+    warn = (
+        " [WARNING] Theta bleed exceeds 5%/yr — consider 15-Delta puts or extending roll_weeks"
+        if avg_hedge_cost_yr > 0.05
+        else ""
+    )
     print(f"Avg hedge cost/yr:    {avg_hedge_cost_yr*100:.2f}%{warn}")
     print(f"Avg payoff/event:     {avg_payoff_event*100:.2f}%")
     print(f"Base contracts (1x):  {contracts_1x_weeks} weeks")
@@ -195,4 +237,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

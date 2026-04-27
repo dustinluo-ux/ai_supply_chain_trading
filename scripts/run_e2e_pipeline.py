@@ -3,6 +3,7 @@ E2E pipeline: data updates -> factory (rolling window) -> OOS backtest -> mock e
 
 Single entry point; does not modify other scripts. See docs/INDEX.md for canonical docs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,25 +67,68 @@ def _json_subset_from_backtest(result: dict) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="End-to-end: data -> factory -> OOS backtest -> execution summary.")
-    parser.add_argument("--skip-data", action="store_true", help="Skip Stage 1 (price + news updates).")
-    parser.add_argument("--skip-model", action="store_true", help="Skip Stage 2 (use cached factory winner).")
-    parser.add_argument("--force-retrain", action="store_true", help="Stage 2: delete factory cache before factory run.")
-    parser.add_argument("--skip-backtest", action="store_true", help="Skip Stage 3 OOS backtest.")
-    parser.add_argument("--tickers", type=str, default=None, help="Comma-separated; default: data_config watchlist.")
+    parser = argparse.ArgumentParser(
+        description="End-to-end: data -> factory -> OOS backtest -> execution summary."
+    )
+    parser.add_argument(
+        "--skip-data", action="store_true", help="Skip Stage 1 (price + news updates)."
+    )
+    parser.add_argument(
+        "--skip-model",
+        action="store_true",
+        help="Skip Stage 2 (use cached factory winner).",
+    )
+    parser.add_argument(
+        "--force-retrain",
+        action="store_true",
+        help="Stage 2: delete factory cache before factory run.",
+    )
+    parser.add_argument(
+        "--skip-backtest", action="store_true", help="Skip Stage 3 OOS backtest."
+    )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated; default: data_config watchlist.",
+    )
     parser.add_argument("--top-n", type=int, default=5, dest="top_n")
     parser.add_argument("--score-floor", type=float, default=0.0, dest="score_floor")
     parser.add_argument("--news-weight", type=float, default=None, dest="news_weight")
-    parser.add_argument("--ml-blend-weight", type=float, default=None, dest="ml_blend_weight")
-    parser.add_argument("--master-score-weights", type=str, default=None, dest="master_score_weights")
-    parser.add_argument("--no-llm", action="store_true", default=False, dest="no_llm",
-                        help="Stage 3: disable LLM signal (always True in pipeline for speed).")
-    parser.add_argument("--track", type=str, default="A", choices=["A", "D"],
-                        help="Strategy track: A = ML blend, D = 130/30 long/short.")
-    parser.add_argument("--no-hedge", action="store_true", default=False, dest="no_hedge",
-                        help="Stage 4: disable SMH hedge.")
-    parser.add_argument("--skip-gate", action="store_true", default=False, dest="skip_gate",
-                        help="Stage 3.5: skip Skeptic Gate (use for optimizer/backtest-only runs).")
+    parser.add_argument(
+        "--ml-blend-weight", type=float, default=None, dest="ml_blend_weight"
+    )
+    parser.add_argument(
+        "--master-score-weights", type=str, default=None, dest="master_score_weights"
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        default=False,
+        dest="no_llm",
+        help="Stage 3: disable LLM signal (always True in pipeline for speed).",
+    )
+    parser.add_argument(
+        "--track",
+        type=str,
+        default="A",
+        choices=["A", "D"],
+        help="Strategy track: A = ML blend, D = 130/30 long/short.",
+    )
+    parser.add_argument(
+        "--no-hedge",
+        action="store_true",
+        default=False,
+        dest="no_hedge",
+        help="Stage 4: disable SMH hedge.",
+    )
+    parser.add_argument(
+        "--skip-gate",
+        action="store_true",
+        default=False,
+        dest="skip_gate",
+        help="Stage 3.5: skip Skeptic Gate (use for optimizer/backtest-only runs).",
+    )
     parser.add_argument(
         "--auto-rebalance",
         action="store_true",
@@ -92,8 +136,13 @@ def main() -> int:
         dest="auto_rebalance",
         help="Stage 5.5: run weekly rebalance dry-run after successful Stage 4 (only when gate is active).",
     )
-    parser.add_argument("--ibkr-port", type=int, default=7497, dest="ibkr_port",
-                        help="Stage 4: IBKR TWS port (default 7497 paper, 7496 live).")
+    parser.add_argument(
+        "--ibkr-port",
+        type=int,
+        default=7497,
+        dest="ibkr_port",
+        help="Stage 4: IBKR TWS port (default 7497 paper, 7496 live).",
+    )
     parser.add_argument(
         "--dry-run",
         default=True,
@@ -114,6 +163,7 @@ def main() -> int:
         return 1
     tickers_str = ",".join(ticker_list)
     from src.core.state import new_pipeline_state
+
     _pipeline_state = new_pipeline_state(tickers_requested=ticker_list)
 
     # --- Stage 1 ---
@@ -166,7 +216,11 @@ def main() -> int:
         finally:
             sys.argv = _saved
         if _fc != 0:
-            print(f"WARNING: run_factory.main() exit {_fc}; continuing.", file=sys.stderr, flush=True)
+            print(
+                f"WARNING: run_factory.main() exit {_fc}; continuing.",
+                file=sys.stderr,
+                flush=True,
+            )
     else:
         print("[STAGE 2] Using cached factory winner.", flush=True)
 
@@ -194,13 +248,15 @@ def main() -> int:
             if _dc_path.exists():
                 with open(_dc_path, encoding="utf-8") as _f:
                     _dc = yaml.safe_load(_f) or {}
-                _ds = (_dc.get("data_sources") or {})
+                _ds = _dc.get("data_sources") or {}
                 if _ds.get("data_dir"):
                     _data_dir = Path(_ds["data_dir"])
             import importlib.util
 
             _bt_path = ROOT / "scripts" / "backtest_technical_library.py"
-            _spec = importlib.util.spec_from_file_location("backtest_technical_library", _bt_path)
+            _spec = importlib.util.spec_from_file_location(
+                "backtest_technical_library", _bt_path
+            )
             if _spec is None or _spec.loader is None:
                 print("ERROR: Could not load backtest_technical_library.", flush=True)
             else:
@@ -218,16 +274,26 @@ def main() -> int:
                                 if isinstance(_parsed, dict):
                                     _category_override = _parsed
                                 else:
-                                    print("WARNING: --master-score-weights is not a JSON object; skipping.", flush=True)
+                                    print(
+                                        "WARNING: --master-score-weights is not a JSON object; skipping.",
+                                        flush=True,
+                                    )
                             except Exception as _jerr:
-                                print(f"WARNING: Could not parse --master-score-weights: {_jerr}", flush=True)
+                                print(
+                                    f"WARNING: Could not parse --master-score-weights: {_jerr}",
+                                    flush=True,
+                                )
                         _bt_kwargs: dict = {}
                         if args.news_weight is not None:
                             _bt_kwargs["news_weight_fixed"] = float(args.news_weight)
                         if args.ml_blend_weight is not None:
-                            _bt_kwargs["ml_blend_weight_override"] = float(args.ml_blend_weight)
+                            _bt_kwargs["ml_blend_weight_override"] = float(
+                                args.ml_blend_weight
+                            )
                         if _category_override is not None:
-                            _bt_kwargs["category_weights_override_param"] = _category_override
+                            _bt_kwargs["category_weights_override_param"] = (
+                                _category_override
+                            )
                         result = run_backtest_master_score(
                             prices_dict,
                             data_dir=_data_dir,
@@ -276,7 +342,10 @@ def main() -> int:
                             if oos_sharpe is not None:
                                 oos_sharpe = float(oos_sharpe)
                             oos_cagr = disk.get("cagr", disk.get("annualized_return"))
-                            if oos_cagr is None and disk.get("total_return") is not None:
+                            if (
+                                oos_cagr is None
+                                and disk.get("total_return") is not None
+                            ):
                                 import pandas as pd
 
                                 d0 = pd.to_datetime(oos_start)
@@ -323,7 +392,10 @@ def main() -> int:
             _wmap = _lw.get("weights") if isinstance(_lw, dict) else {}
             _gate_weights = {k: float(v) for k, v in _wmap.items()}
         except Exception as _we:
-            print(f"WARNING: Could not read last_valid_weights.json for gate: {_we}", flush=True)
+            print(
+                f"WARNING: Could not read last_valid_weights.json for gate: {_we}",
+                flush=True,
+            )
     if not _gate_weights:
         _n = max(len(ticker_list), 1)
         _gate_weights = {t: 1.0 / _n for t in ticker_list}
@@ -335,7 +407,9 @@ def main() -> int:
         from src.agents.bull_bear_debate import run_debate
         from src.agents.damodaran_anchor import anchor_ticker as _anchor_ticker
         from src.agents.taleb_auditor import audit_ticker as _audit_ticker
-        from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
+        from src.core.target_weight_pipeline import (
+            compute_target_weights as _compute_target_weights,
+        )
         from src.data.csv_provider import load_data_config, load_prices
 
         _agent_audit_path = ROOT / "outputs" / "agent_audit.json"
@@ -372,7 +446,11 @@ def main() -> int:
                 ),
             }
 
-            _mos_disp = "N/A" if _dmr_res.margin_of_safety is None else f"{_dmr_res.margin_of_safety:+.0%}"
+            _mos_disp = (
+                "N/A"
+                if _dmr_res.margin_of_safety is None
+                else f"{_dmr_res.margin_of_safety:+.0%}"
+            )
             _taleb_disp = f"{_taleb_res.verdict}({_taleb_res.normalized_score:.2f})"
             print(
                 f"[STAGE 3.6] {_u}: Taleb={_taleb_disp} Damodaran={_dmr_res.signal}(MOS={_mos_disp})",
@@ -419,11 +497,28 @@ def main() -> int:
                     use_ml_override=None,
                     score_floor=args.score_floor,
                 )
-                _aux_36 = _tw_out[1] if isinstance(_tw_out, tuple) and len(_tw_out) > 1 and isinstance(_tw_out[1], dict) else {}
-                _existing = _aux_36.get("existing_alpha") if isinstance(_aux_36, dict) else {}
-                _layered = _aux_36.get("three_layer_alpha") if isinstance(_aux_36, dict) else {}
+                _aux_36 = (
+                    _tw_out[1]
+                    if isinstance(_tw_out, tuple)
+                    and len(_tw_out) > 1
+                    and isinstance(_tw_out[1], dict)
+                    else {}
+                )
+                _existing = (
+                    _aux_36.get("existing_alpha") if isinstance(_aux_36, dict) else {}
+                )
+                _layered = (
+                    _aux_36.get("three_layer_alpha")
+                    if isinstance(_aux_36, dict)
+                    else {}
+                )
                 if isinstance(_layered, dict) and _layered:
-                    _existing = {str(k).upper(): v for k, v in (_existing.items() if isinstance(_existing, dict) else [])}
+                    _existing = {
+                        str(k).upper(): v
+                        for k, v in (
+                            _existing.items() if isinstance(_existing, dict) else []
+                        )
+                    }
                     _layered = {str(k).upper(): v for k, v in _layered.items()}
                     _tick_union = sorted(set(_existing.keys()) | set(_layered.keys()))
 
@@ -440,7 +535,11 @@ def main() -> int:
                     for _t in _tick_union:
                         _ev = _clean_num(_existing.get(_t))
                         _lv = _clean_num(_layered.get(_t))
-                        _delta = (_lv - _ev) if (_ev is not None and _lv is not None) else None
+                        _delta = (
+                            (_lv - _ev)
+                            if (_ev is not None and _lv is not None)
+                            else None
+                        )
                         three_layer_offset[_t] = {
                             "existing_alpha": _ev,
                             "three_layer_alpha": _lv,
@@ -448,7 +547,11 @@ def main() -> int:
                         }
         except Exception as _tlo_err:
             three_layer_offset = None
-            print(f"WARNING: Stage 3.6 three_layer_offset skipped: {_tlo_err}", file=sys.stderr, flush=True)
+            print(
+                f"WARNING: Stage 3.6 three_layer_offset skipped: {_tlo_err}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         _tmp_audit = _agent_audit_path.with_name(_agent_audit_path.name + ".tmp")
         with open(_tmp_audit, "w", encoding="utf-8") as _aj:
@@ -464,7 +567,11 @@ def main() -> int:
             )
         _tmp_audit.replace(_agent_audit_path)
     except Exception as _e36:
-        print(f"WARNING: Stage 3.6 agent audit skipped: {_e36}", file=sys.stderr, flush=True)
+        print(
+            f"WARNING: Stage 3.6 agent audit skipped: {_e36}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     # --- Stage 3.5: Skeptic Gate ---
     from src.agents.skeptic_gate import run_gate as _run_gate
@@ -473,7 +580,10 @@ def main() -> int:
         print("[STAGE 3.5] Skeptic Gate: SKIPPED (--skip-gate)", flush=True)
     else:
         _gate_result = _run_gate(_gate_weights, ticker_list)
-        print(f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}", flush=True)
+        print(
+            f"[STAGE 3.5] Skeptic Gate: {_gate_result.verdict} - {_gate_result.reason}",
+            flush=True,
+        )
         if _gate_result.verdict == "FAIL":
             print(
                 f"ERROR: Skeptic Gate FAIL. Fatal: {_gate_result.fatal_tickers}.",
@@ -498,7 +608,9 @@ def main() -> int:
         str(args.ibkr_port),
     ]
     if args.dry_run:
-        _argv.append("--reset-stop-loss")  # mock runs are independent; never inherit prior peak NAV
+        _argv.append(
+            "--reset-stop-loss"
+        )  # mock runs are independent; never inherit prior peak NAV
     if args.track == "D":
         _argv.extend(["--track", "D"])
     if args.no_hedge:
@@ -595,11 +707,17 @@ def main() -> int:
 
     try:
         _state_path = ROOT / "outputs" / "pipeline_state.json"
-        _pipeline_state.finished_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        _pipeline_state.finished_at = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        )
         _pipeline_state.save(_state_path)
         print(f"[PIPELINE] State written: {_state_path}", flush=True)
     except Exception as _se:
-        print(f"WARNING: Could not save pipeline_state.json: {_se}", file=sys.stderr, flush=True)
+        print(
+            f"WARNING: Could not save pipeline_state.json: {_se}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     return exit_code
 

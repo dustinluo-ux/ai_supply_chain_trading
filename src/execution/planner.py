@@ -1,14 +1,23 @@
 """
 ExecutionPlanner: reconcile Alpha Lane TargetPortfolio with Risk Lane constraints.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 
-from src.risk.types import FinalExecutionPlan, OverlayOrder, RiskConstraints, TargetPortfolio
+from src.risk.types import (
+    FinalExecutionPlan,
+    OptionOrder,
+    OverlayOrder,
+    RiskConstraints,
+    TargetPortfolio,
+)
 
 
 def _compute_portfolio_beta(
@@ -50,7 +59,9 @@ def _compute_portfolio_beta(
             px.index = pd.to_datetime(px.index).normalize()
             px = px.sort_index().astype(float)
             r_t = px.pct_change().dropna()
-            combined = pd.concat([r_t.rename("t"), spy_ret.rename("s")], axis=1, join="inner").dropna()
+            combined = pd.concat(
+                [r_t.rename("t"), spy_ret.rename("s")], axis=1, join="inner"
+            ).dropna()
             if len(combined) < lookback_days:
                 window = combined
             else:
@@ -80,6 +91,47 @@ class ExecutionPlanner:
     MNQ_MULTIPLIER = Decimal("2")  # MNQ = $2 per point
     MES_MULTIPLIER = Decimal("5")  # MES = $5 per point
 
+    def _load_options_config(self) -> dict:
+        """
+        Load options hedge config with precedence:
+        1) config/instruments.yaml allocation_limits.max_options_pct
+        2) config/trading_config.yaml options_hedge.max_options_pct
+        Defaults: options_hedge_enabled=False, max_options_pct=0.10
+        """
+        root = Path(__file__).resolve().parents[2]
+        cfg = {"options_hedge_enabled": False, "max_options_pct": 0.10}
+        trading_path = root / "config" / "trading_config.yaml"
+        if trading_path.exists():
+            try:
+                with open(trading_path, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                block = data.get("options_hedge") or {}
+                if "options_hedge_enabled" in block:
+                    cfg["options_hedge_enabled"] = bool(
+                        block.get("options_hedge_enabled")
+                    )
+                if (
+                    "max_options_pct" in block
+                    and block.get("max_options_pct") is not None
+                ):
+                    cfg["max_options_pct"] = float(block.get("max_options_pct"))
+            except Exception:
+                pass
+        instruments_path = root / "config" / "instruments.yaml"
+        if instruments_path.exists():
+            try:
+                with open(instruments_path, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                alloc = data.get("allocation_limits") or {}
+                if (
+                    "max_options_pct" in alloc
+                    and alloc.get("max_options_pct") is not None
+                ):
+                    cfg["max_options_pct"] = float(alloc.get("max_options_pct"))
+            except Exception:
+                pass
+        return cfg
+
     def reconcile(
         self,
         target: TargetPortfolio,
@@ -98,6 +150,7 @@ class ExecutionPlanner:
                 as_of=target.as_of,
                 long_orders=long_orders,
                 overlay_orders=[],
+                option_orders=[],
                 audit_log=audit_log,
             )
 
@@ -105,7 +158,9 @@ class ExecutionPlanner:
         scaled: dict[str, Decimal] = {t: (w * ps) for t, w in target.weights.items()}
 
         if prices_dict is not None and spy_series is not None:
-            portfolio_beta = _compute_portfolio_beta(target.weights, prices_dict, spy_series)
+            portfolio_beta = _compute_portfolio_beta(
+                target.weights, prices_dict, spy_series
+            )
             gap = max(Decimal("0"), portfolio_beta - constraints.beta_cap)
         else:
             gap = max(Decimal("0"), Decimal("1") - constraints.beta_cap)
@@ -129,11 +184,35 @@ class ExecutionPlanner:
                         reason=f"beta_gap={gap_s} × nav={nav_s}",
                     )
                 )
-                audit_log.append(f"beta_gap={gap_s}: shorting {contracts}× MNQ @ {nq_s}")
+                audit_log.append(
+                    f"beta_gap={gap_s}: shorting {contracts}× MNQ @ {nq_s}"
+                )
+
+        option_orders: list[OptionOrder] = []
+        options_cfg = self._load_options_config()
+        if bool(options_cfg.get("options_hedge_enabled", False)):
+            scale_shortfall = Decimal("1") - constraints.position_scale
+            if scale_shortfall > Decimal("0"):
+                max_options_pct = Decimal(str(options_cfg.get("max_options_pct", 0.10)))
+                hedge_pct = min(scale_shortfall, max_options_pct)
+                notional = nav * hedge_pct
+                option_orders.append(
+                    OptionOrder(
+                        symbol="SMH",
+                        right="P",
+                        notional_usd=notional,
+                        contracts=0,
+                        reason=f"position_scale={constraints.position_scale} → put hedge {hedge_pct:.2%} NAV",
+                    )
+                )
+                audit_log.append(
+                    f"options_hedge: scale_shortfall={scale_shortfall} → SMH put notional={notional:.0f}"
+                )
 
         return FinalExecutionPlan(
             as_of=target.as_of,
             long_orders=scaled,
             overlay_orders=overlay_orders,
+            option_orders=option_orders,
             audit_log=audit_log,
         )

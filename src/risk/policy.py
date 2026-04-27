@@ -4,6 +4,7 @@ Two-Lane Risk Lane: consolidates exposure-control inputs into RiskConstraints.
 Reads drawdown tracker, SPY/VIX benchmarks, strategy_params risk_overlay, and
 optional IBKR account summary. Does not modify order flow or risk_manager.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,12 +54,17 @@ def _load_risk_overlay_config() -> dict[str, Any]:
                     out[k] = float(ro[k])
         return out
     except Exception as e:
-        logger.warning("[RiskPolicy] Could not read strategy_params risk_overlay: %s", e)
+        logger.warning(
+            "[RiskPolicy] Could not read strategy_params risk_overlay: %s", e
+        )
         return defaults
 
 
 def _benchmarks_dir() -> Path:
-    return Path(os.environ.get("DATA_DIR", "C:/ai_supply_chain_trading/trading_data")) / "benchmarks"
+    return (
+        Path(os.environ.get("DATA_DIR", "C:/ai_supply_chain_trading/trading_data"))
+        / "benchmarks"
+    )
 
 
 def _load_benchmark_close(path: Path) -> pd.Series | None:
@@ -151,10 +157,14 @@ class RiskPolicy:
                     else float("nan")
                 )
                 if pd.isna(spy_c) or pd.isna(spy_sma):
-                    audit_log.append("SPY data insufficient at as_of: skipping regime gate")
+                    audit_log.append(
+                        "SPY data insufficient at as_of: skipping regime gate"
+                    )
                 elif float(spy_c) < float(spy_sma):
                     position_scale *= Decimal("0.0")
-                    audit_log.append(f"SPY < SMA{sma_w}: regime=BEAR → position_scale=0.0")
+                    audit_log.append(
+                        f"SPY < SMA{sma_w}: regime=BEAR → position_scale=0.0"
+                    )
             except Exception as e:
                 logger.warning("[RiskPolicy] SPY regime gate failed: %s", e)
                 audit_log.append("SPY regime gate error: skipped")

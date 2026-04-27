@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/Users/dusro/OneDrive/Programming/ai_supply_chain_trading"
+      ],
+      "description": "Scoped filesystem access for the ai_supply_chain_trading workspace only. Prevents agents from writing outside the project boundary."
+    }
+  }
+}

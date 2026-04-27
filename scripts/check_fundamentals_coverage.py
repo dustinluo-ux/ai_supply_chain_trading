@@ -1,7 +1,9 @@
 import pandas as pd
 from pathlib import Path
 
-p = Path(r"C:\ai_supply_chain_trading\trading_data\fundamentals\quarterly_signals.parquet")
+p = Path(
+    r"C:\ai_supply_chain_trading\trading_data\fundamentals\quarterly_signals.parquet"
+)
 if not p.exists():
     print(f"NOT FOUND: {p.resolve()}")
 else:

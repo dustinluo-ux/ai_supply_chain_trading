@@ -5,6 +5,7 @@ Reads outputs/last_signal.json and price CSVs, computes 30-day vol, builds
 weights = score/vol normalized and capped at max_weight. Writes last_valid_weights.json
 and last_optimized_weights.json. Exit 0 on success, 1 if last_signal missing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,15 +19,40 @@ sys.path.insert(0, str(ROOT))
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(description="Volatility-Adjusted Alpha Tilt optimizer.")
-    parser.add_argument("--top-quantile", type=float, default=0.75, help="Quantile cutoff — e.g. 0.75 = top 25%% of scored tickers eligible")
-    parser.add_argument("--score-floor", type=float, default=0.50, help="Hard minimum score — no ticker with score <= floor is eligible (overridden by regime_status.json if present)")
-    parser.add_argument("--bear-score-floor", type=float, default=0.65, help="Score floor override when SPY is in BEAR regime (close < 200-SMA)")
-    parser.add_argument("--max-weight", type=float, default=0.25, help="Max weight per ticker (0-1)")
-    parser.add_argument("--vol-window", type=int, default=30, help="Rolling window for volatility (days)")
+    parser = argparse.ArgumentParser(
+        description="Volatility-Adjusted Alpha Tilt optimizer."
+    )
+    parser.add_argument(
+        "--top-quantile",
+        type=float,
+        default=0.75,
+        help="Quantile cutoff — e.g. 0.75 = top 25%% of scored tickers eligible",
+    )
+    parser.add_argument(
+        "--score-floor",
+        type=float,
+        default=0.50,
+        help="Hard minimum score — no ticker with score <= floor is eligible (overridden by regime_status.json if present)",
+    )
+    parser.add_argument(
+        "--bear-score-floor",
+        type=float,
+        default=0.65,
+        help="Score floor override when SPY is in BEAR regime (close < 200-SMA)",
+    )
+    parser.add_argument(
+        "--max-weight", type=float, default=0.25, help="Max weight per ticker (0-1)"
+    )
+    parser.add_argument(
+        "--vol-window",
+        type=int,
+        default=30,
+        help="Rolling window for volatility (days)",
+    )
     args = parser.parse_args()
 
     from dotenv import load_dotenv
+
     load_dotenv(ROOT / ".env")
 
     # 1. ROOT and path already set at top
@@ -61,6 +87,7 @@ def _main() -> int:
 
     # 4. Load prices
     from src.data.csv_provider import load_data_config, load_prices
+
     data_cfg = load_data_config()
     data_dir = data_cfg["data_dir"]
     prices_dict = load_prices(data_dir, list(scores.keys()))
@@ -69,7 +96,6 @@ def _main() -> int:
         return 1
 
     # NAV fetch (update portfolio_state.json if present)
-    from pathlib import Path as _Path
     import json as _json
     from src.execution.ibkr_nav import fetch_nav
 
@@ -92,15 +118,22 @@ def _main() -> int:
                 ps = _json.loads(state_path.read_text())
                 nav = ps.get("last_nav")
                 if nav:
-                    print(f"[NAV] IBKR unavailable -- using last known NAV ${nav:,.2f}", flush=True)
+                    print(
+                        f"[NAV] IBKR unavailable -- using last known NAV ${nav:,.2f}",
+                        flush=True,
+                    )
             except Exception:
                 pass
         if nav is None:
-            print("[NAV] IBKR unavailable and no last_nav cached -- share counts will be skipped", flush=True)
+            print(
+                "[NAV] IBKR unavailable and no last_nav cached -- share counts will be skipped",
+                flush=True,
+            )
 
     # 5a. Regime detection — prefer regime_status.json (written by regime_monitor.py),
     # fall back to independent SPY 200-SMA check if not available or stale.
     import numpy as np
+
     regime = "UNKNOWN"
     score_floor = args.score_floor
 
@@ -110,6 +143,7 @@ def _main() -> int:
     if _regime_status_path.exists():
         try:
             import json as _json_r
+
             _rs = _json_r.loads(_regime_status_path.read_text(encoding="utf-8"))
             _floor_from_monitor = _rs.get("score_floor")
             _regime_from_monitor = _rs.get("regime", "UNKNOWN")
@@ -119,7 +153,10 @@ def _main() -> int:
                 if _regime_from_monitor == "EMERGENCY":
                     regime = "EMERGENCY"
                 _loaded_from_monitor = True
-                print(f"[REGIME] Read from regime_status.json: {regime}, score_floor={score_floor}", flush=True)
+                print(
+                    f"[REGIME] Read from regime_status.json: {regime}, score_floor={score_floor}",
+                    flush=True,
+                )
         except Exception:
             pass
 
@@ -138,16 +175,30 @@ def _main() -> int:
                     if spy_close < spy_sma200:
                         regime = "BEAR"
                         score_floor = args.bear_score_floor
-                        print(f"[REGIME] BEAR -- SPY {spy_close:.2f} < 200-SMA {spy_sma200:.2f} -- score_floor raised to {score_floor}", flush=True)
+                        print(
+                            f"[REGIME] BEAR -- SPY {spy_close:.2f} < 200-SMA {spy_sma200:.2f} -- score_floor raised to {score_floor}",
+                            flush=True,
+                        )
                     else:
                         regime = "BULL"
-                        print(f"[REGIME] BULL -- SPY {spy_close:.2f} >= 200-SMA {spy_sma200:.2f} -- score_floor={score_floor}", flush=True)
+                        print(
+                            f"[REGIME] BULL -- SPY {spy_close:.2f} >= 200-SMA {spy_sma200:.2f} -- score_floor={score_floor}",
+                            flush=True,
+                        )
                 else:
-                    print(f"[REGIME] SPY data insufficient for 200-SMA (rows={len(spy_df)}); using default floor", flush=True)
+                    print(
+                        f"[REGIME] SPY data insufficient for 200-SMA (rows={len(spy_df)}); using default floor",
+                        flush=True,
+                    )
             else:
-                print("[REGIME] SPY prices unavailable; using default floor", flush=True)
+                print(
+                    "[REGIME] SPY prices unavailable; using default floor", flush=True
+                )
         except Exception as e:
-            print(f"[REGIME] SPY regime check failed ({e}); using default floor", flush=True)
+            print(
+                f"[REGIME] SPY regime check failed ({e}); using default floor",
+                flush=True,
+            )
 
     # 5. EWMA volatility per ticker (RiskMetrics lambda=0.94, span=38)
     EWMA_SPAN = 38  # round(2/(1-0.94)) - 1
@@ -214,11 +265,17 @@ def _main() -> int:
     hrp_base_weight = {}  # ticker -> base weight for display
     try:
         import pandas as pd
+
         lookback_days = 60
         min_obs = 30
         returns_dict = {}
         for t in eligible:
-            if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty or "close" not in prices_dict[t].columns:
+            if (
+                t not in prices_dict
+                or prices_dict[t] is None
+                or prices_dict[t].empty
+                or "close" not in prices_dict[t].columns
+            ):
                 continue
             df = prices_dict[t]
             close = df["close"]
@@ -238,9 +295,12 @@ def _main() -> int:
         if returns_df.shape[1] < 2:
             raise ValueError("fewer than 2 tickers with >= 30 valid observations")
         from pypfopt.hierarchical_portfolio import HRPOpt
+
         hrp = HRPOpt(returns=returns_df)
         hrp_result = hrp.optimize(linkage_method="ward")
-        hrp_weights = hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+        hrp_weights = (
+            hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+        )
         dropped = [t for t in eligible if t not in hrp_weights]
         hrp_sum = sum(hrp_weights.values())
         equal_share = (1.0 - hrp_sum) / len(dropped) if dropped else 0.0
@@ -258,8 +318,22 @@ def _main() -> int:
         fallback = True
         top3 = sorted(scores.keys(), key=lambda t: scores[t], reverse=True)[:3]
         weights = {t: 1.0 / 3.0 for t in top3} if top3 else {}
-        metadata = {t: {"score": scores[t], "vol_30d": vol_30d.get(t), "raw_weight": 1.0 / 3.0} for t in top3} if top3 else {}
-        print("WARNING: No tickers above score threshold. Falling back to top-3 equal weight.", flush=True)
+        metadata = (
+            {
+                t: {
+                    "score": scores[t],
+                    "vol_30d": vol_30d.get(t),
+                    "raw_weight": 1.0 / 3.0,
+                }
+                for t in top3
+            }
+            if top3
+            else {}
+        )
+        print(
+            "WARNING: No tickers above score threshold. Falling back to top-3 equal weight.",
+            flush=True,
+        )
 
     if not fallback:
         if use_hrp:
@@ -267,7 +341,9 @@ def _main() -> int:
             mean_score = float(np.mean([scores[t] for t in eligible]))
             if mean_score <= 0:
                 mean_score = 1e-9
-            tilted_w = {t: hrp_base_weight[t] * (scores[t] / mean_score) for t in eligible}
+            tilted_w = {
+                t: hrp_base_weight[t] * (scores[t] / mean_score) for t in eligible
+            }
             total_tilted = sum(tilted_w.values())
             if total_tilted <= 0:
                 tilted_w = {t: 1.0 / len(eligible) for t in eligible}
@@ -284,7 +360,18 @@ def _main() -> int:
                 fallback = True
                 top3 = sorted(scores.keys(), key=lambda t: scores[t], reverse=True)[:3]
                 weights = {t: 1.0 / 3.0 for t in top3} if top3 else {}
-                metadata = {t: {"score": scores[t], "vol_30d": vol_30d.get(t), "raw_weight": 1.0 / 3.0} for t in top3} if top3 else {}
+                metadata = (
+                    {
+                        t: {
+                            "score": scores[t],
+                            "vol_30d": vol_30d.get(t),
+                            "raw_weight": 1.0 / 3.0,
+                        }
+                        for t in top3
+                    }
+                    if top3
+                    else {}
+                )
             else:
                 w = {t: raw_w[t] / total_raw for t in eligible}
 
@@ -327,12 +414,21 @@ def _main() -> int:
         json.dump({"as_of": as_of, "weights": weights}, f, indent=2)
 
     # 12. Write last_optimized_weights.json
-    opt_method = "hrp_alpha_tilt" if (use_hrp and not fallback) else "volatility_adjusted_alpha_tilt"
+    opt_method = (
+        "hrp_alpha_tilt"
+        if (use_hrp and not fallback)
+        else "volatility_adjusted_alpha_tilt"
+    )
     optimized = {
         "as_of": as_of,
         "method": opt_method,
         "regime": regime,
-        "params": {"top_quantile": args.top_quantile, "score_floor": score_floor, "max_weight": args.max_weight, "vol_window": args.vol_window},
+        "params": {
+            "top_quantile": args.top_quantile,
+            "score_floor": score_floor,
+            "max_weight": args.max_weight,
+            "vol_window": args.vol_window,
+        },
         "weights": weights,
         "metadata": metadata,
     }
@@ -361,7 +457,11 @@ def _main() -> int:
                     if close_val is None and t in prices_dict:
                         close_ser = prices_dict[t]["close"]
                         if hasattr(close_ser, "iloc"):
-                            close_val = float(close_ser.iloc[-1]) if getattr(close_ser, "ndim", 1) == 1 else float(close_ser.iloc[:, 0].iloc[-1])
+                            close_val = (
+                                float(close_ser.iloc[-1])
+                                if getattr(close_ser, "ndim", 1) == 1
+                                else float(close_ser.iloc[:, 0].iloc[-1])
+                            )
                     if close_val is not None and float(close_val) > 0:
                         sh = int((nav * w) / float(close_val))
                         holdings[t] = {"shares": sh, "avg_cost": 0.0}
@@ -371,10 +471,17 @@ def _main() -> int:
             pass
 
     # 13. Print table
-    method_name = "HRP + Alpha Tilt" if (use_hrp and not fallback) else "Volatility-Adjusted Alpha Tilt"
+    method_name = (
+        "HRP + Alpha Tilt"
+        if (use_hrp and not fallback)
+        else "Volatility-Adjusted Alpha Tilt"
+    )
     print(f"=== Portfolio Optimizer -- {as_of} ===", flush=True)
     print(f"Method: {method_name}", flush=True)
-    print(f"Regime: {regime}  |  Score threshold: {effective_threshold:.3f} (top {(1 - args.top_quantile) * 100:.0f}% quantile, floor={score_floor})", flush=True)
+    print(
+        f"Regime: {regime}  |  Score threshold: {effective_threshold:.3f} (top {(1 - args.top_quantile) * 100:.0f}% quantile, floor={score_floor})",
+        flush=True,
+    )
     print("", flush=True)
     print("  Ticker     Score   Vol(EWMA)   HRP Wt   Final Wt", flush=True)
     print("  " + "-" * 56, flush=True)

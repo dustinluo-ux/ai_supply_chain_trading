@@ -7,6 +7,7 @@ Superseded by ``src.utils.config_manager.ConfigManager`` which reads YAML config
 This thin wrapper exists for backward compatibility only.
 New code should use ``ConfigManager`` directly.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -73,15 +74,11 @@ class TradingParameters:
     def get_timeframe(self, symbol: str) -> str:
         """Deprecated. Returns execution.default_timeframe from strategy_params."""
         return str(
-            self._cfg.get_param(
-                "strategy_params.execution.default_timeframe", "1d"
-            )
+            self._cfg.get_param("strategy_params.execution.default_timeframe", "1d")
         )
 
     def get_rolling_window(self, symbol: str) -> str:
         """Deprecated. Returns warmup.rolling_normalization from strategy_params."""
         return str(
-            self._cfg.get_param(
-                "strategy_params.warmup.rolling_normalization", "252"
-            )
+            self._cfg.get_param("strategy_params.warmup.rolling_normalization", "252")
         )

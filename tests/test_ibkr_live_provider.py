@@ -84,16 +84,12 @@ class TestGetAccountSummary(unittest.TestCase):
             Row("GrossPositionValue", "75000"),
         ]
 
-        def account_summary_side_effect():
-            return list(rows)
-
-        ib.accountSummary.side_effect = account_summary_side_effect
-        ib.sleep = MagicMock()
+        ib.accountValues.return_value = list(rows)
+        ib.waitOnUpdate = MagicMock()
 
         summary = get_account_summary(ib)
 
-        ib.reqAccountSummary.assert_called_once()
-        ib.cancelAccountSummary.assert_called_once()
+        ib.accountValues.assert_called()
 
         self.assertIsInstance(summary["net_liquidation"], float)
         self.assertEqual(summary["net_liquidation"], 100001.5)

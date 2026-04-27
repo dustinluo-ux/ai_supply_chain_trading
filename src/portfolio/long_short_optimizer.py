@@ -3,6 +3,7 @@ Track D — 130/30 Long/Short optimizer with volatility throttle and thesis moni
 
 Spec: docs/LONG_SHORT_SPEC.md
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,7 +15,7 @@ from scipy.stats import pearsonr, spearmanr
 
 logger = logging.getLogger(__name__)
 
-ANNUALIZATION_FACTOR = 252 ** 0.5  # sqrt(252) for daily returns to annualized vol
+ANNUALIZATION_FACTOR = 252**0.5  # sqrt(252) for daily returns to annualized vol
 
 
 def get_leverage_multiplier(
@@ -86,7 +87,11 @@ def check_thesis_integrity(
     else:
         thesis_alert = float(rho) > 0.8
         alert_reason = "correlation above 0.8" if thesis_alert else "ok"
-    return {"rho": float(rho) if rho is not None else None, "thesis_alert": thesis_alert, "alert_reason": alert_reason}
+    return {
+        "rho": float(rho) if rho is not None else None,
+        "thesis_alert": thesis_alert,
+        "alert_reason": alert_reason,
+    }
 
 
 def _compute_rolling_ic(
@@ -113,7 +118,11 @@ def _compute_rolling_ic(
                 scores_vals = []
                 returns_vals = []
                 for t in row.dropna().index:
-                    if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+                    if (
+                        t not in prices_dict
+                        or prices_dict[t] is None
+                        or prices_dict[t].empty
+                    ):
                         continue
                     df = prices_dict[t]
                     if "close" not in df.columns:
@@ -174,7 +183,10 @@ def _determine_fsm_state(
     """
     rho = thesis_result.get("rho")
     # SPY > 200-SMA is the operational proxy for "SMH in bull regime"
-    spy_below_sma = regime_status.get("spy_below_sma", regime_status.get("spy_below_sma200", False)) is True
+    spy_below_sma = (
+        regime_status.get("spy_below_sma", regime_status.get("spy_below_sma200", False))
+        is True
+    )
     smh_in_bull = not spy_below_sma
 
     design_max_dd = config.get("design_max_drawdown", 0.15)
@@ -285,9 +297,14 @@ def build_long_short_weights(
                 long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
             else:
                 from pypfopt.hierarchical_portfolio import HRPOpt
+
                 hrp = HRPOpt(returns=returns_df)
                 hrp_result = hrp.optimize(linkage_method="ward")
-                hrp_weights = hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+                hrp_weights = (
+                    hrp_result.to_dict()
+                    if hasattr(hrp_result, "to_dict")
+                    else dict(hrp_result)
+                )
                 dropped = [t for t in long_candidates if t not in hrp_weights]
                 hrp_sum = sum(hrp_weights.values())
                 equal_share = (1.0 - hrp_sum) / len(dropped) if dropped else 0.0
@@ -296,7 +313,9 @@ def build_long_short_weights(
                 long_weights = {t: hrp_weights.get(t, 0.0) for t in long_candidates}
                 total = sum(long_weights.values())
                 if total <= 0:
-                    long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+                    long_weights = {
+                        t: 1.0 / len(long_candidates) for t in long_candidates
+                    }
                 else:
                     long_weights = {t: long_weights[t] / total for t in long_candidates}
         except Exception:
@@ -323,10 +342,14 @@ def build_long_short_weights(
     target_short_sum = (-0.15 if thesis_alert else -0.30) * multiplier
 
     while True:
-        clipped = [t for t in long_candidates if t in weights and weights[t] > max_position]
+        clipped = [
+            t for t in long_candidates if t in weights and weights[t] > max_position
+        ]
         if not clipped:
             break
-        unclipped = [t for t in long_candidates if t in weights and weights[t] < max_position]
+        unclipped = [
+            t for t in long_candidates if t in weights and weights[t] < max_position
+        ]
         if not unclipped:
             break
         excess = sum(weights[t] - max_position for t in clipped)
@@ -342,10 +365,14 @@ def build_long_short_weights(
                 weights[t] *= scale
 
     while True:
-        clipped = [t for t in short_candidates if t in weights and weights[t] < -max_position]
+        clipped = [
+            t for t in short_candidates if t in weights and weights[t] < -max_position
+        ]
         if not clipped:
             break
-        unclipped = [t for t in short_candidates if t in weights and weights[t] > -max_position]
+        unclipped = [
+            t for t in short_candidates if t in weights and weights[t] > -max_position
+        ]
         if not unclipped:
             break
         excess = sum(weights[t] + max_position for t in clipped)
@@ -400,8 +427,18 @@ def rebalance_long_short(
     portfolio_returns = pd.Series(dtype=float)
     prior_weights = config.get("prior_weights")
     if prior_weights is not None and isinstance(prior_weights, (dict, pd.Series)):
-        w = prior_weights if isinstance(prior_weights, dict) else prior_weights.to_dict()
-        tickers_with_data = [t for t in w if t in prices_dict and prices_dict[t] is not None and not prices_dict[t].empty]
+        w = (
+            prior_weights
+            if isinstance(prior_weights, dict)
+            else prior_weights.to_dict()
+        )
+        tickers_with_data = [
+            t
+            for t in w
+            if t in prices_dict
+            and prices_dict[t] is not None
+            and not prices_dict[t].empty
+        ]
         if tickers_with_data:
             rets = []
             for t in tickers_with_data:
@@ -447,13 +484,25 @@ def rebalance_long_short(
                 if s > 0:
                     vix_z = (float(vix_val) - m) / s
 
-    multiplier = get_leverage_multiplier(target_vol, portfolio_returns, vix_z, max_leverage)
+    multiplier = get_leverage_multiplier(
+        target_vol, portfolio_returns, vix_z, max_leverage
+    )
     thesis_result = check_thesis_integrity(scores_df, top_n, bottom_n, window=60)
     if thesis_result["thesis_alert"]:
         from src.monitoring.telegram_alerts import send_alert
-        send_alert("thesis_collapse", {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]})
+
+        send_alert(
+            "thesis_collapse",
+            {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]},
+        )
     weights = build_long_short_weights(
-        scores, prices_dict, top_n, bottom_n, multiplier, thesis_result["thesis_alert"], max_position
+        scores,
+        prices_dict,
+        top_n,
+        bottom_n,
+        multiplier,
+        thesis_result["thesis_alert"],
+        max_position,
     )
     return weights
 
@@ -537,8 +586,18 @@ def rebalance_alpha_sleeve(
     portfolio_returns = pd.Series(dtype=float)
     prior_weights = config.get("prior_weights")
     if prior_weights is not None and isinstance(prior_weights, (dict, pd.Series)):
-        w = prior_weights if isinstance(prior_weights, dict) else prior_weights.to_dict()
-        tickers_with_data = [t for t in w if t in prices_dict and prices_dict[t] is not None and not prices_dict[t].empty]
+        w = (
+            prior_weights
+            if isinstance(prior_weights, dict)
+            else prior_weights.to_dict()
+        )
+        tickers_with_data = [
+            t
+            for t in w
+            if t in prices_dict
+            and prices_dict[t] is not None
+            and not prices_dict[t].empty
+        ]
         if tickers_with_data:
             rets = []
             for t in tickers_with_data:
@@ -601,10 +660,14 @@ def rebalance_alpha_sleeve(
         current_drawdown = 0.0
 
     # Step 3: FSM state
-    fsm = _determine_fsm_state(thesis_result, rolling_ic, current_drawdown, regime_status, config)
+    fsm = _determine_fsm_state(
+        thesis_result, rolling_ic, current_drawdown, regime_status, config
+    )
     logger.info(
         "[TRACK_D_FSM] state=%s | trigger=%s | reason=%s | ic=%.4f | dd=%.3f | rho=%s",
-        fsm["state"], fsm.get("trigger", "?"), fsm["reason"],
+        fsm["state"],
+        fsm.get("trigger", "?"),
+        fsm["reason"],
         rolling_ic if rolling_ic is not None else float("nan"),
         current_drawdown,
         f"{rho:.3f}" if rho is not None else "None",
@@ -615,12 +678,21 @@ def rebalance_alpha_sleeve(
     config["_last_fsm_reason"] = fsm.get("reason", "")
 
     # Step 4: leverage multiplier (A/A-: 1.6/(1+S); B/C: max_leverage)
-    S = get_short_exposure(short_candidates, scores, prices_dict, rho, top_n, dispersion_anchor=dispersion_anchor)
+    S = get_short_exposure(
+        short_candidates,
+        scores,
+        prices_dict,
+        rho,
+        top_n,
+        dispersion_anchor=dispersion_anchor,
+    )
     if fsm["state"] in ("A", "A-"):
         effective_max_lev = (1.6 / (1.0 + S)) if S > 0 else 1.6
     else:
         effective_max_lev = max_leverage
-    multiplier = get_leverage_multiplier_v2(target_vol, portfolio_returns, vix_z, max_leverage=effective_max_lev)
+    multiplier = get_leverage_multiplier_v2(
+        target_vol, portfolio_returns, vix_z, max_leverage=effective_max_lev
+    )
 
     # Step 5: long book (HRP unchanged)
     lookback_days = 60
@@ -650,9 +722,14 @@ def rebalance_alpha_sleeve(
                 long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
             else:
                 from pypfopt.hierarchical_portfolio import HRPOpt
+
                 hrp = HRPOpt(returns=returns_df)
                 hrp_result = hrp.optimize(linkage_method="ward")
-                hrp_weights = hrp_result.to_dict() if hasattr(hrp_result, "to_dict") else dict(hrp_result)
+                hrp_weights = (
+                    hrp_result.to_dict()
+                    if hasattr(hrp_result, "to_dict")
+                    else dict(hrp_result)
+                )
                 dropped = [t for t in long_candidates if t not in hrp_weights]
                 hrp_sum = sum(hrp_weights.values())
                 equal_share = (1.0 - hrp_sum) / len(dropped) if dropped else 0.0
@@ -661,7 +738,9 @@ def rebalance_alpha_sleeve(
                 long_weights = {t: hrp_weights.get(t, 0.0) for t in long_candidates}
                 total = sum(long_weights.values())
                 if total <= 0:
-                    long_weights = {t: 1.0 / len(long_candidates) for t in long_candidates}
+                    long_weights = {
+                        t: 1.0 / len(long_candidates) for t in long_candidates
+                    }
                 else:
                     long_weights = {t: long_weights[t] / total for t in long_candidates}
         except Exception:
@@ -673,7 +752,9 @@ def rebalance_alpha_sleeve(
 
     # Step 6: short weights by FSM state
     short_light_cap = config.get("short_light_cap", 0.12)
-    a_minus_per_name_cap = config.get("a_minus_per_name_cap", 0.01)  # 1% per name cap for Short-Light
+    a_minus_per_name_cap = config.get(
+        "a_minus_per_name_cap", 0.01
+    )  # 1% per name cap for Short-Light
     if fsm["state"] == "A":
         if S > 0 and short_candidates:
             for t in short_candidates:
@@ -687,19 +768,34 @@ def rebalance_alpha_sleeve(
         if S > 0 and short_candidates:
             for t in short_candidates:
                 raw = -(S / len(short_candidates)) * multiplier
-                weights[t] = max(raw, -a_minus_per_name_cap)  # cap: weight must not exceed -1%
+                weights[t] = max(
+                    raw, -a_minus_per_name_cap
+                )  # cap: weight must not exceed -1%
         else:
             for t in short_candidates:
                 weights[t] = 0.0
-        target_short_sum = -min(S * multiplier, a_minus_per_name_cap * len(short_candidates)) if S > 0 else 0.0
-        logger.info("[TRACK_D_FSM] State A-: short book capped at %.1f%% per name", a_minus_per_name_cap * 100)
+        target_short_sum = (
+            -min(S * multiplier, a_minus_per_name_cap * len(short_candidates))
+            if S > 0
+            else 0.0
+        )
+        logger.info(
+            "[TRACK_D_FSM] State A-: short book capped at %.1f%% per name",
+            a_minus_per_name_cap * 100,
+        )
     elif fsm["state"] == "B":
         for t in short_candidates:
             weights[t] = 0.0
-        if "SMH" in prices_dict and prices_dict["SMH"] is not None and not prices_dict["SMH"].empty:
+        if (
+            "SMH" in prices_dict
+            and prices_dict["SMH"] is not None
+            and not prices_dict["SMH"].empty
+        ):
             weights["SMH"] = -short_light_cap
         else:
-            logger.warning("[TRACK_D_FSM] State B: SMH not in prices_dict, skipping SMH short")
+            logger.warning(
+                "[TRACK_D_FSM] State B: SMH not in prices_dict, skipping SMH short"
+            )
         target_short_sum = -short_light_cap
     else:
         # State C: long-only, all shorts zeroed
@@ -711,10 +807,14 @@ def rebalance_alpha_sleeve(
 
     # Step 7: position caps, gross cap 1.6, net sanity
     while True:
-        clipped = [t for t in long_candidates if t in weights and weights[t] > max_position]
+        clipped = [
+            t for t in long_candidates if t in weights and weights[t] > max_position
+        ]
         if not clipped:
             break
-        unclipped = [t for t in long_candidates if t in weights and weights[t] < max_position]
+        unclipped = [
+            t for t in long_candidates if t in weights and weights[t] < max_position
+        ]
         if not unclipped:
             break
         excess = sum(weights[t] - max_position for t in clipped)
@@ -733,10 +833,18 @@ def rebalance_alpha_sleeve(
         short_tickers = [t for t in short_candidates if t in weights]
         if short_tickers:
             while True:
-                clipped = [t for t in short_tickers if t in weights and weights[t] < -max_position]
+                clipped = [
+                    t
+                    for t in short_tickers
+                    if t in weights and weights[t] < -max_position
+                ]
                 if not clipped:
                     break
-                unclipped = [t for t in short_tickers if t in weights and weights[t] > -max_position]
+                unclipped = [
+                    t
+                    for t in short_tickers
+                    if t in weights and weights[t] > -max_position
+                ]
                 if not unclipped:
                     break
                 excess = sum(weights[t] + max_position for t in clipped)
@@ -758,12 +866,20 @@ def rebalance_alpha_sleeve(
             weights[t] *= scale
     net = sum(weights.values())
     if multiplier > 0 and (net < 0.9 * multiplier or net > 1.1 * multiplier):
-        logger.warning("rebalance_alpha_sleeve: sum(weights)=%s outside [0.9, 1.1] * multiplier=%s", net, multiplier)
+        logger.warning(
+            "rebalance_alpha_sleeve: sum(weights)=%s outside [0.9, 1.1] * multiplier=%s",
+            net,
+            multiplier,
+        )
 
     # Step 8: thesis_collapse alert (independent of FSM)
     if thesis_result["thesis_alert"]:
         from src.monitoring.telegram_alerts import send_alert
-        send_alert("thesis_collapse", {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]})
+
+        send_alert(
+            "thesis_collapse",
+            {"rho": thesis_result["rho"], "reason": thesis_result["alert_reason"]},
+        )
 
     # Step 9
     return pd.Series(weights), str(fsm.get("state", "A"))

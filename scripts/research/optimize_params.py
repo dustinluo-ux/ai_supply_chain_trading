@@ -53,7 +53,9 @@ def _annualized_return(total_return: float, start_date: str, end_date: str) -> f
     return (1.0 + float(total_return)) ** (1.0 / years) - 1.0
 
 
-def _calmar(total_return: float, max_drawdown: float, start_date: str, end_date: str) -> float:
+def _calmar(
+    total_return: float, max_drawdown: float, start_date: str, end_date: str
+) -> float:
     dd = abs(float(max_drawdown))
     if dd <= 1e-12:
         return 0.0
@@ -97,16 +99,25 @@ def _run_backtest_for_params(
         if no_ml:
             cmd.append("--no-ml")
         env = os.environ.copy()
-        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd, cwd=str(ROOT), env=env, capture_output=True, text=True
+        )
         if proc.returncode != 0:
             return {
                 "sharpe": 0.0,
                 "total_return": 0.0,
                 "max_drawdown": 0.0,
-                "error": proc.stderr.strip() or proc.stdout.strip() or f"backtest_exit_{proc.returncode}",
+                "error": proc.stderr.strip()
+                or proc.stdout.strip()
+                or f"backtest_exit_{proc.returncode}",
             }
         if not out_json.exists():
-            return {"sharpe": 0.0, "total_return": 0.0, "max_drawdown": 0.0, "error": "missing_out_json"}
+            return {
+                "sharpe": 0.0,
+                "total_return": 0.0,
+                "max_drawdown": 0.0,
+                "error": "missing_out_json",
+            }
         with open(out_json, "r", encoding="utf-8") as f:
             data = json.load(f)
         return {
@@ -123,7 +134,9 @@ def _run_backtest_for_params(
 
 def _all_param_sets_is() -> list[ParamSet]:
     out: list[ParamSet] = []
-    for sma_window, score_floor, top_n in itertools.product(SMA_WINDOWS, SCORE_FLOORS, TOP_NS):
+    for sma_window, score_floor, top_n in itertools.product(
+        SMA_WINDOWS, SCORE_FLOORS, TOP_NS
+    ):
         out.append(
             ParamSet(
                 sma_window=int(sma_window),
@@ -146,9 +159,16 @@ def _rows_from_results_is(
     rows: list[dict] = []
     for i, p in enumerate(params, start=1):
         metrics = _run_backtest_for_params(
-            p, start_date, end_date, SENTIMENT_ENGINE_IS, no_llm=no_llm, no_ml=no_ml,
+            p,
+            start_date,
+            end_date,
+            SENTIMENT_ENGINE_IS,
+            no_llm=no_llm,
+            no_ml=no_ml,
         )
-        calmar = _calmar(metrics["total_return"], metrics["max_drawdown"], start_date, end_date)
+        calmar = _calmar(
+            metrics["total_return"], metrics["max_drawdown"], start_date, end_date
+        )
         row = {
             "sma_window": p.sma_window,
             "score_floor": p.score_floor,
@@ -190,11 +210,23 @@ def _apply_best_params(best: dict) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Walk-forward parameter optimization for backtest_technical_library.")
+    parser = argparse.ArgumentParser(
+        description="Walk-forward parameter optimization for backtest_technical_library."
+    )
     parser.add_argument("--no-llm", action="store_true", default=False)
     parser.add_argument("--no-ml", action="store_true", default=False)
-    parser.add_argument("--dry-run", action="store_true", default=False, help="Run only first 3 IS combinations.")
-    parser.add_argument("--apply", action="store_true", default=False, help="Apply best OOS params to strategy_params.yaml.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Run only first 3 IS combinations.",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        default=False,
+        help="Apply best OOS params to strategy_params.yaml.",
+    )
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -205,11 +237,23 @@ def main() -> int:
         params = params[:3]
         is_denom = len(params)
 
-    print(f"Running in-sample grid over {len(params)} combinations (full grid = {ALL_COMBINATIONS})...", flush=True)
-    is_rows = _rows_from_results_is(
-        params, IS_START, IS_END, no_llm=args.no_llm, no_ml=args.no_ml, is_denom=is_denom,
+    print(
+        f"Running in-sample grid over {len(params)} combinations (full grid = {ALL_COMBINATIONS})...",
+        flush=True,
     )
-    is_df = pd.DataFrame(is_rows).sort_values("calmar", ascending=False).reset_index(drop=True)
+    is_rows = _rows_from_results_is(
+        params,
+        IS_START,
+        IS_END,
+        no_llm=args.no_llm,
+        no_ml=args.no_ml,
+        is_denom=is_denom,
+    )
+    is_df = (
+        pd.DataFrame(is_rows)
+        .sort_values("calmar", ascending=False)
+        .reset_index(drop=True)
+    )
     is_df.to_csv(INSAMPLE_CSV, index=False)
     print(f"[WRITE] {INSAMPLE_CSV}", flush=True)
 
@@ -234,9 +278,16 @@ def main() -> int:
     oos_rows: list[dict] = []
     for j, sent in enumerate(SENTIMENT_ENGINES_OOS, start=1):
         metrics = _run_backtest_for_params(
-            p_best, OOS_START, OOS_END, sent, no_llm=args.no_llm, no_ml=args.no_ml,
+            p_best,
+            OOS_START,
+            OOS_END,
+            sent,
+            no_llm=args.no_llm,
+            no_ml=args.no_ml,
         )
-        calmar = _calmar(metrics["total_return"], metrics["max_drawdown"], OOS_START, OOS_END)
+        calmar = _calmar(
+            metrics["total_return"], metrics["max_drawdown"], OOS_START, OOS_END
+        )
         oos_rows.append(
             {
                 "sma_window": p_best.sma_window,
@@ -256,15 +307,19 @@ def main() -> int:
             flush=True,
         )
 
-    oos_df = pd.DataFrame(oos_rows).sort_values("calmar", ascending=False).reset_index(drop=True)
+    oos_df = (
+        pd.DataFrame(oos_rows)
+        .sort_values("calmar", ascending=False)
+        .reset_index(drop=True)
+    )
     oos_df.to_csv(OUTSAMPLE_CSV, index=False)
     print(f"[WRITE] {OUTSAMPLE_CSV}", flush=True)
 
     print("\nOOS sentiment sweep (best IS params fixed)", flush=True)
     print(
-        oos_df[
-            ["sentiment_engine", "insample_calmar", "calmar"]
-        ].to_string(index=False),
+        oos_df[["sentiment_engine", "insample_calmar", "calmar"]].to_string(
+            index=False
+        ),
         flush=True,
     )
 

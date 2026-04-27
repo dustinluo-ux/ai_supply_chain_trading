@@ -29,6 +29,7 @@ from src.data.csv_provider import (
     load_prices,
     ensure_ohlcv,
 )
+from src.data.data_quality import DataQualityReport
 
 # Cache for --rebalance: last valid weights from last non-rebalance run
 LAST_VALID_WEIGHTS_PATH = ROOT / "outputs" / "last_valid_weights.json"
@@ -74,7 +75,9 @@ def _spy_benchmark_series(data_dir: Path) -> tuple[pd.Series, pd.Series] | None:
         if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:
             return None
         close = df["close"]
-        sma = close.rolling(SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS).mean()
+        sma = close.rolling(
+            SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS
+        ).mean()
         return (close, sma)
     except Exception:
         return None
@@ -96,9 +99,16 @@ def compute_target_weights(
     Delegates to src.core.target_weight_pipeline.compute_target_weights (path="weekly").
     score_floor: optional; when provided, passed to pipeline for regime-aware filtering (continuous from meta_weights).
     """
-    from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
+    from src.core.target_weight_pipeline import (
+        compute_target_weights as _compute_target_weights,
+    )
     from src.utils.config_manager import get_config as _get_config
-    _llm = bool(llm_enabled) if llm_enabled is not None else bool(_get_config().get_param("llm_analysis.enabled", True))
+
+    _llm = (
+        bool(llm_enabled)
+        if llm_enabled is not None
+        else bool(_get_config().get_param("llm_analysis.enabled", True))
+    )
     kwargs = {
         "top_n": top_n,
         "sideways_risk_scale": sideways_risk_scale,
@@ -128,11 +138,17 @@ def _create_paper_executor():
     ib_config = trading.get("ib", {})
     execution_config = trading.get("execution", {})
     import os as _os
-    paper_account = _os.getenv("IBKR_PAPER_ACCOUNT") or execution_config.get("paper_account")
+
+    paper_account = _os.getenv("IBKR_PAPER_ACCOUNT") or execution_config.get(
+        "paper_account"
+    )
     if not paper_account:
-        raise ValueError("Set IBKR_PAPER_ACCOUNT in .env or trading.execution.paper_account in trading_config.yaml")
+        raise ValueError(
+            "Set IBKR_PAPER_ACCOUNT in .env or trading.execution.paper_account in trading_config.yaml"
+        )
     from src.data.provider_factory import DataProviderFactory
     from src.execution.ib_executor import IBExecutor
+
     data_provider = DataProviderFactory.create("ib", **ib_config)
     return IBExecutor(ib_provider=data_provider, account=paper_account)
 
@@ -148,7 +164,10 @@ def _run_pods(
     Three-pod aggregation path: Core, Extension, Ballast → aggregate_pod_weights.
     """
     from pods import PodCore, PodExtension, PodBallast, aggregate_pod_weights
-    from src.signals.technical_library import calculate_all_indicators, compute_signal_strength
+    from src.signals.technical_library import (
+        calculate_all_indicators,
+        compute_signal_strength,
+    )
 
     # 1. Master Score per ticker using technical_library (no look-ahead; slice to as_of)
     scores: dict[str, float] = {}
@@ -212,7 +231,9 @@ def _run_pods(
 
     # 4. Load meta weights early so we can inject ballast_weight into ballast_cfg (Change 4)
     default_meta = {"core": 0.50, "extension": 0.30, "ballast": 0.20}
-    meta_weights_path = ROOT / (pods_cfg.get("meta_weights_path") or "outputs/meta_weights.json")
+    meta_weights_path = ROOT / (
+        pods_cfg.get("meta_weights_path") or "outputs/meta_weights.json"
+    )
     meta_weights = default_meta.copy()
     try:
         if meta_weights_path.exists():
@@ -231,13 +252,16 @@ def _run_pods(
         for k in default_meta:
             if k in meta_weights_override:
                 meta_weights[k] = float(meta_weights_override[k])
-    ballast_cap = 0.60 if str(regime_status.get("regime_state", "")) == "Contraction" else 0.50
+    ballast_cap = (
+        0.60 if str(regime_status.get("regime_state", "")) == "Contraction" else 0.50
+    )
     ballast_weight = max(0.20, min(ballast_cap, meta_weights.get("ballast", 0.20)))
     ballast_cfg["ballast_weight"] = ballast_weight
 
     # --- Step A — Load and reconcile frozen state ---
     try:
         import logging as _logging
+
         _logger = _logging.getLogger(__name__)
         _manual_resumed: set[str] = set()
         _frozen_pods_path = ROOT / "outputs" / "frozen_pods.json"
@@ -258,18 +282,28 @@ def _run_pods(
                     strategy_params = _yaml.safe_load(_f) or {}
             except Exception:
                 strategy_params = {}
-        resume_list = (strategy_params.get("pod_overrides", {}) or {}).get("frozen_pods_resume", []) or []
+        resume_list = (strategy_params.get("pod_overrides", {}) or {}).get(
+            "frozen_pods_resume", []
+        ) or []
         for _pod_name in resume_list:
             if _pod_name in current_frozen:
                 current_frozen.pop(_pod_name, None)
                 _manual_resumed.add(_pod_name)
-                log_incident("pod_unfrozen", {"pod": _pod_name, "manual_override": True})
-                _logger.info("[POD_FREEZE] %s manually unfrozen via strategy_params.yaml", _pod_name)
+                log_incident(
+                    "pod_unfrozen", {"pod": _pod_name, "manual_override": True}
+                )
+                _logger.info(
+                    "[POD_FREEZE] %s manually unfrozen via strategy_params.yaml",
+                    _pod_name,
+                )
         try:
             _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
             _frozen_pods_path.write_text(
                 json.dumps(
-                    {"as_of": datetime.now(timezone.utc).isoformat(), "frozen_pods": current_frozen},
+                    {
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "frozen_pods": current_frozen,
+                    },
                     indent=2,
                 ),
                 encoding="utf-8",
@@ -278,7 +312,10 @@ def _run_pods(
             pass
     except Exception as _e:
         import logging as _logging
-        _logging.getLogger(__name__).warning("[POD_FREEZE] Step A failed (fail-open): %s", _e)
+
+        _logging.getLogger(__name__).warning(
+            "[POD_FREEZE] Step A failed (fail-open): %s", _e
+        )
         current_frozen = {}
         _manual_resumed = set()
 
@@ -293,7 +330,11 @@ def _run_pods(
             except Exception:
                 breakdown = None
         if isinstance(breakdown, dict) and breakdown:
-            MANDATES = {"core": [0.8, 1.2], "extension": [-0.2, 0.6], "ballast": [0.0, 0.5]}
+            MANDATES = {
+                "core": [0.8, 1.2],
+                "extension": [-0.2, 0.6],
+                "ballast": [0.0, 0.5],
+            }
             _now_iso = datetime.now(timezone.utc).isoformat()
 
             if (
@@ -301,19 +342,32 @@ def _run_pods(
                 and "extension" not in current_frozen
                 and "extension" not in _manual_resumed
             ):
-                current_frozen["extension"] = {"reason": "IC decay CRITICAL", "frozen_at": _now_iso}
-                log_incident("pod_frozen", {"pod": "extension", "reason": "IC decay CRITICAL"})
+                current_frozen["extension"] = {
+                    "reason": "IC decay CRITICAL",
+                    "frozen_at": _now_iso,
+                }
+                log_incident(
+                    "pod_frozen", {"pod": "extension", "reason": "IC decay CRITICAL"}
+                )
 
             if (
                 breakdown.get("residual_risk", {}).get("severity") == "critical"
                 and "extension" not in current_frozen
                 and "extension" not in _manual_resumed
             ):
-                current_frozen["extension"] = {"reason": "Residual risk CRITICAL", "frozen_at": _now_iso}
-                log_incident("pod_frozen", {"pod": "extension", "reason": "Residual risk CRITICAL"})
+                current_frozen["extension"] = {
+                    "reason": "Residual risk CRITICAL",
+                    "frozen_at": _now_iso,
+                }
+                log_incident(
+                    "pod_frozen",
+                    {"pod": "extension", "reason": "Residual risk CRITICAL"},
+                )
 
             if breakdown.get("regime_misalignment", {}).get("severity") == "critical":
-                pod_betas = (breakdown.get("regime_misalignment", {}) or {}).get("pod_betas", {}) or {}
+                pod_betas = (breakdown.get("regime_misalignment", {}) or {}).get(
+                    "pod_betas", {}
+                ) or {}
                 worst_pod = None
                 worst_excess = 0.0
                 worst_beta = None
@@ -322,22 +376,36 @@ def _run_pods(
                     if not mandate:
                         continue
                     beta = float(pod_betas.get(_p, 0) or 0)
-                    excess = max(0.0, float(mandate[0]) - beta, beta - float(mandate[1]))
+                    excess = max(
+                        0.0, float(mandate[0]) - beta, beta - float(mandate[1])
+                    )
                     if excess > worst_excess:
                         worst_excess = excess
                         worst_pod = _p
                         worst_beta = beta
-                if worst_pod is not None and worst_excess > 0 and worst_pod not in current_frozen:
+                if (
+                    worst_pod is not None
+                    and worst_excess > 0
+                    and worst_pod not in current_frozen
+                ):
                     if worst_pod in _manual_resumed:
                         worst_pod = None
-                if worst_pod is not None and worst_excess > 0 and worst_pod not in current_frozen:
+                if (
+                    worst_pod is not None
+                    and worst_excess > 0
+                    and worst_pod not in current_frozen
+                ):
                     current_frozen[worst_pod] = {
                         "reason": "Beta mandate breach CRITICAL",
                         "frozen_at": _now_iso,
                     }
                     log_incident(
                         "pod_frozen",
-                        {"pod": worst_pod, "reason": "Beta mandate breach CRITICAL", "beta": worst_beta},
+                        {
+                            "pod": worst_pod,
+                            "reason": "Beta mandate breach CRITICAL",
+                            "beta": worst_beta,
+                        },
                     )
 
             try:
@@ -345,7 +413,10 @@ def _run_pods(
                 _frozen_pods_path.parent.mkdir(parents=True, exist_ok=True)
                 _frozen_pods_path.write_text(
                     json.dumps(
-                        {"as_of": datetime.now(timezone.utc).isoformat(), "frozen_pods": current_frozen},
+                        {
+                            "as_of": datetime.now(timezone.utc).isoformat(),
+                            "frozen_pods": current_frozen,
+                        },
                         indent=2,
                     ),
                     encoding="utf-8",
@@ -354,7 +425,10 @@ def _run_pods(
                 pass
     except Exception as _e:
         import logging as _logging
-        _logging.getLogger(__name__).warning("[POD_FREEZE] Step B failed (no new freezes applied): %s", _e)
+
+        _logging.getLogger(__name__).warning(
+            "[POD_FREEZE] Step B failed (no new freezes applied): %s", _e
+        )
 
     # 5. Instantiate and call pods with per-pod error isolation
     core = PodCore()
@@ -366,6 +440,7 @@ def _run_pods(
     try:
         if "core" in current_frozen:
             import logging as _logging
+
             _logging.getLogger(__name__).warning(
                 "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
                 "core",
@@ -373,8 +448,12 @@ def _run_pods(
             )
             pod_weights["core"] = pd.Series(dtype=float)
         else:
-            w_core = core.generate_weights(scores_series, prices_sliced, regime_status, core_cfg)
-            pod_weights["core"] = w_core if isinstance(w_core, pd.Series) else pd.Series(dtype=float)
+            w_core = core.generate_weights(
+                scores_series, prices_sliced, regime_status, core_cfg
+            )
+            pod_weights["core"] = (
+                w_core if isinstance(w_core, pd.Series) else pd.Series(dtype=float)
+            )
     except Exception as e:
         print(f"[POD_CORE] Error: {e}", flush=True)
         pod_weights["core"] = pd.Series(dtype=float)
@@ -383,6 +462,7 @@ def _run_pods(
     try:
         if "extension" in current_frozen:
             import logging as _logging
+
             _logging.getLogger(__name__).warning(
                 "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
                 "extension",
@@ -390,8 +470,12 @@ def _run_pods(
             )
             pod_weights["extension"] = pd.Series(dtype=float)
         else:
-            w_ext = ext.generate_weights(scores_series, prices_sliced, regime_status, extension_cfg)
-            pod_weights["extension"] = w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
+            w_ext = ext.generate_weights(
+                scores_series, prices_sliced, regime_status, extension_cfg
+            )
+            pod_weights["extension"] = (
+                w_ext if isinstance(w_ext, pd.Series) else pd.Series(dtype=float)
+            )
             # Capture FSM audit fields written as side-channel by rebalance_alpha_sleeve
             _fsm_audit = {
                 "state": extension_cfg.pop("_last_fsm_state", "unknown"),
@@ -405,6 +489,7 @@ def _run_pods(
     try:
         if "ballast" in current_frozen:
             import logging as _logging
+
             _logging.getLogger(__name__).warning(
                 "[POD_FREEZE] %s is frozen — weights zeroed. reason=%s",
                 "ballast",
@@ -412,8 +497,14 @@ def _run_pods(
             )
             pod_weights["ballast"] = pd.Series(dtype=float)
         else:
-            w_ballast = ballast.generate_weights(scores_series, prices_sliced, regime_status, ballast_cfg)
-            pod_weights["ballast"] = w_ballast if isinstance(w_ballast, pd.Series) else pd.Series(dtype=float)
+            w_ballast = ballast.generate_weights(
+                scores_series, prices_sliced, regime_status, ballast_cfg
+            )
+            pod_weights["ballast"] = (
+                w_ballast
+                if isinstance(w_ballast, pd.Series)
+                else pd.Series(dtype=float)
+            )
     except Exception as e:
         print(f"[POD_BALLAST] Error: {e}", flush=True)
         pod_weights["ballast"] = pd.Series(dtype=float)
@@ -440,7 +531,8 @@ def _run_pods(
     active_pods = [
         p
         for p in meta_weights
-        if p not in current_frozen and not pod_weights.get(p, pd.Series(dtype=float)).empty
+        if p not in current_frozen
+        and not pod_weights.get(p, pd.Series(dtype=float)).empty
     ]
     active_total = float(sum(meta_weights.get(p, 0.0) for p in active_pods))
     if active_total > 0 and active_pods:
@@ -480,6 +572,7 @@ def _run_pods(
     # Log per-pod weights before returning (for pod_pnl_tracker)
     try:
         from src.portfolio.pod_pnl_tracker import log_pod_weights
+
         pod_weights_dict = {
             name: (s.to_dict() if hasattr(s, "to_dict") else dict(s))
             for name, s in pod_weights.items()
@@ -492,6 +585,7 @@ def _run_pods(
         )
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning("log_pod_weights failed: %s", e)
 
     return agg_weights
@@ -504,6 +598,7 @@ def _write_execution_status(
 ) -> None:
     """Merge report and ibkr fields with existing outputs/execution_status.json and write. Silent fail on error."""
     from datetime import datetime as _dt
+
     path = ROOT / "outputs" / "execution_status.json"
     data = {}
     if path.exists():
@@ -531,7 +626,10 @@ def _write_execution_status(
             json.dump(data, f, indent=2)
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning("Could not write execution_status.json: %s", e)
+
+        logging.getLogger(__name__).warning(
+            "Could not write execution_status.json: %s", e
+        )
 
 
 def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
@@ -541,6 +639,7 @@ def _update_drawdown_tracker(account_value: float, tracker_path: Path) -> dict:
     drawdown=0.0, flatten_active=False. Returns the updated tracker dict.
     """
     from datetime import datetime, timezone
+
     default = {
         "peak_nav": account_value,
         "current_nav": account_value,
@@ -601,26 +700,65 @@ def _get_score_floor() -> float:
 
 def main() -> tuple[int, list]:
     from dotenv import load_dotenv as _load_dotenv
+
     _load_dotenv()
     parser = argparse.ArgumentParser(
         description="Canonical execution: spine -> Intent -> delta trades (mock or IB paper)."
     )
-    parser.add_argument("--tickers", type=str, required=True, help="Comma-separated tickers (e.g. AAPL,NVDA,SPY)")
-    parser.add_argument("--date", type=str, default=None, help="Signal date YYYY-MM-DD; default: latest Monday in data")
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        required=True,
+        help="Comma-separated tickers (e.g. AAPL,NVDA,SPY)",
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Signal date YYYY-MM-DD; default: latest Monday in data",
+    )
     parser.add_argument("--top-n", type=int, default=3, help="Top N for portfolio")
-    parser.add_argument("--sideways-risk-scale", type=float, default=0.5, help="Sideways regime scale")
-    parser.add_argument("--mode", type=str, default="mock", choices=["mock", "paper"], help="mock (print only) or paper (IB paper account)")
-    parser.add_argument("--confirm-paper", action="store_true", help="With --mode paper: actually submit orders; without: dry-run print only")
-    parser.add_argument("--rebalance", action="store_true", help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)")
-    parser.add_argument("--check-fills", action="store_true", help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status")
-    parser.add_argument("--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring")
+    parser.add_argument(
+        "--sideways-risk-scale", type=float, default=0.5, help="Sideways regime scale"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="mock",
+        choices=["mock", "paper"],
+        help="mock (print only) or paper (IB paper account)",
+    )
+    parser.add_argument(
+        "--confirm-paper",
+        action="store_true",
+        help="With --mode paper: actually submit orders; without: dry-run print only",
+    )
+    parser.add_argument(
+        "--rebalance",
+        action="store_true",
+        help="Rebalance mode: use last valid weights from cache; only propose trades for tickers that drifted past threshold (see strategy_params.rebalancing)",
+    )
+    parser.add_argument(
+        "--check-fills",
+        action="store_true",
+        help="Skip execution; read fill ledger, print partial/unknown summary, and (in paper mode) query IB for current order status",
+    )
+    parser.add_argument(
+        "--no-llm", action="store_true", help="Skip LLM and FinBERT news scoring"
+    )
     parser.add_argument(
         "--no-hedge",
         action="store_true",
         help="Disable SMH hedge for this run (ignore trading_config hedge_enabled).",
     )
-    parser.add_argument("--pods", action="store_true", help="Enable three-pod allocation path")
-    parser.add_argument("--reset-stop-loss", action="store_true", help="Clear flatten_active in drawdown_tracker and continue normal execution")
+    parser.add_argument(
+        "--pods", action="store_true", help="Enable three-pod allocation path"
+    )
+    parser.add_argument(
+        "--reset-stop-loss",
+        action="store_true",
+        help="Clear flatten_active in drawdown_tracker and continue normal execution",
+    )
     parser.add_argument(
         "--regime-multiplier",
         type=float,
@@ -636,35 +774,50 @@ def main() -> tuple[int, list]:
 
     if args.check_fills:
         from src.execution.fill_ledger import read_fill_ledger
+
         path = ROOT / "outputs" / "fills" / "fills.jsonl"
         records = read_fill_ledger(path)
         outstanding = [r for r in records if r.get("status") in ("partial", "unknown")]
         if not outstanding:
             print("No partial or unknown fills in ledger.", flush=True)
             return (0, [])
-        print(f"--- Outstanding fills (partial/unknown): {len(outstanding)} ---", flush=True)
+        print(
+            f"--- Outstanding fills (partial/unknown): {len(outstanding)} ---",
+            flush=True,
+        )
         for r in outstanding:
-            print(f"  {r.get('timestamp', '')} | {r.get('ticker', '')} | {r.get('side', '')} | "
-                  f"qty_req={r.get('qty_requested')} filled={r.get('qty_filled')} | "
-                  f"order_id={r.get('order_id')} | {r.get('status')} | {r.get('fill_check_reason', '')}", flush=True)
+            print(
+                f"  {r.get('timestamp', '')} | {r.get('ticker', '')} | {r.get('side', '')} | "
+                f"qty_req={r.get('qty_requested')} filled={r.get('qty_filled')} | "
+                f"order_id={r.get('order_id')} | {r.get('status')} | {r.get('fill_check_reason', '')}",
+                flush=True,
+            )
         if args.mode == "paper":
             from src.execution.executor_factory import ExecutorFactory
+
             try:
                 executor = _create_paper_executor()
                 if hasattr(executor, "ib"):
-                    _req = getattr(executor.ib, "reqOpenOrders", None) or getattr(executor.ib, "requestOpenOrders", None)
+                    _req = getattr(executor.ib, "reqOpenOrders", None) or getattr(
+                        executor.ib, "requestOpenOrders", None
+                    )
                     if callable(_req):
                         _req()
                     open_trades = list(executor.ib.openTrades())
                     print("--- IB open orders / trades ---", flush=True)
-                    order_ids_ledger = {str(r.get("order_id")) for r in outstanding if r.get("order_id")}
+                    order_ids_ledger = {
+                        str(r.get("order_id")) for r in outstanding if r.get("order_id")
+                    }
                     for t in open_trades:
                         oid = str(t.order.orderId) if t.order else None
                         if oid in order_ids_ledger or not order_ids_ledger:
                             status = t.orderStatus.status if t.orderStatus else "?"
                             filled = getattr(t.orderStatus, "filled", 0) or 0
                             avg = getattr(t.orderStatus, "avgFillPrice", None) or None
-                            print(f"  order_id={oid} status={status} filled={filled} avgFillPrice={avg}", flush=True)
+                            print(
+                                f"  order_id={oid} status={status} filled={filled} avgFillPrice={avg}",
+                                flush=True,
+                            )
             except Exception as e:
                 print(f"  [WARN] Could not query IB: {e}", flush=True)
         return (0, [])
@@ -686,8 +839,12 @@ def main() -> tuple[int, list]:
             from src.data import ibkr_live_provider as _ibkr
             from src.data.contract_resolver import resolve as _resolve_contract
 
-            _live_client_id = 10 + (int(time.time()) % 89)  # 10–98; avoids reuse across rapid restarts
-            _ib = _ibkr.connect(args.ibkr_host, args.ibkr_port, client_id=_live_client_id)
+            _live_client_id = 10 + (
+                int(time.time()) % 89
+            )  # 10–98; avoids reuse across rapid restarts
+            _ib = _ibkr.connect(
+                args.ibkr_host, args.ibkr_port, client_id=_live_client_id
+            )
             try:
                 _contracts = []
                 _contract_map = {}
@@ -731,7 +888,6 @@ def main() -> tuple[int, list]:
                 prices_dict[ticker] = df
 
     # Data quality check (RESILIENCE_SPEC Section 2)
-    from src.data.data_quality import DataQualityReport
     critical_missing = []
     degraded_missing = []
     warnings_list = []
@@ -743,19 +899,33 @@ def main() -> tuple[int, list]:
     regime_path = ROOT / "outputs" / "regime_status.json"
     if not regime_path.exists():
         critical_missing.append("regime_status")
-    dq_report = DataQualityReport(critical_missing=critical_missing, degraded_missing=degraded_missing, warnings=warnings_list)
+    dq_report = DataQualityReport(
+        critical_missing=critical_missing,
+        degraded_missing=degraded_missing,
+        warnings=warnings_list,
+    )
     if not dq_report.can_rebalance:
-        _write_execution_status(dq_report, ibkr_state="UNKNOWN", manual_intervention_required=True)
+        _write_execution_status(
+            dq_report, ibkr_state="UNKNOWN", manual_intervention_required=True
+        )
         for src in dq_report.critical_missing:
             import logging
-            logging.getLogger(__name__).error("[DATA QUALITY] Critical source missing: %s", src)
-        print(f"[DATA QUALITY] Cannot rebalance - critical sources missing: {dq_report.critical_missing}", flush=True)
+
+            logging.getLogger(__name__).error(
+                "[DATA QUALITY] Critical source missing: %s", src
+            )
+        print(
+            f"[DATA QUALITY] Cannot rebalance - critical sources missing: {dq_report.critical_missing}",
+            flush=True,
+        )
         return (1, [])
     if dq_report.degraded_missing or dq_report.warnings:
         import logging
+
         logging.getLogger(__name__).warning(
             "[DATA QUALITY] Degraded or warnings (continuing): degraded_missing=%s warnings=%s",
-            dq_report.degraded_missing, dq_report.warnings,
+            dq_report.degraded_missing,
+            dq_report.warnings,
         )
 
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
@@ -772,13 +942,15 @@ def main() -> tuple[int, list]:
     else:
         _today = pd.Timestamp.today().normalize()
         mondays = pd.date_range(min(all_dates), max(all_dates), freq="W-MON")
-        mondays = mondays[mondays <= _today]   # cap at today — prevents future-dated CSV rows driving as_of
+        mondays = mondays[
+            mondays <= _today
+        ]  # cap at today — prevents future-dated CSV rows driving as_of
         as_of = mondays[-1] if len(mondays) else pd.Timestamp(all_dates[-1])
 
     # Resolve executor, position_manager, and account_value before weight computation (stop-loss gate needs NAV).
-    from src.execution.executor_factory import ExecutorFactory
     from src.execution.mock_executor import MockExecutor
     from src.portfolio.position_manager import PositionManager
+
     trading_config_path = ROOT / "config" / "trading_config.yaml"
     if args.mode == "mock":
         executor = ExecutorFactory.from_config_file()
@@ -816,6 +988,7 @@ def main() -> tuple[int, list]:
     elif args.mode == "paper" and hasattr(executor, "ib_provider"):
         try:
             from src.execution.ibkr_bridge import AccountMonitor
+
             monitor_for_nav = AccountMonitor(executor.ib_provider)
             monitor_for_nav.refresh()
             live_nav = monitor_for_nav.get_net_liquidation()
@@ -834,7 +1007,10 @@ def main() -> tuple[int, list]:
     if args.rebalance:
         # Rebalance mode: pull last valid weights from cache (no fresh signal generation)
         if not LAST_VALID_WEIGHTS_PATH.exists():
-            print("ERROR: --rebalance requires last valid weights. Run without --rebalance once to populate outputs/last_valid_weights.json", flush=True)
+            print(
+                "ERROR: --rebalance requires last valid weights. Run without --rebalance once to populate outputs/last_valid_weights.json",
+                flush=True,
+            )
             return (1, [])
         with open(LAST_VALID_WEIGHTS_PATH, "r", encoding="utf-8") as f:
             cache = json.load(f)
@@ -842,9 +1018,14 @@ def main() -> tuple[int, list]:
         if not target_weights_dict:
             print("No weights in cache. Run without --rebalance first.", flush=True)
             return (1, [])
-        optimal_weights_series = pd.Series(target_weights_dict).reindex(tickers, fill_value=0.0).fillna(0.0)
-        intent_tickers = [t for t, w in target_weights_dict.items()
-                          if float(w) != 0 and t in set(tickers)]
+        optimal_weights_series = (
+            pd.Series(target_weights_dict).reindex(tickers, fill_value=0.0).fillna(0.0)
+        )
+        intent_tickers = [
+            t
+            for t, w in target_weights_dict.items()
+            if float(w) != 0 and t in set(tickers)
+        ]
         intent = SimpleNamespace(
             tickers=intent_tickers,
             weights=dict(optimal_weights_series),
@@ -864,7 +1045,10 @@ def main() -> tuple[int, list]:
                 }
                 _dd_path.parent.mkdir(parents=True, exist_ok=True)
                 _dd_path.write_text(json.dumps(_fresh, indent=2), encoding="utf-8")
-                print("[STOP-LOSS] Reset: peak_nav and flatten_active cleared. Normal execution continues.", flush=True)
+                print(
+                    "[STOP-LOSS] Reset: peak_nav and flatten_active cleared. Normal execution continues.",
+                    flush=True,
+                )
             except Exception as _e:
                 print(f"[STOP-LOSS] Reset failed: {_e}", flush=True)
 
@@ -876,7 +1060,9 @@ def main() -> tuple[int, list]:
             try:
                 with open(_mcfg_path, "r", encoding="utf-8") as _f:
                     _mcfg = yaml.safe_load(_f) or {}
-                stop_threshold = float(_mcfg.get("risk_management", {}).get("stop_loss_threshold", -0.10))
+                stop_threshold = float(
+                    _mcfg.get("risk_management", {}).get("stop_loss_threshold", -0.10)
+                )
             except Exception:
                 pass
         if tracker["drawdown"] <= stop_threshold or tracker.get("flatten_active"):
@@ -886,9 +1072,12 @@ def main() -> tuple[int, list]:
             )
             optimal_weights_series = pd.Series(0.0, index=tickers)
             intent_tickers = []
-            intent = SimpleNamespace(tickers=[], weights={}, futures_multipliers=_futures_mults)
+            intent = SimpleNamespace(
+                tickers=[], weights={}, futures_multipliers=_futures_mults
+            )
             try:
                 from src.monitoring.telegram_alerts import send_alert
+
                 send_alert(
                     "stop_loss",
                     {
@@ -918,7 +1107,9 @@ def main() -> tuple[int, list]:
                             "peak_nav": tracker.get("peak_nav"),
                             "cancelled_order_ids": _cancelled_ids,
                             "safe_state": _safe_result.get("safe_state"),
-                            "open_orders_remaining": _safe_result.get("open_orders_remaining"),
+                            "open_orders_remaining": _safe_result.get(
+                                "open_orders_remaining"
+                            ),
                         },
                     )
                     log_incident("safe_state_verified", _safe_result)
@@ -940,7 +1131,10 @@ def main() -> tuple[int, list]:
                         pass
                 except Exception as _cancel_err:
                     import logging
-                    logging.getLogger(__name__).error("[STOP_LOSS] Order cancellation failed: %s", _cancel_err)
+
+                    logging.getLogger(__name__).error(
+                        "[STOP_LOSS] Order cancellation failed: %s", _cancel_err
+                    )
                     log_incident(
                         "circuit_breaker_triggered",
                         {
@@ -962,7 +1156,9 @@ def main() -> tuple[int, list]:
 
         score_floor = _get_score_floor()
         if args.pods:
-            optimal_weights_series = _run_pods(as_of, tickers, prices_dict, data_dir, args)
+            optimal_weights_series = _run_pods(
+                as_of, tickers, prices_dict, data_dir, args
+            )
         else:
             optimal_weights_series = compute_target_weights(
                 as_of,
@@ -986,11 +1182,20 @@ def main() -> tuple[int, list]:
         # Persist for next --rebalance
         LAST_VALID_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(LAST_VALID_WEIGHTS_PATH, "w", encoding="utf-8") as f:
-            json.dump({"as_of": str(as_of.date()), "weights": optimal_weights_series.to_dict()}, f, indent=2)
+            json.dump(
+                {
+                    "as_of": str(as_of.date()),
+                    "weights": optimal_weights_series.to_dict(),
+                },
+                f,
+                indent=2,
+            )
 
     # Successful completion: write execution_status for dashboard (RESILIENCE_SPEC Section 2)
     _ibkr_state = "CONNECTED" if args.mode == "paper" else "UNKNOWN"
-    _write_execution_status(DataQualityReport(), ibkr_state=_ibkr_state, manual_intervention_required=False)
+    _write_execution_status(
+        DataQualityReport(), ibkr_state=_ibkr_state, manual_intervention_required=False
+    )
 
     smh_short_shares = 0
     smh_hedge_row = None
@@ -1008,7 +1213,11 @@ def main() -> tuple[int, list]:
                 beta_lookback_days = int(hedge_cfg.get("beta_lookback_days", 60))
                 smh_prices = load_prices(data_dir, ["SMH"])
                 smh_df = smh_prices.get("SMH") if smh_prices else None
-                if smh_df is not None and not smh_df.empty and "close" in smh_df.columns:
+                if (
+                    smh_df is not None
+                    and not smh_df.empty
+                    and "close" in smh_df.columns
+                ):
                     smh_sliced = smh_df.loc[smh_df.index <= as_of]
                     if not smh_sliced.empty:
                         rets_smh = smh_sliced["close"].pct_change().dropna()
@@ -1016,7 +1225,11 @@ def main() -> tuple[int, list]:
                         if smh_last_price > 0:
                             betas = {}
                             for t in intent_tickers:
-                                if t not in prices_dict or prices_dict[t] is None or prices_dict[t].empty:
+                                if (
+                                    t not in prices_dict
+                                    or prices_dict[t] is None
+                                    or prices_dict[t].empty
+                                ):
                                     betas[t] = 1.0
                                     continue
                                 df_t = prices_dict[t].loc[prices_dict[t].index <= as_of]
@@ -1024,16 +1237,29 @@ def main() -> tuple[int, list]:
                                     betas[t] = 1.0
                                     continue
                                 rets_t = df_t["close"].pct_change().dropna()
-                                aligned = pd.concat([rets_t, rets_smh], axis=1, join="inner").dropna().tail(beta_lookback_days)
+                                aligned = (
+                                    pd.concat([rets_t, rets_smh], axis=1, join="inner")
+                                    .dropna()
+                                    .tail(beta_lookback_days)
+                                )
                                 if len(aligned) >= 20:
                                     cov = np.cov(aligned.iloc[:, 0], aligned.iloc[:, 1])
-                                    betas[t] = cov[0, 1] / cov[1, 1] if cov[1, 1] > 0 else 1.0
+                                    betas[t] = (
+                                        cov[0, 1] / cov[1, 1] if cov[1, 1] > 0 else 1.0
+                                    )
                                 else:
                                     betas[t] = 1.0
-                            effective_beta = sum(float(optimal_weights_series.get(t, 0)) * betas[t] for t in intent_tickers)
-                            smh_short_notional = account_value * hedge_ratio * effective_beta
+                            effective_beta = sum(
+                                float(optimal_weights_series.get(t, 0)) * betas[t]
+                                for t in intent_tickers
+                            )
+                            smh_short_notional = (
+                                account_value * hedge_ratio * effective_beta
+                            )
                             smh_short_shares = int(smh_short_notional / smh_last_price)
-                            weekly_borrow_cost = (annual_borrow_rate / 52) * smh_short_notional
+                            weekly_borrow_cost = (
+                                annual_borrow_rate / 52
+                            ) * smh_short_notional
                             print(
                                 f"  [HEDGE] SMH short: {smh_short_shares} shares | beta={effective_beta:.3f} | weekly_borrow_cost=${weekly_borrow_cost:.2f}",
                                 flush=True,
@@ -1051,15 +1277,18 @@ def main() -> tuple[int, list]:
     if args.rebalance:
         # Portfolio-level rebalance: only orders for tickers that drifted past threshold
         from src.execution.ibkr_bridge import RebalanceLogic
+
         positions_df = position_manager.get_current_positions()
         current_positions_list = []
         for _, row in positions_df.iterrows():
-            current_positions_list.append({
-                "symbol": row.get("symbol", ""),
-                "position": float(row.get("quantity", 0)),
-                "avgCost": float(row.get("avg_cost", 0)),
-                "market_value": float(row.get("market_value", 0)),
-            })
+            current_positions_list.append(
+                {
+                    "symbol": row.get("symbol", ""),
+                    "position": float(row.get("quantity", 0)),
+                    "avgCost": float(row.get("avg_cost", 0)),
+                    "market_value": float(row.get("market_value", 0)),
+                }
+            )
         prices_last = {}
         for sym, df in prices_dict.items():
             if df.empty or "close" not in df.columns:
@@ -1085,21 +1314,34 @@ def main() -> tuple[int, list]:
             nav=account_value,
             prices=prices_last,
         )
-        executable = pd.DataFrame([
-            {
-                "symbol": o.ticker,
-                "side": o.side,
-                "quantity": o.quantity,
-                "delta_weight": o.target_weight - o.current_weight,
-                "drift": o.drift,
-                "delta_dollars": o.delta_dollars,
-            }
-            for o in rebalance_orders
-        ])
+        executable = pd.DataFrame(
+            [
+                {
+                    "symbol": o.ticker,
+                    "side": o.side,
+                    "quantity": o.quantity,
+                    "delta_weight": o.target_weight - o.current_weight,
+                    "drift": o.drift,
+                    "delta_dollars": o.delta_dollars,
+                }
+                for o in rebalance_orders
+            ]
+        )
         if executable.empty:
-            executable = pd.DataFrame(columns=["symbol", "side", "quantity", "delta_weight", "drift", "delta_dollars"])
+            executable = pd.DataFrame(
+                columns=[
+                    "symbol",
+                    "side",
+                    "quantity",
+                    "delta_weight",
+                    "drift",
+                    "delta_dollars",
+                ]
+            )
         if smh_short_shares > 0 and smh_hedge_row is not None:
-            executable = pd.concat([executable, pd.DataFrame([smh_hedge_row])], ignore_index=True)
+            executable = pd.concat(
+                [executable, pd.DataFrame([smh_hedge_row])], ignore_index=True
+            )
     else:
         # Build last-close prices as of as_of so PositionManager can compute share quantities.
         # Without prices, quantity = int(delta_dollars / 0) = 0 and executable is always empty.
@@ -1134,9 +1376,13 @@ def main() -> tuple[int, list]:
             significance_threshold=0.02,
             futures_multipliers=getattr(intent, "futures_multipliers", {}),
         )
-        executable = delta_trades[delta_trades["should_trade"] & (delta_trades["quantity"] > 0)]
+        executable = delta_trades[
+            delta_trades["should_trade"] & (delta_trades["quantity"] > 0)
+        ]
         if smh_short_shares > 0 and smh_hedge_row is not None:
-            executable = pd.concat([executable, pd.DataFrame([smh_hedge_row])], ignore_index=True)
+            executable = pd.concat(
+                [executable, pd.DataFrame([smh_hedge_row])], ignore_index=True
+            )
 
     mode_label = "mock" if args.mode == "mock" else "paper"
     title = "rebalance (drift threshold)" if args.rebalance else "delta trades"
@@ -1154,6 +1400,7 @@ def main() -> tuple[int, list]:
 
     if args.mode == "mock":
         from src.execution.fill_ledger import append_fill_record
+
         for _, row in executable.iterrows():
             if row["quantity"] <= 0:
                 continue
@@ -1179,11 +1426,11 @@ def main() -> tuple[int, list]:
             from src.execution.ibkr_bridge import (
                 AccountMonitor,
                 CircuitBreaker,
-                LiveSignal,
                 OrderDispatcher,
                 RiskManager,
                 check_fill,
             )
+
             if hasattr(executor, "ib_provider"):
                 monitor = AccountMonitor(executor.ib_provider)
                 monitor.refresh()
@@ -1197,15 +1444,22 @@ def main() -> tuple[int, list]:
             cb = CircuitBreaker()
             cb.record_nav(time.time(), nav)
             if cb.is_trading_paused():
-                print("  [CIRCUIT BREAKER] Trading paused; no orders submitted.", flush=True)
+                print(
+                    "  [CIRCUIT BREAKER] Trading paused; no orders submitted.",
+                    flush=True,
+                )
             elif cb.check_and_pause_if_breach(nav):
-                print("  [CIRCUIT BREAKER] 1d drawdown breach; trading paused.", flush=True)
+                print(
+                    "  [CIRCUIT BREAKER] 1d drawdown breach; trading paused.",
+                    flush=True,
+                )
             else:
                 # Build ATR and entry price from prices for Smart Stop and sizing
                 atr_per_share = {}
                 entry_price_map = {}
                 if prices_dict:
                     from src.portfolio.position_sizer import compute_atr_series
+
                     for sym, df in prices_dict.items():
                         df_ohlcv = ensure_ohlcv(df)
                         if len(df_ohlcv) < 2:
@@ -1234,19 +1488,23 @@ def main() -> tuple[int, list]:
                     with open(trading_config_path, "r", encoding="utf-8") as f:
                         tc = yaml.safe_load(f)
                     exec_config = tc.get("trading", {}).get("execution", {})
-                min_sz = int(exec_config.get("min_order_size", 1))
-                max_sz = int(exec_config.get("max_position_size", 10000))
+                _min_sz = int(exec_config.get("min_order_size", 1))  # noqa: F841
+                _max_sz = int(exec_config.get("max_position_size", 10000))  # noqa: F841
                 if monitor is not None:
                     risk_mgr = RiskManager()
                     _tcfg = tc.get("trading", {}) if tc else {}
-                    dispatcher = OrderDispatcher(executor, risk_mgr, monitor, trading_cfg=_tcfg)
+                    dispatcher = OrderDispatcher(
+                        executor, risk_mgr, monitor, trading_cfg=_tcfg
+                    )
                     _fill_positions_before = {}
                     _submitted_orders = []
                     if args.confirm_paper:
                         try:
-                            for _rec in (monitor.get_existing_positions() or []):
+                            for _rec in monitor.get_existing_positions() or []:
                                 _sym = str(_rec.get("symbol", "")).upper()
-                                _fill_positions_before[_sym] = int(_rec.get("position", 0))
+                                _fill_positions_before[_sym] = int(
+                                    _rec.get("position", 0)
+                                )
                         except Exception:
                             _fill_positions_before = {}
                     for _, row in executable.iterrows():
@@ -1263,35 +1521,47 @@ def main() -> tuple[int, list]:
                             order_type="MARKET",
                         )
                         if args.confirm_paper and result.get("status") != "error":
-                            _submitted_orders.append({
-                                "ticker": sym,
-                                "side": result.get("side", row["side"]),
-                                "quantity": result.get("quantity", int(row["quantity"])),
-                                "order_id": result.get("order_id"),
-                                "stop_order_id": result.get("stop_order_id"),
-                                "filled_quantity": result.get("filled_quantity", 0),
-                                "filled_price": result.get("filled_price"),
-                                "order_comment": result.get("comment"),
-                            })
+                            _submitted_orders.append(
+                                {
+                                    "ticker": sym,
+                                    "side": result.get("side", row["side"]),
+                                    "quantity": result.get(
+                                        "quantity", int(row["quantity"])
+                                    ),
+                                    "order_id": result.get("order_id"),
+                                    "stop_order_id": result.get("stop_order_id"),
+                                    "filled_quantity": result.get("filled_quantity", 0),
+                                    "filled_price": result.get("filled_price"),
+                                    "order_comment": result.get("comment"),
+                                }
+                            )
                         if result.get("status") == "error":
-                            print(f"  [ORDER ERROR] {sym}: {result.get('error', 'unknown')}", flush=True)
+                            print(
+                                f"  [ORDER ERROR] {sym}: {result.get('error', 'unknown')}",
+                                flush=True,
+                            )
                     if monitor is not None:
                         monitor.refresh()
-                        monitor.log_nav_snapshot("Post-Rebalance NAV", monitor.get_net_liquidation())
+                        monitor.log_nav_snapshot(
+                            "Post-Rebalance NAV", monitor.get_net_liquidation()
+                        )
                     if args.confirm_paper and _submitted_orders:
                         _FILL_CHECK_DELAY_SECS = 3  # allow broker time to process fills
                         time.sleep(_FILL_CHECK_DELAY_SECS)
                         monitor.refresh()
                         _fill_positions_after = {}
                         try:
-                            for _rec in (monitor.get_existing_positions() or []):
+                            for _rec in monitor.get_existing_positions() or []:
                                 _sym = str(_rec.get("symbol", "")).upper()
-                                _fill_positions_after[_sym] = int(_rec.get("position", 0))
+                                _fill_positions_after[_sym] = int(
+                                    _rec.get("position", 0)
+                                )
                         except Exception:
                             _fill_positions_after = {}
 
                         print("\n--- Fill Check ---")
                         from src.execution.fill_ledger import append_fill_record
+
                         for _order in _submitted_orders:
                             _t = _order["ticker"].upper()
                             _before = _fill_positions_before.get(_t, 0)
@@ -1304,11 +1574,17 @@ def main() -> tuple[int, list]:
                                 position_after=_after,
                             )
                             _level = "OK   " if _chk["passed"] else "WARN "
-                            print(f"[{_level}] {_t}: {_chk['reason']} "
-                                  f"(before={_before}, after={_after})")
-                            if _chk["passed"] and "full fill" in (_chk.get("reason") or ""):
+                            print(
+                                f"[{_level}] {_t}: {_chk['reason']} "
+                                f"(before={_before}, after={_after})"
+                            )
+                            if _chk["passed"] and "full fill" in (
+                                _chk.get("reason") or ""
+                            ):
                                 _status = "full"
-                            elif _chk["passed"] and "partial" in (_chk.get("reason") or ""):
+                            elif _chk["passed"] and "partial" in (
+                                _chk.get("reason") or ""
+                            ):
                                 _status = "partial"
                             elif not _chk["passed"]:
                                 _status = "failed"
@@ -1332,25 +1608,42 @@ def main() -> tuple[int, list]:
                             current_run_fills.append(_rec)
                             if _qty_filled < _order["quantity"]:
                                 try:
-                                    from src.monitoring.telegram_alerts import send_alert as _sa
-                                    _sa("fill_miss", {
-                                        "ticker": _t,
-                                        "side": _order["side"],
-                                        "qty_requested": _order["quantity"],
-                                        "qty_filled": _qty_filled,
-                                        "fill_check_reason": _chk.get("reason", ""),
-                                    })
+                                    from src.monitoring.telegram_alerts import (
+                                        send_alert as _sa,
+                                    )
+
+                                    _sa(
+                                        "fill_miss",
+                                        {
+                                            "ticker": _t,
+                                            "side": _order["side"],
+                                            "qty_requested": _order["quantity"],
+                                            "qty_filled": _qty_filled,
+                                            "fill_check_reason": _chk.get("reason", ""),
+                                        },
+                                    )
                                 except Exception:
                                     pass
-                        cb.record_nav(time.time(), monitor.get_net_liquidation() if monitor else nav)
+                        cb.record_nav(
+                            time.time(),
+                            monitor.get_net_liquidation() if monitor else nav,
+                        )
                 else:
                     from src.utils.config_manager import get_config as _get_config
-                    _min_sz = int(_get_config().get_param("trading_config.trading.execution.min_order_size", 1))
+
+                    _min_sz = int(
+                        _get_config().get_param(
+                            "trading_config.trading.execution.min_order_size", 1
+                        )
+                    )
                     for _, row in executable.iterrows():
                         if row["quantity"] <= 0:
                             continue
                         if int(row["quantity"]) < _min_sz:
-                            print(f"  [SKIP] {row['symbol']}: quantity {int(row['quantity'])} below min_order_size {_min_sz}", flush=True)
+                            print(
+                                f"  [SKIP] {row['symbol']}: quantity {int(row['quantity'])} below min_order_size {_min_sz}",
+                                flush=True,
+                            )
                             continue
                         executor.submit_order(
                             ticker=row["symbol"],
@@ -1360,12 +1653,15 @@ def main() -> tuple[int, list]:
                         )
                 print("  (Paper: orders submitted to IB paper account.)", flush=True)
         else:
-            print("  (Paper: DRY-RUN. Use --confirm-paper to submit orders.)", flush=True)
+            print(
+                "  (Paper: DRY-RUN. Use --confirm-paper to submit orders.)", flush=True
+            )
 
     # Update pod fitness after execution when --pods (Task 2 of 3)
     if args.pods:
         try:
             from src.portfolio.pod_pnl_tracker import update_pod_fitness
+
             update_pod_fitness(
                 fitness_path=ROOT / "outputs" / "pod_fitness.json",
                 weights_history_path=ROOT / "outputs" / "pod_weights_history.jsonl",
@@ -1373,6 +1669,7 @@ def main() -> tuple[int, list]:
             )
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning("update_pod_fitness failed: %s", e)
 
     return (0, current_run_fills)

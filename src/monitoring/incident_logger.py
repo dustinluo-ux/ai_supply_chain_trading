@@ -1,6 +1,7 @@
 """
 Append-only incident log (JSONL). No logging module to avoid circular dependency.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_LOG_PATH = ROOT / "logs" / "incident_history.jsonl"
 
 
-def log_incident(event_type: str, payload: dict, log_path: Path | str | None = None) -> None:
+def log_incident(
+    event_type: str, payload: dict, log_path: Path | str | None = None
+) -> None:
     """Append one incident record (timestamp, event_type, payload) to the JSONL log. Never raises."""
     if log_path is None:
         log_path = DEFAULT_LOG_PATH

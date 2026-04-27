@@ -10,6 +10,7 @@ Usage:
     python scripts/update_news_data.py --start 2024-01-01  # override start
     python scripts/update_news_data.py --tickers NVDA,AMD  # override watchlist
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,16 +45,21 @@ def main() -> int:
         description="Update news JSON from configured source using config/config.yaml",
     )
     parser.add_argument(
-        "--tickers", type=str, default=None,
+        "--tickers",
+        type=str,
+        default=None,
         help="Comma-separated tickers (default: watchlist from config)",
     )
     parser.add_argument(
-        "--start", type=str,
+        "--start",
+        type=str,
         default=(datetime.date.today() - datetime.timedelta(days=7)).isoformat(),
     )
     parser.add_argument("--end", type=str, default=datetime.date.today().isoformat())
     parser.add_argument(
-        "--delay", type=float, default=1.0,
+        "--delay",
+        type=float,
+        default=1.0,
         help="Seconds between tickers (rate-limit courtesy)",
     )
     args = parser.parse_args()
@@ -62,6 +68,7 @@ def main() -> int:
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     else:
         from src.utils.config_manager import get_config
+
         tickers = get_config().get_watchlist()
 
     if not tickers:
@@ -92,6 +99,7 @@ def main() -> int:
             success += 1
             try:
                 from src.data.news_sources.tiingo_provider import TiingoProvider
+
                 tiingo = TiingoProvider(data_dir=news_dir)
                 tiingo_articles = tiingo.fetch_articles_for_ticker(
                     ticker, args.start, args.end, use_cache=True

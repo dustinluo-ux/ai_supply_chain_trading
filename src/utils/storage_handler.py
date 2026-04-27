@@ -3,6 +3,7 @@ Parquet I/O utility for saving and loading DataFrames.
 
 Uses fastparquet engine. Optional S3 sync when STORAGE_MODE=S3 via CloudStorageProvider.
 """
+
 import logging
 from pathlib import Path
 
@@ -21,6 +22,7 @@ class CloudStorageProvider:
             AWS_REGION,
             S3_BUCKET_NAME,
         )
+
         self.bucket = S3_BUCKET_NAME
         self.region = AWS_REGION
         self.access_key = AWS_ACCESS_KEY_ID
@@ -32,6 +34,7 @@ class CloudStorageProvider:
     def upload(self, local_path: Path, s3_key: str) -> None:
         if self._has_credentials():
             import boto3
+
             client = boto3.client(
                 "s3",
                 region_name=self.region,
@@ -45,6 +48,7 @@ class CloudStorageProvider:
     def download(self, s3_key: str, local_path: Path) -> None:
         if self._has_credentials():
             import boto3
+
             client = boto3.client(
                 "s3",
                 region_name=self.region,
@@ -71,6 +75,7 @@ class StorageGateway:
 
 def _s3_key_for_path(path: Path) -> str:
     from src.core.config import DATA_DIR
+
     try:
         return path.resolve().relative_to(DATA_DIR.resolve()).as_posix()
     except ValueError:
@@ -80,6 +85,7 @@ def _s3_key_for_path(path: Path) -> str:
 def save_to_parquet(df: pd.DataFrame, path: str | Path) -> None:
     """Save DataFrame to parquet; create parent directories if needed. Logs row count and path at DEBUG."""
     from src.core.config import STORAGE_MODE
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path, engine="fastparquet", index=True)
@@ -91,6 +97,7 @@ def save_to_parquet(df: pd.DataFrame, path: str | Path) -> None:
 def read_from_parquet(path: str | Path) -> pd.DataFrame:
     """Load DataFrame from parquet. Raises FileNotFoundError if path does not exist. Logs row count and path at DEBUG."""
     from src.core.config import STORAGE_MODE
+
     path = Path(path)
     if STORAGE_MODE == "S3":
         CloudStorageProvider().download(_s3_key_for_path(path), path)

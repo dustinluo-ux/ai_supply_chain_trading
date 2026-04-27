@@ -2,6 +2,7 @@
 IBKR connection state machine. Standalone; connection injected optionally.
 Spec: docs/RESILIENCE_SPEC.md Section 3.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,6 +39,7 @@ def _load_risk_config() -> dict[str, Any]:
         return {}
     try:
         import yaml
+
         with open(path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         return cfg.get("risk_management", {}) or {}
@@ -57,9 +59,15 @@ class IBKRStateMachine:
         self.last_heartbeat: datetime | None = None
         self.consecutive_failures = 0
         self._config = config if config is not None else _load_risk_config()
-        self._latency_threshold_ms = float(self._config.get("ibkr_latency_threshold_ms", 500))
-        self._freeze_latency_ms = float(self._config.get("ibkr_freeze_latency_ms", 2000))
-        self._freeze_timeout_seconds = int(self._config.get("ibkr_freeze_timeout_seconds", 60))
+        self._latency_threshold_ms = float(
+            self._config.get("ibkr_latency_threshold_ms", 500)
+        )
+        self._freeze_latency_ms = float(
+            self._config.get("ibkr_freeze_latency_ms", 2000)
+        )
+        self._freeze_timeout_seconds = int(
+            self._config.get("ibkr_freeze_timeout_seconds", 60)
+        )
 
     @property
     def can_submit_orders(self) -> bool:
@@ -73,15 +81,25 @@ class IBKRStateMachine:
         if to_state is None and event == "force_disconnect":
             to_state = "DISCONNECTED"
         if to_state is None:
-            logger.warning("[IBKRStateMachine] Invalid transition: state=%s event=%s (ignored)", from_state, event)
+            logger.warning(
+                "[IBKRStateMachine] Invalid transition: state=%s event=%s (ignored)",
+                from_state,
+                event,
+            )
             return
         self.current_state = to_state
         logger.info("[IBKRStateMachine] %s --[%s]--> %s", from_state, event, to_state)
         try:
             from src.monitoring.incident_logger import log_incident
+
             log_incident(
                 "state_machine_transition",
-                {"from": from_state, "event": event, "to": to_state, "latency_ms": self.latency_ms},
+                {
+                    "from": from_state,
+                    "event": event,
+                    "to": to_state,
+                    "latency_ms": self.latency_ms,
+                },
             )
         except Exception:
             pass
@@ -106,9 +124,12 @@ class IBKRStateMachine:
             with open(EXECUTION_STATUS_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            logger.warning("[IBKRStateMachine] Could not write execution_status.json: %s", e)
+            logger.warning(
+                "[IBKRStateMachine] Could not write execution_status.json: %s", e
+            )
         try:
             from src.monitoring.telegram_alerts import send_alert
+
             send_alert(
                 "connection_freeze",
                 {
@@ -118,7 +139,9 @@ class IBKRStateMachine:
                 },
             )
         except Exception as e:
-            logger.warning("[IBKRStateMachine] Could not send connection_freeze alert: %s", e)
+            logger.warning(
+                "[IBKRStateMachine] Could not send connection_freeze alert: %s", e
+            )
 
     def ping(self, ib_connection: Any = None) -> float | None:
         """
@@ -138,6 +161,7 @@ class IBKRStateMachine:
             if hasattr(result, "__await__"):
                 try:
                     import asyncio
+
                     asyncio.get_event_loop().run_until_complete(result)
                 except Exception:
                     pass
@@ -180,7 +204,9 @@ class IBKRStateMachine:
         return {
             "current_state": self.current_state,
             "latency_ms": self.latency_ms,
-            "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "last_heartbeat": (
+                self.last_heartbeat.isoformat() if self.last_heartbeat else None
+            ),
             "can_submit_orders": self.can_submit_orders,
             "consecutive_failures": self.consecutive_failures,
         }

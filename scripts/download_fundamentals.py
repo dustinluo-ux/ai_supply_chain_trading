@@ -11,6 +11,7 @@ Usage (CMD):
 Runtime: ~5-15 minutes depending on exchange sizes and API rate limits.
 Output: ~50k-200k rows covering US, HK, JP, DE, CO, NL exchanges.
 """
+
 from __future__ import annotations
 
 import csv
@@ -40,13 +41,13 @@ OUT_CSV = OUT_DIR / "eodhd_fundamentals_PIT.csv"
 # Target exchanges: (eodhd_code, label)
 # Covers US (NASDAQ/NYSE), HK, Japan, Germany, Denmark, Netherlands
 EXCHANGES = [
-    ("US",    "United States"),
-    ("HK",    "Hong Kong"),
-    ("TSE",   "Japan (Tokyo)"),
+    ("US", "United States"),
+    ("HK", "Hong Kong"),
+    ("TSE", "Japan (Tokyo)"),
     ("XETRA", "Germany"),
-    ("CO",    "Denmark (Copenhagen)"),
-    ("AS",    "Netherlands (Amsterdam)"),
-    ("STO",   "Sweden (Stockholm)"),
+    ("CO", "Denmark (Copenhagen)"),
+    ("AS", "Netherlands (Amsterdam)"),
+    ("STO", "Sweden (Stockholm)"),
 ]
 
 COMMON_STOCK_TYPES = {"Common Stock", "cs", "stock"}
@@ -77,7 +78,10 @@ def fetch_page(exchange: str, offset: int) -> list[dict]:
             time.sleep(10)
             return fetch_page(exchange, offset)
         else:
-            print(f"  [WARN] HTTP {resp.status_code} for {exchange} offset={offset}", flush=True)
+            print(
+                f"  [WARN] HTTP {resp.status_code} for {exchange} offset={offset}",
+                flush=True,
+            )
             return []
     except Exception as e:
         print(f"  [ERROR] {exchange} offset={offset}: {e}", flush=True)
@@ -95,30 +99,43 @@ def extract_fields(record: dict, exchange_label: str) -> dict | None:
         return None
 
     highlights = record.get("Highlights", {})
-    market_cap = highlights.get("MarketCapitalization") or general.get("MarketCapitalization")
+    market_cap = highlights.get("MarketCapitalization") or general.get(
+        "MarketCapitalization"
+    )
 
     return {
-        "code":         general.get("Code", ""),
-        "name":         general.get("Name", ""),
-        "exchange":     general.get("Exchange", exchange_label),
-        "country":      general.get("CountryISO", ""),
-        "currency":     general.get("CurrencyCode", ""),
-        "type":         ticker_type,
-        "sector":       general.get("Sector", ""),
-        "industry":     general.get("Industry", ""),
-        "ipo_date":     general.get("IPODate", ""),
-        "market_cap":   market_cap or "",
-        "gic_sector":   general.get("GicSector", ""),
-        "gic_group":    general.get("GicGroup", ""),
+        "code": general.get("Code", ""),
+        "name": general.get("Name", ""),
+        "exchange": general.get("Exchange", exchange_label),
+        "country": general.get("CountryISO", ""),
+        "currency": general.get("CurrencyCode", ""),
+        "type": ticker_type,
+        "sector": general.get("Sector", ""),
+        "industry": general.get("Industry", ""),
+        "ipo_date": general.get("IPODate", ""),
+        "market_cap": market_cap or "",
+        "gic_sector": general.get("GicSector", ""),
+        "gic_group": general.get("GicGroup", ""),
         "gic_industry": general.get("GicIndustry", ""),
         "description_keywords": "",  # filled later by scouting module keyword scan
     }
 
 
 FIELDNAMES = [
-    "code", "name", "exchange", "country", "currency", "type",
-    "sector", "industry", "ipo_date", "market_cap",
-    "gic_sector", "gic_group", "gic_industry", "description_keywords",
+    "code",
+    "name",
+    "exchange",
+    "country",
+    "currency",
+    "type",
+    "sector",
+    "industry",
+    "ipo_date",
+    "market_cap",
+    "gic_sector",
+    "gic_group",
+    "gic_industry",
+    "description_keywords",
 ]
 
 

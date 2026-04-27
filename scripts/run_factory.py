@@ -2,6 +2,7 @@
 Factory CLI: load data, run get_best_model, print winner and exit.
 Loading logic from scripts/train_ml_model.py lines 44–66.
 """
+
 from __future__ import annotations
 
 import sys
@@ -34,7 +35,9 @@ def _patch_model_config_training_window(config_path: Path, train_years: int) -> 
     _cfg["training"]["test_start"] = str(_test_start)
     _cfg["training"]["test_end"] = str(_test_end)
     with open(config_path, "w", encoding="utf-8") as _f:
-        yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(
+            _cfg, _f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
 
 def main() -> int:
@@ -47,7 +50,9 @@ def main() -> int:
     from src.models.factory import get_best_model
 
     parser = argparse.ArgumentParser(description="Run factory tournament.")
-    parser.add_argument("--no-news", action="store_true", help="Pass news_signals=None.")
+    parser.add_argument(
+        "--no-news", action="store_true", help="Pass news_signals=None."
+    )
     parser.add_argument(
         "--train-years",
         type=int,
@@ -89,16 +94,21 @@ def main() -> int:
                     "supply_chain": float(_payload.get("supply_chain_score", 0.5)),
                 }
 
-    model, model_type, ic = get_best_model(prices_dict, news_signals or {}, str(CONFIG_PATH))
+    model, model_type, ic = get_best_model(
+        prices_dict, news_signals or {}, str(CONFIG_PATH)
+    )
     model_path = "tech_only"
     if model is not None:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             a = (yaml.safe_load(f).get("tracks") or {}).get("A") or {}
-        model_path = a.get("model_path", "tech_only") if isinstance(a, dict) else "tech_only"
+        model_path = (
+            a.get("model_path", "tech_only") if isinstance(a, dict) else "tech_only"
+        )
     print(f"[FACTORY] Winner: {model_type}", flush=True)
     print(f"[FACTORY] IC: {ic:.4f}", flush=True)
     print(f"[FACTORY] Model path: {model_path or 'tech_only'}", flush=True)
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

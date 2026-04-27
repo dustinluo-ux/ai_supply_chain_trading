@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +34,11 @@ class UnifiedNewsLoader:
             start_d = self._to_date(start_date)
             end_d = self._to_date(end_date)
             if start_d is None or end_d is None or start_d > end_d:
-                logger.warning("[UNIFIED_NEWS] Invalid date range: start=%s end=%s", start_date, end_date)
+                logger.warning(
+                    "[UNIFIED_NEWS] Invalid date range: start=%s end=%s",
+                    start_date,
+                    end_date,
+                )
                 return {}
 
             pre_start = start_d
@@ -49,7 +53,9 @@ class UnifiedNewsLoader:
                 pre_out = self._load_pre_cutoff_eodhd(tickers_clean, pre_start, pre_end)
 
             if post_start <= post_end:
-                post_out = self._load_post_cutoff_tiingo_or_fallback(tickers_clean, post_start, post_end)
+                post_out = self._load_post_cutoff_tiingo_or_fallback(
+                    tickers_clean, post_start, post_end
+                )
 
             merged = self._merge_with_post_priority(pre_out, post_out)
             if not merged:
@@ -81,7 +87,10 @@ class UnifiedNewsLoader:
         try:
             eodhd_path = self.news_dir / "eodhd_global_backfill.parquet"
             if not eodhd_path.exists():
-                logger.warning("[UNIFIED_NEWS] EODHD parquet missing for pre-cutoff window: %s", eodhd_path)
+                logger.warning(
+                    "[UNIFIED_NEWS] EODHD parquet missing for pre-cutoff window: %s",
+                    eodhd_path,
+                )
                 return {}
             eodhd_out, _ = load_eodhd_news_signals(
                 tickers,
@@ -103,7 +112,9 @@ class UnifiedNewsLoader:
         try:
             tiingo_files = self._tiingo_files_for_window(start_d, end_d)
             if not tiingo_files:
-                logger.warning("[UNIFIED_NEWS] No Tiingo parquets found; falling back to EODHD for post-cutoff.")
+                logger.warning(
+                    "[UNIFIED_NEWS] No Tiingo parquets found; falling back to EODHD for post-cutoff."
+                )
                 return self._load_post_fallback_eodhd(tickers, start_d, end_d)
 
             frames: list[pd.DataFrame] = []
@@ -112,16 +123,22 @@ class UnifiedNewsLoader:
                     df = pd.read_parquet(fp, engine="fastparquet")
                     frames.append(df)
                 except Exception as exc:
-                    logger.warning("[UNIFIED_NEWS] Failed reading Tiingo parquet %s: %s", fp, exc)
+                    logger.warning(
+                        "[UNIFIED_NEWS] Failed reading Tiingo parquet %s: %s", fp, exc
+                    )
 
             if not frames:
-                logger.warning("[UNIFIED_NEWS] Tiingo files unreadable; falling back to EODHD for post-cutoff.")
+                logger.warning(
+                    "[UNIFIED_NEWS] Tiingo files unreadable; falling back to EODHD for post-cutoff."
+                )
                 return self._load_post_fallback_eodhd(tickers, start_d, end_d)
 
             raw = pd.concat(frames, ignore_index=True)
             required = {"Date", "Ticker", "Sentiment"}
             if not required.issubset(set(raw.columns)):
-                logger.warning("[UNIFIED_NEWS] Tiingo parquet schema missing required columns.")
+                logger.warning(
+                    "[UNIFIED_NEWS] Tiingo parquet schema missing required columns."
+                )
                 return self._load_post_fallback_eodhd(tickers, start_d, end_d)
 
             raw = raw.copy()
@@ -136,10 +153,14 @@ class UnifiedNewsLoader:
                 & (raw["Date"] <= end_d)
             ]
             if raw.empty:
-                logger.warning("[UNIFIED_NEWS] Tiingo had no rows after ticker/date filtering.")
+                logger.warning(
+                    "[UNIFIED_NEWS] Tiingo had no rows after ticker/date filtering."
+                )
                 return {}
 
-            by_date_ticker = raw.groupby(["Date", "Ticker"], as_index=False)["Sentiment"].mean()
+            by_date_ticker = raw.groupby(["Date", "Ticker"], as_index=False)[
+                "Sentiment"
+            ].mean()
             out: dict[str, dict[str, dict[str, float]]] = {}
             for dt_val, grp in by_date_ticker.groupby("Date", sort=False):
                 sents = grp.set_index("Ticker")["Sentiment"]
@@ -180,7 +201,10 @@ class UnifiedNewsLoader:
         try:
             eodhd_path = self.news_dir / "eodhd_global_backfill.parquet"
             if not eodhd_path.exists():
-                logger.warning("[UNIFIED_NEWS] EODHD parquet missing for post-cutoff fallback: %s", eodhd_path)
+                logger.warning(
+                    "[UNIFIED_NEWS] EODHD parquet missing for post-cutoff fallback: %s",
+                    eodhd_path,
+                )
                 return {}
             out, _ = load_eodhd_news_signals(
                 tickers,
@@ -207,7 +231,9 @@ class UnifiedNewsLoader:
                 else:
                     cur = date(cur.year, cur.month + 1, 1)
         except Exception as exc:
-            logger.warning("[UNIFIED_NEWS] Failed scanning Tiingo parquet list: %s", exc)
+            logger.warning(
+                "[UNIFIED_NEWS] Failed scanning Tiingo parquet list: %s", exc
+            )
         return files
 
     @staticmethod

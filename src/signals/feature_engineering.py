@@ -2,6 +2,7 @@
 Feature engineering for news-derived stress and SCSI.
 Expects DataFrames with columns [Date, Ticker, Title, Body, Source].
 """
+
 from __future__ import annotations
 
 import math
@@ -20,7 +21,9 @@ def score_articles(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     sentiments = []
     for _, row in out.iterrows():
-        text = (str(row.get("Title", "") or "") + " " + str(row.get("Body", "") or "")).strip()
+        text = (
+            str(row.get("Title", "") or "") + " " + str(row.get("Body", "") or "")
+        ).strip()
         sentiments.append(sentiment_finbert(text))
     out["sentiment"] = sentiments
     return out
@@ -36,7 +39,9 @@ def compute_daily_stress(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["Date", "Ticker", "stress_raw"])
 
     g = df.groupby(["Date", "Ticker"], as_index=False)
-    agg = g.agg(mean_sentiment=("sentiment", "mean"), article_count=("sentiment", "count"))
+    agg = g.agg(
+        mean_sentiment=("sentiment", "mean"), article_count=("sentiment", "count")
+    )
     agg["stress_raw"] = (agg["mean_sentiment"] - 0.5) * agg["article_count"].apply(
         lambda c: math.log(1 + c)
     )

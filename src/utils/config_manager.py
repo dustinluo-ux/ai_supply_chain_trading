@@ -13,6 +13,7 @@ Provides:
 Per AI_RULES.md §10.4: if a required key is missing and no default is
 supplied, raises KeyError with an explanation of which YAML file to update.
 """
+
 from __future__ import annotations
 
 import logging
@@ -59,7 +60,9 @@ class ConfigManager:
         for name, path in _CONFIG_FILES.items():
             if path.exists():
                 self._cache[name] = self._read_yaml(path)
-                logger.debug("ConfigManager loaded %s (%d keys)", name, len(self._cache[name]))
+                logger.debug(
+                    "ConfigManager loaded %s (%d keys)", name, len(self._cache[name])
+                )
             else:
                 logger.warning("ConfigManager: %s not found at %s", name, path)
                 self._cache[name] = {}

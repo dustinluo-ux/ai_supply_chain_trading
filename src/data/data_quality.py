@@ -1,6 +1,7 @@
 """
 Data criticality and quality reporting. Spec: docs/RESILIENCE_SPEC.md Sections 1, 2.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,7 +13,9 @@ class IncompleteDataError(Exception):
     def __init__(self, missing_sources: list[str], criticality: str) -> None:
         self.missing_sources = list(missing_sources)
         self.criticality = str(criticality)
-        super().__init__(f"missing_sources={self.missing_sources!r} criticality={self.criticality!r}")
+        super().__init__(
+            f"missing_sources={self.missing_sources!r} criticality={self.criticality!r}"
+        )
 
     def __str__(self) -> str:
         return f"IncompleteDataError(missing_sources={self.missing_sources!r}, criticality={self.criticality!r})"

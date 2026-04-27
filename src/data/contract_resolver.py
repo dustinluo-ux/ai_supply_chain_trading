@@ -1,6 +1,7 @@
 """
 Resolve ib_insync contracts from config/instruments.yaml (equity, future, option).
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -14,7 +15,9 @@ _INSTRUMENTS_FILENAME = "instruments.yaml"
 
 
 def _default_config_path() -> Path:
-    return Path(__file__).resolve().parent.parent.parent / "config" / _INSTRUMENTS_FILENAME
+    return (
+        Path(__file__).resolve().parent.parent.parent / "config" / _INSTRUMENTS_FILENAME
+    )
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -61,7 +64,9 @@ def _resolve_equity(
     if eq.get("use_watchlist"):
         dc_path = instruments_path.parent / "data_config.yaml"
         if not dc_path.exists():
-            raise ValueError(f"use_watchlist is true but data_config not found: {dc_path}")
+            raise ValueError(
+                f"use_watchlist is true but data_config not found: {dc_path}"
+            )
         with open(dc_path, encoding="utf-8") as f:
             dc = yaml.safe_load(f) or {}
         wl = (dc.get("universe_selection") or {}).get("watchlist") or []
@@ -72,18 +77,26 @@ def _resolve_equity(
     c = Stock(symbol, exchange, currency)
     qc = ib.qualifyContracts(c)
     if not qc:
-        raise ValueError(f"qualifyContracts failed for equity {symbol!r} ({exchange}, {currency})")
+        raise ValueError(
+            f"qualifyContracts failed for equity {symbol!r} ({exchange}, {currency})"
+        )
     return qc[0]
 
 
 def _future_expiry_key(contract: Any) -> str:
-    return str(getattr(contract, "lastTradeDateOrContractMonth", "") or "").strip().split()[0]
+    return (
+        str(getattr(contract, "lastTradeDateOrContractMonth", "") or "")
+        .strip()
+        .split()[0]
+    )
 
 
 def _resolve_future(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Future:
     fut_root = full_cfg.get("futures") or {}
     if symbol not in fut_root or not isinstance(fut_root[symbol], dict):
-        raise ValueError(f"future symbol {symbol!r} not in instruments.yaml futures block")
+        raise ValueError(
+            f"future symbol {symbol!r} not in instruments.yaml futures block"
+        )
     fc: dict[str, Any] = fut_root[symbol]
     exchange = str(fc.get("exchange", "CME"))
     currency = str(fc.get("currency", "USD"))
@@ -95,7 +108,9 @@ def _resolve_future(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Future:
     probe = Future(symbol=symbol, exchange=exchange, currency=currency)
     details = ib.reqContractDetails(probe)
     if not details:
-        raise ValueError(f"reqContractDetails returned no contracts for future {symbol!r}")
+        raise ValueError(
+            f"reqContractDetails returned no contracts for future {symbol!r}"
+        )
 
     # Unique expiries ascending (preserve first detail per expiry for full contract template)
     seen: dict[str, Any] = {}
@@ -128,7 +143,9 @@ def _resolve_future(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Future:
 
     qc = ib.qualifyContracts(chosen)
     if not qc:
-        raise ValueError(f"qualifyContracts failed for future {symbol!r} expiry {chosen_key!r}")
+        raise ValueError(
+            f"qualifyContracts failed for future {symbol!r} expiry {chosen_key!r}"
+        )
     return qc[0]
 
 
@@ -170,7 +187,9 @@ def _underlying_mid(ib: Any, stock: Stock) -> float:
 def _resolve_option(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Option:
     opt_root = full_cfg.get("options") or {}
     if symbol not in opt_root or not isinstance(opt_root[symbol], dict):
-        raise ValueError(f"option symbol {symbol!r} not in instruments.yaml options block")
+        raise ValueError(
+            f"option symbol {symbol!r} not in instruments.yaml options block"
+        )
     oc: dict[str, Any] = opt_root[symbol]
     exchange = str(oc.get("exchange", "SMART"))
     currency = str(oc.get("currency", "USD"))
@@ -214,7 +233,9 @@ def _resolve_option(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Option:
         expiries_dte.append((ek, _dte(ed, today), ed))
 
     if not expiries_dte:
-        raise ValueError(f"no parseable option expiries from reqContractDetails for {symbol!r}")
+        raise ValueError(
+            f"no parseable option expiries from reqContractDetails for {symbol!r}"
+        )
 
     # nearest to target DTE (minimize abs(dte - target)); tie-break: earlier expiry
     best = min(expiries_dte, key=lambda x: (abs(x[1] - target_dte), x[2]))
@@ -224,7 +245,8 @@ def _resolve_option(full_cfg: dict[str, Any], symbol: str, ib: Any) -> Option:
         {
             float(getattr(d.contract, "strike", 0) or 0)
             for d in details
-            if _future_expiry_key(d.contract) == chosen_exp and float(getattr(d.contract, "strike", 0) or 0) > 0
+            if _future_expiry_key(d.contract) == chosen_exp
+            and float(getattr(d.contract, "strike", 0) or 0) > 0
         }
     )
     if not strikes:

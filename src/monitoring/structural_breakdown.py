@@ -2,6 +2,7 @@
 Structural Breakdown Detector: IC decay, residual risk, regime misalignment.
 Writes outputs/structural_breakdown.json. Spec: docs/RISK_MANAGEMENT_SPEC.md.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,7 +51,12 @@ def assess_structural_breakdown(
         ic_decay = _assess_ic_decay(ic_history, ic_baseline, ic_decay_window)
         out["ic_decay"] = ic_decay
     except Exception:
-        out["ic_decay"] = {"rolling_ic_20d": None, "baseline": ic_baseline, "severity": "ok", "triggered": False}
+        out["ic_decay"] = {
+            "rolling_ic_20d": None,
+            "baseline": ic_baseline,
+            "severity": "ok",
+            "triggered": False,
+        }
 
     # --- Residual Risk ---
     try:
@@ -59,16 +65,31 @@ def assess_structural_breakdown(
         )
         out["residual_risk"] = residual_risk
     except Exception:
-        out["residual_risk"] = {"pnl_vol_8w": 0.0, "explained_fraction": 0.0, "severity": "ok", "triggered": False}
+        out["residual_risk"] = {
+            "pnl_vol_8w": 0.0,
+            "explained_fraction": 0.0,
+            "severity": "ok",
+            "triggered": False,
+        }
 
     # --- Regime Misalignment ---
     try:
         regime_misalignment = _assess_regime_misalignment(
-            weights_history, prices_dict, smh_prices, MANDATES, beta_warn_buf, beta_crit_buf
+            weights_history,
+            prices_dict,
+            smh_prices,
+            MANDATES,
+            beta_warn_buf,
+            beta_crit_buf,
         )
         out["regime_misalignment"] = regime_misalignment
     except Exception:
-        out["regime_misalignment"] = {"pod_betas": {}, "mandates": {k: list(v) for k, v in MANDATES.items()}, "severity": "ok", "triggered": False}
+        out["regime_misalignment"] = {
+            "pod_betas": {},
+            "mandates": {k: list(v) for k, v in MANDATES.items()},
+            "severity": "ok",
+            "triggered": False,
+        }
 
     # Overall severity
     sev_map = {"ok": 0, "warning": 1, "critical": 2}
@@ -157,7 +178,9 @@ def _assess_residual_risk(
             except Exception:
                 continue
 
-            tickers = [t for t in weights if t in prices_dict and prices_dict[t] is not None]
+            tickers = [
+                t for t in weights if t in prices_dict and prices_dict[t] is not None
+            ]
             if not tickers:
                 continue
 
@@ -174,7 +197,11 @@ def _assess_residual_risk(
                 if len(idx) < 5:
                     continue
                 idx_5 = idx[:5]
-                start_val = close.reindex(close.index[close.index <= as_of]).iloc[-1] if len(close.reindex(close.index[close.index <= as_of]).dropna()) else None
+                start_val = (
+                    close.reindex(close.index[close.index <= as_of]).iloc[-1]
+                    if len(close.reindex(close.index[close.index <= as_of]).dropna())
+                    else None
+                )
                 if start_val is None or start_val == 0:
                     continue
                 end_val = close.reindex(idx_5).dropna().iloc[-1] if len(idx_5) else None
@@ -190,7 +217,9 @@ def _assess_residual_risk(
             pnl = sum(float(weights.get(t, 0)) * next_returns[t] for t in next_returns)
             pnl_list.append(pnl)
             if scores and isinstance(scores, dict):
-                rank = np.argsort(np.argsort([scores.get(t, 0.5) for t in next_returns]))  # rank order
+                rank = np.argsort(
+                    np.argsort([scores.get(t, 0.5) for t in next_returns])
+                )  # rank order
                 score_list.append(np.mean(rank))
             ret_list.append(pnl)
 
@@ -199,15 +228,20 @@ def _assess_residual_risk(
 
         pnl_arr = np.array(pnl_list)
         result["pnl_vol_8w"] = float(np.std(pnl_arr[-8:]))
-        baseline_8w = float(np.std(pnl_arr[:8])) if len(pnl_arr) >= 8 else result["pnl_vol_8w"]
+        baseline_8w = (
+            float(np.std(pnl_arr[:8])) if len(pnl_arr) >= 8 else result["pnl_vol_8w"]
+        )
         if baseline_8w <= 0:
             baseline_8w = 1e-8
 
         # Explained fraction: Spearman between score rank and return
         if len(score_list) >= 8 and len(ret_list) >= 8:
             from scipy.stats import spearmanr
+
             r, _ = spearmanr(score_list[-8:], ret_list[-8:], nan_policy="omit")
-            result["explained_fraction"] = float(np.clip(r * r if r == r else 0.0, 0.0, 1.0))
+            result["explained_fraction"] = float(
+                np.clip(r * r if r == r else 0.0, 0.0, 1.0)
+            )
 
         ratio = result["pnl_vol_8w"] / baseline_8w
         if ratio >= crit_mult:
@@ -236,7 +270,12 @@ def _assess_regime_misalignment(
         "triggered": False,
     }
     try:
-        if not weights_history or not prices_dict or smh_prices is None or smh_prices.empty:
+        if (
+            not weights_history
+            or not prices_dict
+            or smh_prices is None
+            or smh_prices.empty
+        ):
             return result
         if len(weights_history) < 3:
             return result
@@ -269,7 +308,9 @@ def _assess_regime_misalignment(
                 result["pod_betas"][pod] = 1.0
             return result
 
-        smh_ret = close_smh.reindex(smh_slice.index).pct_change(fill_method=None).dropna()
+        smh_ret = (
+            close_smh.reindex(smh_slice.index).pct_change(fill_method=None).dropna()
+        )
         if len(smh_ret) < 20:
             for pod in mandates:
                 result["pod_betas"][pod] = 1.0
@@ -324,7 +365,9 @@ def _assess_regime_misalignment(
             if beta < low - crit_buf or beta > high + crit_buf:
                 result["severity"] = "critical"
                 result["triggered"] = True
-            elif (beta < low - warn_buf or beta > high + warn_buf) and result["severity"] != "critical":
+            elif (beta < low - warn_buf or beta > high + warn_buf) and result[
+                "severity"
+            ] != "critical":
                 result["severity"] = "warning"
                 result["triggered"] = True
     except Exception:

@@ -3,6 +3,7 @@ Performance logger: record strategy performance (Return, Drawdown, Regime, news_
 at the end of every backtest week into a persistent CSV for AdaptiveSelector.
 Also maintains regime_ledger.csv for strategy "memory" and Sortino-based audit.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -26,7 +27,9 @@ def ensure_header(csv_path: Path) -> None:
     """Create CSV with header if file does not exist."""
     if not csv_path.exists():
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(columns=CSV_COLUMNS).to_csv(csv_path, index=False, encoding="utf-8")
+        pd.DataFrame(columns=CSV_COLUMNS).to_csv(
+            csv_path, index=False, encoding="utf-8"
+        )
 
 
 def append_row(
@@ -47,13 +50,15 @@ def append_row(
     """
     ensure_header(csv_path)
     row = pd.DataFrame(
-        [{
-            "week_date": pd.to_datetime(week_date).strftime("%Y-%m-%d"),
-            "return": float(return_pct),
-            "drawdown": float(drawdown),
-            "regime": regime if regime is not None else "",
-            "news_weight_used": float(news_weight_used),
-        }]
+        [
+            {
+                "week_date": pd.to_datetime(week_date).strftime("%Y-%m-%d"),
+                "return": float(return_pct),
+                "drawdown": float(drawdown),
+                "regime": regime if regime is not None else "",
+                "news_weight_used": float(news_weight_used),
+            }
+        ]
     )
     row.to_csv(csv_path, mode="a", header=False, index=False, encoding="utf-8")
 
@@ -62,7 +67,9 @@ def ensure_regime_ledger_header(ledger_path: Path) -> None:
     """Create regime_ledger.csv with headers if it does not exist."""
     if not ledger_path.exists():
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(columns=REGIME_LEDGER_COLUMNS).to_csv(ledger_path, index=False, encoding="utf-8")
+        pd.DataFrame(columns=REGIME_LEDGER_COLUMNS).to_csv(
+            ledger_path, index=False, encoding="utf-8"
+        )
 
 
 def update_regime_ledger(
@@ -86,12 +93,14 @@ def update_regime_ledger(
     else:
         ts_str = pd.Timestamp(ts).isoformat()
     row = pd.DataFrame(
-        [{
-            "Timestamp": ts_str,
-            "Regime": str(regime).strip(),
-            "Strategy_ID": str(combination_id).strip(),
-            "Return": float(weekly_return),
-            "Max_Drawdown": float(weekly_drawdown),
-        }]
+        [
+            {
+                "Timestamp": ts_str,
+                "Regime": str(regime).strip(),
+                "Strategy_ID": str(combination_id).strip(),
+                "Return": float(weekly_return),
+                "Max_Drawdown": float(weekly_drawdown),
+            }
+        ]
     )
     row.to_csv(path, mode="a", header=False, index=False, encoding="utf-8")

@@ -43,15 +43,24 @@ class TailHedge:
 
         hedge_cost_usd = 0.0
         hedge_payoff_usd = 0.0
-        roll_happened = (self._contracts is None) or (self._weeks_since_roll >= self.roll_weeks)
+        roll_happened = (self._contracts is None) or (
+            self._weeks_since_roll >= self.roll_weeks
+        )
 
         if roll_happened:
             if self._strike is not None and self._contracts is not None:
-                hedge_payoff_usd = max(float(self._strike) - smh_close, 0.0) * 100.0 * int(self._contracts)
+                hedge_payoff_usd = (
+                    max(float(self._strike) - smh_close, 0.0)
+                    * 100.0
+                    * int(self._contracts)
+                )
 
             n = int(self.n_contracts(monday))
             price_per_share, strike_k, _sigma = estimate_smh_put_cost(
-                smh_close, vix_close, T=self.expiry_days / 365.0, target_delta=self.target_delta
+                smh_close,
+                vix_close,
+                T=self.expiry_days / 365.0,
+                target_delta=self.target_delta,
             )
             hedge_cost_usd = float(price_per_share) * 100.0 * n
 
@@ -69,4 +78,3 @@ class TailHedge:
             "strike": float(self._strike) if self._strike is not None else 0.0,
             "roll_occurred": bool(roll_happened),
         }
-

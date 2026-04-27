@@ -1,5 +1,8 @@
 """
-Fetch quarterly fundamental signals for universe tickers from EODHD.
+Fetch quarterly fundamental signals for universe tickers.
+
+Primary source: Financial Modeling Prep (FMP) when FMP_API_KEY is set; otherwise
+yfinance, then EODHD fundamentals for earnings fields where applicable.
 
 Output:
   trading_data/fundamentals/quarterly_signals.parquet
@@ -7,8 +10,10 @@ Output:
 Atomic write:
   write .tmp -> validate -> rename
 """
+
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
@@ -25,13 +30,23 @@ import requests
 import yfinance as yf
 import yaml
 from dotenv import load_dotenv
+from src.data.edgar_audit import audit_ticker
+from src.data.fmp_ingest import load_fmp_quarters
 from src.fundamentals.quality_metrics import compute_quality_metrics
+from src.fundamentals.semi_valuation import SemiValuationEngine
 
 load_dotenv(ROOT / ".env")
 
 TOKEN = os.getenv("EODHD_API_KEY", "")
 if not TOKEN:
-    print("[WARN] EODHD_API_KEY not set — EODHD fallback disabled, yfinance only", flush=True)
+    print(
+        "[WARN] EODHD_API_KEY not set — EODHD fallback disabled, yfinance only",
+        flush=True,
+    )
+
+FMP_KEY = os.getenv("FMP_API_KEY", "").strip()
+if not FMP_KEY:
+    print("[WARN] FMP_API_KEY not set — FMP disabled, yfinance/EODHD only", flush=True)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
 OUT_DIR = DATA_DIR / "fundamentals"
@@ -62,6 +77,11 @@ OUT_COLUMNS = [
     "fcf_conversion",
     "net_capex_sales",
     "net_debt_ebitda",
+    "fcff_adjusted",
+    "fcff_raw",
+    "rd_cap_variance_pct",
+    "sbc_pct_revenue",
+    "edgar_audit_flag",
 ]
 
 
@@ -72,6 +92,20 @@ def _safe_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _num_fmp(v: Any) -> float:
+    if v is None:
+        return float("nan")
+    try:
+        from decimal import Decimal
+
+        if isinstance(v, Decimal):
+            return float(v)
+    except Exception:
+        pass
+    x = _safe_float(v)
+    return float("nan") if x is None else float(x)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -109,6 +143,26 @@ def _load_universe_tickers() -> list[str]:
         tickers.extend(_flatten_tickers((universe.get("pillars") or {}).get("global")))
     tickers = [t for t in tickers if t and isinstance(t, str)]
     return sorted(set(tickers))
+
+
+def _restrict_to_tickers(full: list[str], requested: list[str]) -> list[str]:
+    want = {x.strip().upper() for x in requested if x and str(x).strip()}
+    out = sorted([t for t in full if t.strip().upper() in want])
+    missing = want - {t.upper() for t in out}
+    if missing:
+        print(
+            f"[ERROR] --tickers not found in universe.yaml: {sorted(missing)}",
+            flush=True,
+        )
+        sys.exit(1)
+    return out
+
+
+def _parse_cli(argv: list[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Quarterly fundamentals fetch")
+    p.add_argument("--mode", default="quarterly", choices=("quarterly", "weekly"))
+    p.add_argument("--tickers", nargs="+", default=None, metavar="SYM")
+    return p.parse_args(argv)
 
 
 def _load_suffix_mapping() -> dict[str, str]:
@@ -180,7 +234,12 @@ def _as_period_map(node: Any) -> dict[str, dict[str, Any]]:
             for item in node["data"]:
                 if not isinstance(item, dict):
                     continue
-                period = str(item.get("date") or item.get("reportedDate") or item.get("period") or "")
+                period = str(
+                    item.get("date")
+                    or item.get("reportedDate")
+                    or item.get("period")
+                    or ""
+                )
                 if period:
                     out[period] = item
             return out
@@ -189,7 +248,9 @@ def _as_period_map(node: Any) -> dict[str, dict[str, Any]]:
         for item in node:
             if not isinstance(item, dict):
                 continue
-            period = str(item.get("date") or item.get("reportedDate") or item.get("period") or "")
+            period = str(
+                item.get("date") or item.get("reportedDate") or item.get("period") or ""
+            )
             if period:
                 out[period] = item
         return out
@@ -226,7 +287,9 @@ def _extract_last_rev_surprise_pct(data: dict[str, Any]) -> float | None:
     return float(candidates[-1][1])
 
 
-def _extract_earnings_revision_30d_and_next_date(data: dict[str, Any]) -> tuple[float | None, pd.Timestamp | None]:
+def _extract_earnings_revision_30d_and_next_date(
+    data: dict[str, Any],
+) -> tuple[float | None, pd.Timestamp | None]:
     earnings = data.get("Earnings", {})
     if not isinstance(earnings, dict):
         return None, None
@@ -281,7 +344,9 @@ def _extract_earnings_revision_30d_and_next_date(data: dict[str, Any]) -> tuple[
     return (cur - prev) / abs(prev), next_earnings_date
 
 
-def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFrame | None:
+def _extract_yfinance(
+    ticker: str, market_cap: float | None = None
+) -> pd.DataFrame | None:
     yf_ticker = yf.Ticker(ticker)
     try:
         income_raw = yf_ticker.quarterly_income_stmt
@@ -332,10 +397,14 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
     eps_diluted = income_q.get("Diluted EPS", pd.Series(np.nan, index=idx))
 
     total_assets = balance_q.get("Total Assets", pd.Series(np.nan, index=idx))
-    cash_equiv = balance_q.get("Cash And Cash Equivalents", pd.Series(np.nan, index=idx))
+    cash_equiv = balance_q.get(
+        "Cash And Cash Equivalents", pd.Series(np.nan, index=idx)
+    )
     short_term_debt = balance_q.get("Current Debt", pd.Series(np.nan, index=idx))
     long_term_debt = balance_q.get("Long Term Debt", pd.Series(np.nan, index=idx))
-    current_liabilities = balance_q.get("Current Liabilities", pd.Series(np.nan, index=idx))
+    current_liabilities = balance_q.get(
+        "Current Liabilities", pd.Series(np.nan, index=idx)
+    )
     inventory = balance_q.get("Inventory", pd.Series(np.nan, index=idx))
 
     fcf_q = cash_q.get("Free Cash Flow", pd.Series(np.nan, index=idx))
@@ -348,7 +417,9 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
 
     eps_proxy = eps_basic.where(~eps_basic.isna(), eps_diluted)
     prev_eps_proxy = eps_proxy.shift(-1)
-    last_eps_surprise_pct = (eps_proxy - prev_eps_proxy) / prev_eps_proxy.abs().replace(0.0, np.nan)
+    last_eps_surprise_pct = (eps_proxy - prev_eps_proxy) / prev_eps_proxy.abs().replace(
+        0.0, np.nan
+    )
 
     try:
         earnings_history = yf_ticker.earnings_history
@@ -379,7 +450,9 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
             )
             if rev_actual is None or rev_est in (None, 0.0):
                 continue
-            candidates.append((pd.Timestamp(ts).normalize(), (rev_actual - rev_est) / abs(rev_est)))
+            candidates.append(
+                (pd.Timestamp(ts).normalize(), (rev_actual - rev_est) / abs(rev_est))
+            )
         if candidates:
             candidates.sort(key=lambda x: x[0])
             last_val = float(candidates[-1][1])
@@ -419,10 +492,193 @@ def _extract_yfinance(ticker: str, market_cap: float | None = None) -> pd.DataFr
 
     ydf = ydf.sort_values("period_end", ascending=False).reset_index(drop=True)
     ydf = compute_quality_metrics(ydf)
+    ydf["fcff_adjusted"] = np.nan
+    ydf["fcff_raw"] = np.nan
+    ydf["rd_cap_variance_pct"] = np.nan
+    ydf["sbc_pct_revenue"] = np.nan
+    ydf["edgar_audit_flag"] = True
     ydf = ydf.reindex(columns=OUT_COLUMNS)
     if ydf.empty:
         return None
     return ydf
+
+
+def _extract_rows_from_fmp(ticker: str) -> list[dict[str, Any]] | None:
+    """Build quarterly rows from FMP + SemiValuationEngine; None if unavailable."""
+    if not FMP_KEY:
+        return None
+    try:
+        wdf = load_fmp_quarters(ticker)
+    except Exception as exc:
+        print(f"[FMP] {ticker}: load failed ({exc})", flush=True)
+        return None
+    if wdf is None or wdf.empty:
+        return None
+
+    req = [
+        "period_end",
+        "ebit",
+        "da",
+        "sbc",
+        "capex",
+        "delta_nwc",
+        "tax_rate",
+        "r_and_d",
+        "revenue",
+    ]
+    if any(c not in wdf.columns for c in req):
+        print(f"[FMP] {ticker}: incomplete valuation columns", flush=True)
+        return None
+
+    try:
+        semi_part = SemiValuationEngine().compute(ticker, wdf[req].copy())
+        val_cols = [
+            "fcff_raw",
+            "rd_capitalized_asset",
+            "rd_amortization",
+            "fcff_adjusted",
+            "rd_cap_variance_pct",
+            "sbc_pct_revenue",
+            "needs_edgar_audit",
+        ]
+        wdf["period_end"] = pd.to_datetime(wdf["period_end"], errors="coerce")
+        semi_part["period_end"] = pd.to_datetime(
+            semi_part["period_end"], errors="coerce"
+        )
+        wdf = wdf.merge(
+            semi_part[["period_end", *val_cols]], on="period_end", how="left"
+        )
+    except Exception as exc:
+        print(f"[FMP] {ticker}: semi valuation failed ({exc})", flush=True)
+        return None
+
+    needs_audit = bool(wdf["needs_edgar_audit"].fillna(False).any())
+    edgar_audit_flag = True
+    if needs_audit:
+        try:
+            fy = int(pd.to_datetime(wdf["period_end"], errors="coerce").max().year)
+            audit = audit_ticker(ticker, fy)
+            edgar_audit_flag = audit.get("audit_pass") is True
+        except Exception as exc:
+            print(f"[EDGAR] {ticker}: audit failed ({exc})", flush=True)
+            edgar_audit_flag = False
+
+    market_cap: float | None = None
+    try:
+        info = yf.Ticker(ticker).info
+        if isinstance(info, dict):
+            market_cap = _safe_float(info.get("marketCap"))
+    except Exception:
+        market_cap = None
+
+    wch = wdf.sort_values("period_end", ascending=True).reset_index(drop=True)
+    latest = wch.iloc[-1]
+    debt = _num_fmp(latest.get("short_term_debt")) + _num_fmp(
+        latest.get("long_term_debt")
+    )
+    eq = _num_fmp(latest.get("total_equity"))
+    debt_to_equity = float("nan")
+    if not np.isnan(debt) and not np.isnan(eq) and eq > 0:
+        debt_to_equity = float(debt / eq)
+
+    fcf_series = []
+    for _, r in wch.iterrows():
+        fcf_d = r.get("free_cash_flow")
+        if fcf_d is not None:
+            fcf_series.append(_num_fmp(fcf_d))
+        else:
+            cfo = _num_fmp(r.get("operating_cash_flow"))
+            capx = _num_fmp(r.get("capex"))
+            if not np.isnan(cfo) and not np.isnan(capx):
+                fcf_series.append(float(cfo - capx))
+            else:
+                fcf_series.append(float("nan"))
+    fcf_q = pd.Series(fcf_series, dtype="float64")
+    fcf_ttm_vals = fcf_q.rolling(window=4, min_periods=1).sum().tolist()
+
+    last_earnings_date = pd.NaT
+    rows: list[dict[str, Any]] = []
+    fcff_adj_l: list[float] = []
+    fcff_raw_l: list[float] = []
+    rd_var_l: list[float] = []
+    sbc_pct_l: list[float] = []
+    for i, (_, r) in enumerate(wch.iterrows()):
+        pe = pd.to_datetime(r["period_end"], errors="coerce")
+        fd = pd.to_datetime(r.get("filing_date"), errors="coerce")
+        if pd.isna(fd):
+            fd = pe + pd.Timedelta(days=45)
+
+        rev = _num_fmp(r.get("revenue"))
+        gp = _num_fmp(r.get("gross_profit"))
+        gross_margin_pct = float("nan")
+        if not np.isnan(gp) and not np.isnan(rev) and rev != 0.0:
+            gross_margin_pct = float(gp / rev)
+
+        inv = _num_fmp(r.get("inventory"))
+        cor = _num_fmp(r.get("cost_of_revenue"))
+        inventory_days = float("nan")
+        if not np.isnan(inv) and not np.isnan(cor) and cor != 0.0:
+            inventory_days = float((inv / cor) * 91.0)
+
+        fcf_ttm = fcf_ttm_vals[i]
+
+        rows.append(
+            {
+                "ticker": ticker,
+                "period_end": pe,
+                "filing_date": fd,
+                "gross_margin_pct": gross_margin_pct,
+                "inventory_days": inventory_days,
+                "last_eps_surprise_pct": np.nan,
+                "earnings_revision_30d": np.nan,
+                "last_earnings_date": last_earnings_date,
+                "next_earnings_date": pd.NaT,
+                "fcf_ttm": fcf_ttm,
+                "debt_to_equity": debt_to_equity,
+                "inventory_days_accel": np.nan,
+                "gross_margin_delta": np.nan,
+                "last_rev_surprise_pct": np.nan,
+                "_net_income": _num_fmp(r.get("net_income")),
+                "_ebitda": _num_fmp(r.get("ebitda")),
+                "_r_and_d": _num_fmp(r.get("r_and_d")),
+                "_capex": _num_fmp(r.get("capex_signed")),
+                "_total_assets": _num_fmp(r.get("total_assets")),
+                "_cash": _num_fmp(r.get("cash")),
+                "_short_term_debt": _num_fmp(r.get("short_term_debt")),
+                "_long_term_debt": _num_fmp(r.get("long_term_debt")),
+                "_current_liabilities": _num_fmp(r.get("current_liabilities")),
+                "_market_cap": np.nan if market_cap is None else float(market_cap),
+                "_fcf_ttm": fcf_ttm,
+                "_revenue": rev,
+            }
+        )
+        fcff_adj_l.append(_num_fmp(r.get("fcff_adjusted")))
+        fcff_raw_l.append(_num_fmp(r.get("fcff_raw")))
+        rd_var_l.append(_num_fmp(r.get("rd_cap_variance_pct")))
+        sbc_pct_l.append(_num_fmp(r.get("sbc_pct_revenue")))
+
+    for i in range(1, len(rows)):
+        cur_inv = rows[i].get("inventory_days")
+        prev_inv = rows[i - 1].get("inventory_days")
+        if pd.notna(cur_inv) and pd.notna(prev_inv):
+            rows[i]["inventory_days_accel"] = float(cur_inv) - float(prev_inv)
+        cur_gm = rows[i].get("gross_margin_pct")
+        prev_gm = rows[i - 1].get("gross_margin_pct")
+        if pd.notna(cur_gm) and pd.notna(prev_gm):
+            rows[i]["gross_margin_delta"] = float(cur_gm) - float(prev_gm)
+
+    ticker_df = pd.DataFrame(rows)
+    ticker_df = compute_quality_metrics(ticker_df)
+    ticker_df["fcff_adjusted"] = fcff_adj_l
+    ticker_df["fcff_raw"] = fcff_raw_l
+    ticker_df["rd_cap_variance_pct"] = rd_var_l
+    ticker_df["sbc_pct_revenue"] = sbc_pct_l
+    ticker_df["edgar_audit_flag"] = edgar_audit_flag
+    ticker_df = ticker_df.reindex(columns=OUT_COLUMNS)
+    if ticker_df.empty:
+        return None
+    print(f"[FMP] {ticker}: {len(ticker_df)} quarters", flush=True)
+    return _ensure_filing_date_on_rows(ticker_df.to_dict(orient="records"))
 
 
 def _ensure_filing_date_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -436,20 +692,28 @@ def _ensure_filing_date_on_rows(rows: list[dict[str, Any]]) -> list[dict[str, An
     else:
         df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
         na_mask = df["filing_date"].isna()
-        df.loc[na_mask, "filing_date"] = df.loc[na_mask, "period_end"] + pd.Timedelta(days=45)
+        df.loc[na_mask, "filing_date"] = df.loc[na_mask, "period_end"] + pd.Timedelta(
+            days=45
+        )
     return df.to_dict(orient="records")
 
 
-def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_rows_for_ticker_eodhd(
+    ticker: str, data: dict[str, Any]
+) -> list[dict[str, Any]]:
     financials = data.get("Financials", {})
     if not isinstance(financials, dict):
         return []
 
-    income_q = _as_period_map((financials.get("Income_Statement") or {}).get("quarterly"))
+    income_q = _as_period_map(
+        (financials.get("Income_Statement") or {}).get("quarterly")
+    )
     balance_q = _as_period_map((financials.get("Balance_Sheet") or {}).get("quarterly"))
     cash_q = _as_period_map((financials.get("Cash_Flow") or {}).get("quarterly"))
     earnings_hist = _extract_earnings_history_map(data)
-    earnings_revision_30d, next_earnings_date = _extract_earnings_revision_30d_and_next_date(data)
+    earnings_revision_30d, next_earnings_date = (
+        _extract_earnings_revision_30d_and_next_date(data)
+    )
     last_rev_surprise_pct = _extract_last_rev_surprise_pct(data)
     highlights = data.get("Highlights", {})
     valuation = data.get("Valuation", {})
@@ -459,7 +723,12 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
     if _market_cap is None and isinstance(valuation, dict):
         _market_cap = _safe_float(valuation.get("EnterpriseValue"))
 
-    period_keys = sorted(set(income_q.keys()) | set(balance_q.keys()) | set(cash_q.keys()) | set(earnings_hist.keys()))
+    period_keys = sorted(
+        set(income_q.keys())
+        | set(balance_q.keys())
+        | set(cash_q.keys())
+        | set(earnings_hist.keys())
+    )
     if not period_keys:
         return []
 
@@ -471,7 +740,11 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
     # Last reported earnings date (latest period with non-null epsActual).
     last_earnings_date: pd.Timestamp | None = None
     last_earnings_candidates = sorted(
-        [pd.to_datetime(k, errors="coerce") for k, v in earnings_hist.items() if _safe_float(v.get("epsActual")) is not None]
+        [
+            pd.to_datetime(k, errors="coerce")
+            for k, v in earnings_hist.items()
+            if _safe_float(v.get("epsActual")) is not None
+        ]
     )
     last_earnings_candidates = [x for x in last_earnings_candidates if not pd.isna(x)]
     if last_earnings_candidates:
@@ -519,14 +792,20 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
         balance = balance_q.get(key, {})
         cash = cash_q.get(key, {})
         earn = earnings_hist.get(key, {})
-        filing_date = pd.to_datetime(earn.get("reportDate") or earn.get("report_date"), errors="coerce")
+        filing_date = pd.to_datetime(
+            earn.get("reportDate") or earn.get("report_date"), errors="coerce"
+        )
         if pd.isna(filing_date):
             filing_date = ts + pd.Timedelta(days=45)
 
         gross_profit = _safe_float(income.get("grossProfit"))
         total_revenue = _safe_float(income.get("totalRevenue"))
         gross_margin_pct = np.nan
-        if gross_profit is not None and total_revenue is not None and total_revenue != 0.0:
+        if (
+            gross_profit is not None
+            and total_revenue is not None
+            and total_revenue != 0.0
+        ):
             gross_margin_pct = gross_profit / total_revenue
 
         inventory = _safe_float(balance.get("inventory"))
@@ -564,23 +843,43 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
                 "gross_margin_pct": gross_margin_pct,
                 "inventory_days": inventory_days,
                 "last_eps_surprise_pct": last_eps_surprise_pct,
-                "earnings_revision_30d": np.nan if earnings_revision_30d is None else float(earnings_revision_30d),
+                "earnings_revision_30d": (
+                    np.nan
+                    if earnings_revision_30d is None
+                    else float(earnings_revision_30d)
+                ),
                 "last_earnings_date": last_earnings_date,
                 "next_earnings_date": next_earnings_date,
                 "fcf_ttm": fcf_ttm,
-                "debt_to_equity": np.nan if debt_to_equity is None else float(debt_to_equity),
+                "debt_to_equity": (
+                    np.nan if debt_to_equity is None else float(debt_to_equity)
+                ),
                 "inventory_days_accel": np.nan,
                 "gross_margin_delta": np.nan,
-                "last_rev_surprise_pct": np.nan if last_rev_surprise_pct is None else float(last_rev_surprise_pct),
+                "last_rev_surprise_pct": (
+                    np.nan
+                    if last_rev_surprise_pct is None
+                    else float(last_rev_surprise_pct)
+                ),
                 "_net_income": np.nan if net_income is None else float(net_income),
                 "_ebitda": np.nan if ebitda is None else float(ebitda),
                 "_r_and_d": np.nan if r_and_d is None else float(r_and_d),
                 "_capex": np.nan if capex is None else float(capex),
-                "_total_assets": np.nan if total_assets is None else float(total_assets),
+                "_total_assets": (
+                    np.nan if total_assets is None else float(total_assets)
+                ),
                 "_cash": np.nan if cash_bal is None else float(cash_bal),
-                "_short_term_debt": np.nan if short_term_debt is None else float(short_term_debt),
-                "_long_term_debt": np.nan if long_term_debt is None else float(long_term_debt),
-                "_current_liabilities": np.nan if current_liabilities is None else float(current_liabilities),
+                "_short_term_debt": (
+                    np.nan if short_term_debt is None else float(short_term_debt)
+                ),
+                "_long_term_debt": (
+                    np.nan if long_term_debt is None else float(long_term_debt)
+                ),
+                "_current_liabilities": (
+                    np.nan
+                    if current_liabilities is None
+                    else float(current_liabilities)
+                ),
                 "_market_cap": np.nan if _market_cap is None else float(_market_cap),
                 "_fcf_ttm": fcf_ttm,
                 "_revenue": np.nan if total_revenue is None else float(total_revenue),
@@ -597,11 +896,22 @@ def _extract_rows_for_ticker_eodhd(ticker: str, data: dict[str, Any]) -> list[di
             rows[i]["gross_margin_delta"] = float(cur_gm) - float(prev_gm)
     ticker_df = pd.DataFrame(rows)
     ticker_df = compute_quality_metrics(ticker_df)
+    ticker_df["fcff_adjusted"] = np.nan
+    ticker_df["fcff_raw"] = np.nan
+    ticker_df["rd_cap_variance_pct"] = np.nan
+    ticker_df["sbc_pct_revenue"] = np.nan
+    ticker_df["edgar_audit_flag"] = True
     ticker_df = ticker_df.reindex(columns=OUT_COLUMNS)
     return ticker_df.to_dict(orient="records")
 
 
-def _extract_rows_for_ticker(ticker: str, suffix_map: dict[str, str]) -> list[dict[str, Any]]:
+def _extract_rows_for_ticker(
+    ticker: str, suffix_map: dict[str, str]
+) -> list[dict[str, Any]]:
+    fmp_rows = _extract_rows_from_fmp(ticker)
+    if fmp_rows is not None and len(fmp_rows) > 0:
+        return fmp_rows
+
     market_cap = None
     try:
         info = yf.Ticker(ticker).info
@@ -635,7 +945,22 @@ def _validate_output_frame(df: pd.DataFrame) -> None:
     for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
-    for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
+    for col in (
+        "fcf_yield",
+        "roic",
+        "fcf_conversion",
+        "net_capex_sales",
+        "net_debt_ebitda",
+    ):
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+    for col in (
+        "fcff_adjusted",
+        "fcff_raw",
+        "rd_cap_variance_pct",
+        "sbc_pct_revenue",
+        "edgar_audit_flag",
+    ):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
     if not pd.api.types.is_datetime64_any_dtype(df["period_end"]):
@@ -648,21 +973,104 @@ def _validate_output_frame(df: pd.DataFrame) -> None:
         raise ValueError("filing_date must be datetime64")
 
 
-def _parse_mode(argv: list[str]) -> str:
-    mode = "quarterly"
-    if "--mode" in argv:
-        i = argv.index("--mode")
-        if i + 1 < len(argv):
-            mode = str(argv[i + 1]).strip().lower()
-    if mode not in {"quarterly", "weekly"}:
-        print(f"[ERROR] invalid --mode: {mode}. expected quarterly|weekly", flush=True)
+def _finalize_quarterly_df(
+    all_rows: list[dict[str, Any]],
+    tickers_filter: list[str] | None,
+) -> pd.DataFrame:
+    new_df = pd.DataFrame(all_rows, columns=OUT_COLUMNS)
+    if not new_df.empty:
+        new_df["period_end"] = pd.to_datetime(new_df["period_end"], errors="coerce")
+        new_df["filing_date"] = pd.to_datetime(new_df["filing_date"], errors="coerce")
+        new_df["last_earnings_date"] = pd.to_datetime(
+            new_df["last_earnings_date"], errors="coerce"
+        )
+        new_df["next_earnings_date"] = pd.to_datetime(
+            new_df["next_earnings_date"], errors="coerce"
+        )
+    else:
+        new_df = pd.DataFrame(columns=OUT_COLUMNS)
+        new_df["period_end"] = pd.to_datetime(new_df["period_end"])
+        new_df["filing_date"] = pd.to_datetime(new_df["filing_date"])
+        new_df["last_earnings_date"] = pd.to_datetime(new_df["last_earnings_date"])
+        new_df["next_earnings_date"] = pd.to_datetime(new_df["next_earnings_date"])
+
+    new_df = new_df.astype(
+        {
+            "ticker": "string",
+            "gross_margin_pct": "float64",
+            "inventory_days": "float64",
+            "last_eps_surprise_pct": "float64",
+            "earnings_revision_30d": "float64",
+            "fcf_ttm": "float64",
+            "debt_to_equity": "float64",
+            "inventory_days_accel": "float64",
+            "gross_margin_delta": "float64",
+            "last_rev_surprise_pct": "float64",
+            "fcf_yield": "float64",
+            "roic": "float64",
+            "fcf_conversion": "float64",
+            "net_capex_sales": "float64",
+            "net_debt_ebitda": "float64",
+            "fcff_adjusted": "float64",
+            "fcff_raw": "float64",
+            "rd_cap_variance_pct": "float64",
+            "sbc_pct_revenue": "float64",
+            "edgar_audit_flag": "bool",
+        }
+    )
+    new_df = new_df.sort_values(
+        ["ticker", "period_end"], ascending=[True, True]
+    ).reset_index(drop=True)
+
+    if tickers_filter and new_df.empty:
+        print("[ERROR] --tickers fetch produced zero rows", flush=True)
         sys.exit(1)
-    return mode
+
+    if tickers_filter and OUT_FILE.exists():
+        sub_u = {t.upper() for t in tickers_filter}
+        existing = pd.read_parquet(OUT_FILE)
+        counts_before = (
+            existing.groupby(existing["ticker"].astype(str).str.upper())
+            .size()
+            .to_dict()
+        )
+        rest = existing[~existing["ticker"].astype(str).str.upper().isin(sub_u)].copy()
+        combined = pd.concat([rest, new_df], ignore_index=True)
+        combined = combined.sort_values(
+            ["ticker", "period_end"], ascending=[True, True]
+        ).reset_index(drop=True)
+        counts_after = (
+            combined.groupby(combined["ticker"].astype(str).str.upper())
+            .size()
+            .to_dict()
+        )
+        for t, c_before in counts_before.items():
+            if t in sub_u:
+                continue
+            if int(counts_after.get(t, 0)) != int(c_before):
+                print(
+                    f"[ERROR] row count drift for {t}: was {c_before} now {counts_after.get(t, 0)}; abort write",
+                    flush=True,
+                )
+                sys.exit(1)
+        for t in sub_u:
+            if t not in counts_after or counts_after[t] < 1:
+                print(f"[ERROR] merged parquet missing rows for {t}", flush=True)
+                sys.exit(1)
+        return combined
+    return new_df
 
 
 def main() -> None:
-    mode = _parse_mode(sys.argv[1:])
-    tickers = _load_universe_tickers()
+    args = _parse_cli(sys.argv[1:])
+    mode = args.mode
+    tickers_filter = [t.strip().upper() for t in args.tickers] if args.tickers else None
+    universe_full = _load_universe_tickers()
+    tickers = (
+        _restrict_to_tickers(universe_full, tickers_filter)
+        if tickers_filter
+        else universe_full
+    )
     suffix_map = _load_suffix_mapping()
     if not tickers:
         print("[ERROR] no tickers found in config/universe.yaml", flush=True)
@@ -670,28 +1078,56 @@ def main() -> None:
 
     if mode == "weekly":
         if not OUT_FILE.exists():
-            print("[WARN] weekly mode skipped: quarterly_signals.parquet not found", flush=True)
+            print(
+                "[WARN] weekly mode skipped: quarterly_signals.parquet not found",
+                flush=True,
+            )
             sys.exit(0)
 
         df = pd.read_parquet(OUT_FILE)
-        for col in ("inventory_days_accel", "gross_margin_delta", "last_rev_surprise_pct"):
+        for col in (
+            "inventory_days_accel",
+            "gross_margin_delta",
+            "last_rev_surprise_pct",
+        ):
             if col not in df.columns:
                 df[col] = np.nan
-        for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
+        for col in (
+            "fcf_yield",
+            "roic",
+            "fcf_conversion",
+            "net_capex_sales",
+            "net_debt_ebitda",
+        ):
             if col not in df.columns:
                 df[col] = np.nan
+        for col in (
+            "fcff_adjusted",
+            "fcff_raw",
+            "rd_cap_variance_pct",
+            "sbc_pct_revenue",
+        ):
+            if col not in df.columns:
+                df[col] = np.nan
+        if "edgar_audit_flag" not in df.columns:
+            df["edgar_audit_flag"] = True
         for col in ("earnings_revision_30d", "next_earnings_date"):
             if col not in df.columns:
-                print(f"[WARN] weekly mode skipped: missing column {col} in existing parquet", flush=True)
+                print(
+                    f"[WARN] weekly mode skipped: missing column {col} in existing parquet",
+                    flush=True,
+                )
                 sys.exit(0)
         if "filing_date" not in df.columns:
-            df["filing_date"] = pd.to_datetime(df["period_end"], errors="coerce") + pd.Timedelta(days=45)
+            df["filing_date"] = pd.to_datetime(
+                df["period_end"], errors="coerce"
+            ) + pd.Timedelta(days=45)
         else:
             df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
             _fd_na = df["filing_date"].isna()
-            df.loc[_fd_na, "filing_date"] = (
-                pd.to_datetime(df.loc[_fd_na, "period_end"], errors="coerce") + pd.Timedelta(days=45)
-            )
+            df.loc[_fd_na, "filing_date"] = pd.to_datetime(
+                df.loc[_fd_na, "period_end"], errors="coerce"
+            ) + pd.Timedelta(days=45)
 
         updated = 0
         for base_ticker in tickers:
@@ -703,14 +1139,20 @@ def main() -> None:
             rev_30d, next_date = _extract_earnings_revision_30d_and_next_date(data)
             mask = df["ticker"].astype(str).str.upper() == ticker
             if mask.any():
-                df.loc[mask, "earnings_revision_30d"] = np.nan if rev_30d is None else float(rev_30d)
+                df.loc[mask, "earnings_revision_30d"] = (
+                    np.nan if rev_30d is None else float(rev_30d)
+                )
                 df.loc[mask, "next_earnings_date"] = next_date
                 updated += 1
 
         df["period_end"] = pd.to_datetime(df["period_end"], errors="coerce")
         df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
-        df["last_earnings_date"] = pd.to_datetime(df.get("last_earnings_date"), errors="coerce")
-        df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"], errors="coerce")
+        df["last_earnings_date"] = pd.to_datetime(
+            df.get("last_earnings_date"), errors="coerce"
+        )
+        df["next_earnings_date"] = pd.to_datetime(
+            df["next_earnings_date"], errors="coerce"
+        )
         df = df.astype(
             {
                 "ticker": "string",
@@ -728,6 +1170,11 @@ def main() -> None:
                 "fcf_conversion": "float64",
                 "net_capex_sales": "float64",
                 "net_debt_ebitda": "float64",
+                "fcff_adjusted": "float64",
+                "fcff_raw": "float64",
+                "rd_cap_variance_pct": "float64",
+                "sbc_pct_revenue": "float64",
+                "edgar_audit_flag": "bool",
             }
         )
         df = df[OUT_COLUMNS]
@@ -735,26 +1182,65 @@ def main() -> None:
         check_df = pd.read_parquet(TMP_FILE)
         _validate_output_frame(check_df)
         os.replace(TMP_FILE, OUT_FILE)
-        print(f"[WEEKLY] updated earnings_revision_30d + next_earnings_date for {updated} tickers", flush=True)
+        print(
+            f"[WEEKLY] updated earnings_revision_30d + next_earnings_date for {updated} tickers",
+            flush=True,
+        )
         sys.exit(0)
 
     print(f"[INFO] universe tickers: {len(tickers)}", flush=True)
     all_rows: list[dict[str, Any]] = []
 
+    # Build lookup: ticker -> latest period_end already on disk
+    existing_latest: dict[str, pd.Timestamp] = {}
+    existing_rows_by_ticker: dict[str, list[dict[str, Any]]] = {}
+    if OUT_FILE.exists() and not tickers_filter:
+        try:
+            _ex = pd.read_parquet(OUT_FILE)
+            _ex["period_end"] = pd.to_datetime(_ex["period_end"], errors="coerce")
+            for _t, _grp in _ex.groupby(_ex["ticker"].astype(str).str.upper()):
+                existing_latest[_t] = _grp["period_end"].max()
+                existing_rows_by_ticker[_t] = _grp.to_dict("records")
+        except Exception as _e:
+            print(
+                f"[WARN] could not read existing parquet for incremental check: {_e}",
+                flush=True,
+            )
+
+    # A ticker is current if its latest quarter end is within the last 100 days
+    _cutoff = pd.Timestamp.today() - pd.Timedelta(days=100)
+
     tickers_full = 0
     tickers_partial = 0
     tickers_zero = 0
+    tickers_skipped = 0
 
     for idx, base_ticker in enumerate(tickers, start=1):
         ticker = base_ticker.strip().upper()
+
+        # Skip if already current
+        if ticker in existing_latest and existing_latest[ticker] >= _cutoff:
+            all_rows.extend(existing_rows_by_ticker[ticker])
+            tickers_skipped += 1
+            print(
+                f"[SKIP] {idx}/{len(tickers)} {ticker}: latest={existing_latest[ticker].date()} (current)",
+                flush=True,
+            )
+            continue
+
         rows = _extract_rows_for_ticker(ticker, suffix_map)
         if not rows:
             tickers_zero += 1
             print(f"[WARN] {idx}/{len(tickers)} {ticker}: zero data", flush=True)
+            # Preserve existing rows if any
+            if ticker in existing_rows_by_ticker:
+                all_rows.extend(existing_rows_by_ticker[ticker])
             continue
 
         ticker_df = pd.DataFrame(rows, columns=OUT_COLUMNS)
-        measure_cols = [c for c in OUT_COLUMNS if c not in ("ticker", "period_end", "filing_date")]
+        measure_cols = [
+            c for c in OUT_COLUMNS if c not in ("ticker", "period_end", "filing_date")
+        ]
         if ticker_df[measure_cols].isna().any().any():
             tickers_partial += 1
         else:
@@ -763,40 +1249,7 @@ def main() -> None:
         all_rows.extend(rows)
         print(f"[INFO] {idx}/{len(tickers)} {ticker}: {len(rows)} periods", flush=True)
 
-    df = pd.DataFrame(all_rows, columns=OUT_COLUMNS)
-    if not df.empty:
-        df["period_end"] = pd.to_datetime(df["period_end"], errors="coerce")
-        df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
-        df["last_earnings_date"] = pd.to_datetime(df["last_earnings_date"], errors="coerce")
-        df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"], errors="coerce")
-    else:
-        df = pd.DataFrame(columns=OUT_COLUMNS)
-        df["period_end"] = pd.to_datetime(df["period_end"])
-        df["filing_date"] = pd.to_datetime(df["filing_date"])
-        df["last_earnings_date"] = pd.to_datetime(df["last_earnings_date"])
-        df["next_earnings_date"] = pd.to_datetime(df["next_earnings_date"])
-
-    # Enforce requested schema.
-    df = df.astype(
-        {
-            "ticker": "string",
-            "gross_margin_pct": "float64",
-            "inventory_days": "float64",
-            "last_eps_surprise_pct": "float64",
-            "earnings_revision_30d": "float64",
-            "fcf_ttm": "float64",
-            "debt_to_equity": "float64",
-            "inventory_days_accel": "float64",
-            "gross_margin_delta": "float64",
-            "last_rev_surprise_pct": "float64",
-            "fcf_yield": "float64",
-            "roic": "float64",
-            "fcf_conversion": "float64",
-            "net_capex_sales": "float64",
-            "net_debt_ebitda": "float64",
-        }
-    )
-    df = df.sort_values(["ticker", "period_end"], ascending=[True, True]).reset_index(drop=True)
+    df = _finalize_quarterly_df(all_rows, tickers_filter)
 
     # Atomic write: .tmp -> validate -> rename
     df.to_parquet(TMP_FILE, index=False)
@@ -807,7 +1260,7 @@ def main() -> None:
     print("[DONE] quarterly signals written", flush=True)
     print(f"[DONE] output: {OUT_FILE}", flush=True)
     print(
-        f"[SUMMARY] tickers fetched={len(tickers)} full={tickers_full} partial={tickers_partial} zero={tickers_zero}",
+        f"[SUMMARY] tickers={len(tickers)} fetched={tickers_full+tickers_partial} skipped={tickers_skipped} partial={tickers_partial} zero={tickers_zero}",
         flush=True,
     )
 

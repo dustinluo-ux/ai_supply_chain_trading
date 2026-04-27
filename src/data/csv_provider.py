@@ -10,6 +10,7 @@ Provides the 4 shared functions for price data ingestion:
 Source: lifted from scripts/backtest_technical_library.py (L33-86) to centralize.
 Subdirectory search order per ARCHITECTURE.md: nasdaq/csv, sp500/csv, nyse/csv, forbes2000/csv.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,6 +35,7 @@ def load_data_config() -> dict:
     if not path.exists():
         return {"data_dir": _ROOT / "data" / "stock_market_data"}
     from src.utils.defensive import safe_read_yaml
+
     data = safe_read_yaml(str(path))
     ds = data.get("data_sources", {})
     data_dir = Path(ds.get("data_dir", str(_ROOT / "data" / "stock_market_data")))
@@ -47,7 +49,7 @@ def find_csv_path(base_dir, ticker):
     CSV has the latest end date (last index value), so backtests get the longest
     coverage. Uses same read as load_prices: index_col=0, parse_dates=False then index via pd.to_datetime(..., format='mixed', dayfirst=True).
     """
-    ticker_clean = ticker.replace('.csv', '').upper()
+    ticker_clean = ticker.replace(".csv", "").upper()
     target_file = f"{ticker_clean}.csv"
     candidates: list[str] = []
     for root, dirs, files in os.walk(str(base_dir)):

@@ -52,10 +52,16 @@ def _load_target_from_plan(plan: dict):
     scores = raw.get("scores") or {}
     meta = raw.get("construction_meta") or {}
     as_of_s = raw.get("as_of") or plan.get("as_of")
-    as_of_ts = pd.to_datetime(as_of_s).normalize() if as_of_s else pd.Timestamp.today().normalize()
+    as_of_ts = (
+        pd.to_datetime(as_of_s).normalize()
+        if as_of_s
+        else pd.Timestamp.today().normalize()
+    )
     weights = {str(k).upper(): Decimal(str(v)) for k, v in w.items()}
     scores_f = {str(k): float(v) for k, v in scores.items()}
-    return TargetPortfolio(as_of=as_of_ts, weights=weights, scores=scores_f, construction_meta=meta)
+    return TargetPortfolio(
+        as_of=as_of_ts, weights=weights, scores=scores_f, construction_meta=meta
+    )
 
 
 def main() -> int:
@@ -81,7 +87,9 @@ def main() -> int:
             with open(plan_path, encoding="utf-8") as f:
                 plan = json.load(f)
         except Exception as exc:
-            print(f"[RISK_DAILY][WARN] could not read execution plan: {exc}", flush=True)
+            print(
+                f"[RISK_DAILY][WARN] could not read execution plan: {exc}", flush=True
+            )
             return 0
         long_exp = sum(float(v) for v in (plan.get("long_orders") or {}).values())
         if long_exp > 0.5:

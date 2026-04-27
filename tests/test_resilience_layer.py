@@ -74,11 +74,6 @@ def test_pipeline_state_to_dict_json_serializable() -> None:
         run_id="rid",
         started_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         tickers_requested=["AAPL"],
-        tickers_loaded=["AAPL"],
-        signal_scores={"AAPL": Decimal("0.12345678901234567890")},
-        regime="BULL",
-        nav=Decimal("100000.50"),
-        target_weights={"AAPL": Decimal("1.0")},
         warnings=["w"],
         errors=[],
     )
@@ -87,8 +82,8 @@ def test_pipeline_state_to_dict_json_serializable() -> None:
     )
     d = st.to_dict()
     json.dumps(d)
-    assert d["signal_scores"]["AAPL"] == "0.12345678901234567890"
-    assert d["nav"] == "100000.50"
+    assert d["tickers_requested"] == ["AAPL"]
+    assert d["warnings"] == ["w"]
 
 
 def test_save_atomic_roundtrip(tmp_path: Path) -> None:

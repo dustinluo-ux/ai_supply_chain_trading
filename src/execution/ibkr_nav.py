@@ -3,6 +3,7 @@ Fetch account NetLiquidation from IBKR paper account via ib_insync.
 Returns float NAV on success, None on any failure (TWS not running, timeout, etc.).
 Caller decides how to handle None (use last_nav fallback from portfolio_state.json).
 """
+
 from __future__ import annotations
 
 import os
@@ -21,9 +22,11 @@ def fetch_nav(
     """
     try:
         import nest_asyncio
+
         nest_asyncio.apply()
         from ib_insync import IB
         from src.utils.client_id_rotation import next_client_id
+
         ib = IB()
         ib.connect(host, port, clientId=next_client_id(), timeout=timeout)
         account = os.getenv("IBKR_PAPER_ACCOUNT") or ""

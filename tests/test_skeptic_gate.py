@@ -28,8 +28,15 @@ def test_pass_one_flag_on_concentrated_weight() -> None:
 
 
 def test_fail_two_flags_fatal_ticker() -> None:
+    # FAIL requires >=2 flags AND at least one distress flag
     def _fetch(t: str) -> BearFindings:
-        return BearFindings(ticker=t, pe_ratio=40.0, pb_ratio=6.0, flags=[])
+        return BearFindings(
+            ticker=t,
+            pe_ratio=40.0,        # VALUATION_PE flag
+            pb_ratio=6.0,         # VALUATION_PB flag
+            debt_to_equity=3.0,   # DISTRESSED_DEBT flag (distress required for FAIL)
+            flags=[],
+        )
 
     with patch.object(skeptic_gate, "fetch_bear_fundamentals", side_effect=_fetch):
         r = run_gate({"ZZZ": 0.20}, ["ZZZ"])

@@ -2,6 +2,7 @@
 Regime-aware risk/return metrics. Sortino ratio using downside deviation only
 so BULL strategies are not throttled by upside volatility.
 """
+
 from __future__ import annotations
 
 from typing import Union
@@ -30,7 +31,7 @@ def calculate_regime_sortino(
     excess = arr - risk_free_rate
     # Only downside: values below zero (excess return negative)
     downside = np.minimum(excess, 0.0)
-    sq_downside = downside ** 2
+    sq_downside = downside**2
     n = arr.size
     if n < 2:
         return 0.0

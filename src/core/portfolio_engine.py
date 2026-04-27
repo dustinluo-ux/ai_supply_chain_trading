@@ -2,6 +2,7 @@
 PortfolioEngine: build(as_of_date, gated_scores, context) -> Intent.
 Uses HRP + Alpha Tilt when prices_dict and as_of are in context; else inverse-ATR fallback.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,15 +13,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import yaml
 
 from src.core.intent import Intent
 from src.core.types import Context
 
-# EWMA vol (RiskMetrics lambda=0.94, span=38) — match portfolio_optimizer.py
-EWMA_SPAN = 38
+
+# EWMA vol span — reads from optimizer_config.yaml fixed_params.ewma_span; falls back to 38.
+def _load_ewma_span() -> int:
+    try:
+        _p = Path(__file__).resolve().parents[2] / "config" / "optimizer_config.yaml"
+        if _p.exists():
+            with open(_p, encoding="utf-8") as _f:
+                _d = yaml.safe_load(_f) or {}
+            return int((_d.get("fixed_params") or {}).get("ewma_span", 38))
+    except Exception:
+        pass
+    return 38
+
+
+EWMA_SPAN = _load_ewma_span()
 BASE_CAP, CAP_FLOOR, CAP_CEIL = 0.20, 0.10, 0.40
 LOOKBACK_DAYS = 60
 MIN_OBS = 30
@@ -55,10 +68,14 @@ def _load_tes_multipliers(config: dict[str, Any] | None = None) -> dict[str, flo
             return {}
         if not _load_strategy_params_tes_enabled():
             return {}
-        data_dir = Path(os.environ.get("DATA_DIR", "C:/ai_supply_chain_trading/trading_data"))
+        data_dir = Path(
+            os.environ.get("DATA_DIR", "C:/ai_supply_chain_trading/trading_data")
+        )
         path = data_dir / "tes_scores.json"
         if not path.exists():
-            logger.warning("TES scores file not found at %s — all multipliers neutral", path)
+            logger.warning(
+                "TES scores file not found at %s — all multipliers neutral", path
+            )
             return {}
         data = json.loads(path.read_text(encoding="utf-8"))
         out: dict[str, float] = {}
@@ -76,9 +93,7 @@ def _load_tes_multipliers(config: dict[str, Any] | None = None) -> dict[str, flo
                 try:
                     age_days = (
                         now
-                        - datetime.fromisoformat(
-                            str(audited_at).replace("Z", "+00:00")
-                        )
+                        - datetime.fromisoformat(str(audited_at).replace("Z", "+00:00"))
                     ).days
                     if age_days > 14:
                         logger.warning(
@@ -134,12 +149,12 @@ def _hrp_leaves_average_linkage(dist_matrix: list) -> list[int]:
     active = list(range(n))
     next_id = n
     for _ in range(n - 1):
-        best = float('inf')
+        best = float("inf")
         bi, bj = -1, -1
         for ai in range(len(active)):
             for aj in range(ai + 1, len(active)):
                 ca, cb = active[ai], active[aj]
-                d = dists.get((min(ca, cb), max(ca, cb)), float('inf'))
+                d = dists.get((min(ca, cb), max(ca, cb)), float("inf"))
                 if d < best:
                     best, bi, bj = d, ca, cb
         mid = next_id
@@ -150,15 +165,17 @@ def _hrp_leaves_average_linkage(dist_matrix: list) -> list[int]:
         active.remove(bi)
         active.remove(bj)
         for ck in active:
-            d_i = dists.get((min(bi, ck), max(bi, ck)), float('inf'))
-            d_j = dists.get((min(bj, ck), max(bj, ck)), float('inf'))
+            d_i = dists.get((min(bi, ck), max(bi, ck)), float("inf"))
+            d_j = dists.get((min(bj, ck), max(bj, ck)), float("inf"))
             dists[(min(mid, ck), max(mid, ck))] = (si * d_i + sj * d_j) / (si + sj)
         active.append(mid)
+
     def _leaves(node: int) -> list[int]:
         if node < n:
             return [node]
         l, r = children[node]
         return _leaves(l) + _leaves(r)
+
     return _leaves(next_id - 1)
 
 
@@ -176,14 +193,22 @@ def _hrp_weights_scipy(returns_df: pd.DataFrame) -> dict[str, float]:
     X_c = [[X_raw[k][j] - col_mean[j] for j in range(n)] for k in range(obs)]
     # Covariance matrix (pure Python)
     d = max(obs - 1, 1)
-    cov = [[sum(X_c[k][i] * X_c[k][j] for k in range(obs)) / d for j in range(n)] for i in range(n)]
+    cov = [
+        [sum(X_c[k][i] * X_c[k][j] for k in range(obs)) / d for j in range(n)]
+        for i in range(n)
+    ]
     # Std and correlation
     std = [max(cov[i][i] ** 0.5, 1e-8) for i in range(n)]
-    corr = [[max(-1.0, min(1.0, cov[i][j] / (std[i] * std[j]))) for j in range(n)] for i in range(n)]
+    corr = [
+        [max(-1.0, min(1.0, cov[i][j] / (std[i] * std[j]))) for j in range(n)]
+        for i in range(n)
+    ]
     for i in range(n):
         corr[i][i] = 1.0
     # Distance matrix
-    dist = [[max((1.0 - corr[i][j]) / 2.0, 0.0) ** 0.5 for j in range(n)] for i in range(n)]
+    dist = [
+        [max((1.0 - corr[i][j]) / 2.0, 0.0) ** 0.5 for j in range(n)] for i in range(n)
+    ]
     for i in range(n):
         dist[i][i] = 0.0
     # Leaf ordering (pure Python average linkage)
@@ -199,6 +224,7 @@ def _hrp_weights_scipy(returns_df: pd.DataFrame) -> dict[str, float]:
                 next_clusters += [cluster[:mid], cluster[mid:]]
         for ci in range(0, len(next_clusters) - 1, 2):
             c0, c1 = next_clusters[ci], next_clusters[ci + 1]
+
             def _ivp_var_py(idx: list) -> float:
                 sz = len(idx)
                 sub = [[cov[idx[a]][idx[b]] for b in range(sz)] for a in range(sz)]
@@ -206,13 +232,16 @@ def _hrp_weights_scipy(returns_df: pd.DataFrame) -> dict[str, float]:
                 iv = [1.0 / dv[a] for a in range(sz)]
                 iv_s = sum(iv) or 1.0
                 iv = [x / iv_s for x in iv]
-                return sum(iv[a] * sub[a][b] * iv[b] for a in range(sz) for b in range(sz))
+                return sum(
+                    iv[a] * sub[a][b] * iv[b] for a in range(sz) for b in range(sz)
+                )
+
             v0, v1 = _ivp_var_py(c0), _ivp_var_py(c1)
             alpha = 1.0 - v0 / (v0 + v1) if (v0 + v1) > 0 else 0.5
             for idx in c0:
                 w[idx] *= alpha
             for idx in c1:
-                w[idx] *= (1.0 - alpha)
+                w[idx] *= 1.0 - alpha
         clusters = next_clusters
     total = sum(w)
     if total > 0:
@@ -296,7 +325,9 @@ def hrp_alpha_tilt(
     if adv_values:
         _s = sorted(adv_values)
         _n = len(_s)
-        adv_median = (_s[_n // 2 - 1] + _s[_n // 2]) / 2.0 if _n % 2 == 0 else float(_s[_n // 2])
+        adv_median = (
+            (_s[_n // 2 - 1] + _s[_n // 2]) / 2.0 if _n % 2 == 0 else float(_s[_n // 2])
+        )
     else:
         adv_median = 1.0
     liquidity_cap: dict[str, float] = {}
@@ -319,7 +350,12 @@ def hrp_alpha_tilt(
     try:
         returns_dict: dict[str, pd.Series] = {}
         for t in eligible:
-            if t not in sliced or sliced[t] is None or sliced[t].empty or "close" not in sliced[t].columns:
+            if (
+                t not in sliced
+                or sliced[t] is None
+                or sliced[t].empty
+                or "close" not in sliced[t].columns
+            ):
                 continue
             close = sliced[t]["close"]
             if hasattr(close, "iloc") and getattr(close, "ndim", 1) > 1:
@@ -346,10 +382,16 @@ def hrp_alpha_tilt(
         use_hrp = False
 
     if use_hrp and hrp_base_weight:
-        mean_score = sum(scores[t] for t in eligible) / len(eligible) if eligible else 1e-9
+        mean_score = (
+            sum(scores[t] for t in eligible) / len(eligible) if eligible else 1e-9
+        )
         if mean_score <= 0:
             mean_score = 1e-9
-        tilted_w = {t: hrp_base_weight[t] * (scores[t] / mean_score) for t in eligible if t in hrp_base_weight}
+        tilted_w = {
+            t: hrp_base_weight[t] * (scores[t] / mean_score)
+            for t in eligible
+            if t in hrp_base_weight
+        }
         total_tilted = sum(tilted_w.values())
         if total_tilted <= 0:
             w = {t: 1.0 / len(eligible) for t in eligible}
@@ -373,7 +415,9 @@ def hrp_alpha_tilt(
         else:
             tes = dict(tes_multipliers)
     except Exception as exc:
-        logger.warning("TES load failed in hrp_alpha_tilt: %s — neutral multipliers", exc)
+        logger.warning(
+            "TES load failed in hrp_alpha_tilt: %s — neutral multipliers", exc
+        )
         tes = {}
     cap_t = {}
     for t in w:
@@ -411,11 +455,24 @@ def hrp_alpha_tilt(
     if total_after > 0:
         w = {t: w[t] / total_after for t in w}
     # Hard single-position ceiling (config-driven, post-TES post-liquidity guardrail)
+    # When only one ticker selected: cap weight and leave remainder as cash (no renorm).
+    # When multiple tickers: iterative clamp with renormalization.
     if max_single_weight < 1.0:
-        w = {t: min(v, max_single_weight) for t, v in w.items()}
-        _total_hard = sum(w.values())
-        if _total_hard > 0:
-            w = {t: v / _total_hard for t, v in w.items()}
+        if len(w) == 1:
+            # Single ticker: hard cap, no renormalization (remainder stays in cash)
+            w = {t: min(v, max_single_weight) for t, v in w.items()}
+        else:
+            # Multiple tickers: iterative clamping with renormalization
+            for _clamp_iter in range(20):
+                # Check if any weight exceeds cap
+                exceeds = [t for t, v in w.items() if v > max_single_weight + 1e-9]
+                if not exceeds:
+                    break
+                # Clamp and renormalize
+                w = {t: min(v, max_single_weight) for t, v in w.items()}
+                _total_hard = sum(w.values())
+                if _total_hard > 0:
+                    w = {t: v / _total_hard for t, v in w.items()}
     for t in w:
         out[t] = w[t]
     return out
@@ -442,13 +499,17 @@ class PortfolioEngine:
         else:
             as_of_ts = pd.to_datetime(as_of_date)
         max_single_w = 0.40
-        _tc_path = Path(__file__).resolve().parents[2] / "config" / "trading_config.yaml"
+        _tc_path = (
+            Path(__file__).resolve().parents[2] / "config" / "trading_config.yaml"
+        )
         if _tc_path.exists():
             try:
                 with open(_tc_path, encoding="utf-8") as _f_tc:
                     _tc = yaml.safe_load(_f_tc) or {}
                 max_single_w = float(
-                    (_tc.get("risk") or {}).get("max_single_position_weight", max_single_w)
+                    (_tc.get("risk") or {}).get(
+                        "max_single_position_weight", max_single_w
+                    )
                 )
             except Exception:
                 pass
@@ -547,7 +608,9 @@ class PortfolioEngine:
             else:
                 tes = dict(tes_multipliers)
         except Exception as exc:
-            logger.warning("TES load failed in _build_inverse_atr: %s — neutral multipliers", exc)
+            logger.warning(
+                "TES load failed in _build_inverse_atr: %s — neutral multipliers", exc
+            )
             tes = {}
         for t in list(intent_weights.keys()):
             intent_weights[t] *= float(tes.get(str(t).upper(), 1.0))
@@ -567,15 +630,34 @@ class PortfolioEngine:
             )
 
         # Hard single-position ceiling (config-driven, post-TES guardrail)
+        # When only one ticker selected: cap weight and leave remainder as cash (no renorm).
+        # When multiple tickers: iterative clamp with renormalization.
         if max_single_weight < 1.0:
-            intent_weights = {
-                t: min(v, max_single_weight) for t, v in intent_weights.items()
-            }
-            _total_hard = sum(intent_weights.values())
-            if _total_hard > 0:
+            if len(intent_weights) == 1:
+                # Single ticker: hard cap, no renormalization (remainder stays in cash)
                 intent_weights = {
-                    t: v / _total_hard for t, v in intent_weights.items()
+                    t: min(v, max_single_weight) for t, v in intent_weights.items()
                 }
+            else:
+                # Multiple tickers: iterative clamping with renormalization
+                for _clamp_iter in range(20):
+                    # Check if any weight exceeds cap
+                    exceeds = [
+                        t
+                        for t, v in intent_weights.items()
+                        if v > max_single_weight + 1e-9
+                    ]
+                    if not exceeds:
+                        break
+                    # Clamp and renormalize
+                    intent_weights = {
+                        t: min(v, max_single_weight) for t, v in intent_weights.items()
+                    }
+                    _total_hard = sum(intent_weights.values())
+                    if _total_hard > 0:
+                        intent_weights = {
+                            t: v / _total_hard for t, v in intent_weights.items()
+                        }
 
         for t in tickers_universe:
             if t not in intent_weights:
@@ -605,7 +687,9 @@ class PortfolioEngine:
         top_n = context.get("top_n", 10)
         tickers = list(gated_scores.keys())[:top_n]
         if not tickers:
-            return Intent(tickers=[], weights={}, mode="execution", futures_multipliers={})
+            return Intent(
+                tickers=[], weights={}, mode="execution", futures_multipliers={}
+            )
         w = 1.0 / len(tickers)
         weights = {t: w for t in tickers}
         return Intent(

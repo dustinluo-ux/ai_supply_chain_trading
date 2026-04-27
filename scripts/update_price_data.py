@@ -14,6 +14,7 @@ Usage:
     python scripts/update_price_data.py --start 2023-01-01  # override start
     python scripts/update_price_data.py --tickers NVDA,AMD  # override watchlist only
 """
+
 from __future__ import annotations
 
 import argparse
@@ -109,13 +110,17 @@ def main() -> int:
         description="Update price CSVs from yfinance using data_config.yaml",
     )
     parser.add_argument(
-        "--tickers", type=str, default=None,
+        "--tickers",
+        type=str,
+        default=None,
         help="Comma-separated tickers (default: watchlist from data_config.yaml)",
     )
     parser.add_argument("--start", type=str, default="2015-01-01")
     parser.add_argument("--end", type=str, default=datetime.date.today().isoformat())
     parser.add_argument(
-        "--delay", type=float, default=1.0,
+        "--delay",
+        type=float,
+        default=1.0,
         help="Seconds between downloads (rate-limit courtesy)",
     )
     args = parser.parse_args()
@@ -125,6 +130,7 @@ def main() -> int:
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     else:
         from src.utils.config_manager import get_config
+
         tickers = get_config().get_watchlist()
 
     config = load_data_config()
@@ -148,13 +154,18 @@ def main() -> int:
         if csv_path.exists():
             try:
                 existing_df = pd.read_csv(
-                    csv_path, index_col=0, parse_dates=False,
+                    csv_path,
+                    index_col=0,
+                    parse_dates=False,
                 )
                 existing_df.index = pd.to_datetime(
-                    existing_df.index, format="mixed", dayfirst=True,
+                    existing_df.index,
+                    format="mixed",
+                    dayfirst=True,
                 )
                 existing_df.index = pd.to_datetime(
-                    existing_df.index, utc=True,
+                    existing_df.index,
+                    utc=True,
                 ).tz_localize(None)
             except Exception as e:
                 print(
@@ -163,8 +174,15 @@ def main() -> int:
                 )
                 existing_df = None
 
+        # Determine incremental start: resume from day after last existing row
+        if existing_df is not None and not existing_df.empty:
+            last_date = existing_df.index.max()
+            incremental_start = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            incremental_start = args.start
+
         # Download new data
-        new_df = download_ticker(ticker, args.start, args.end)
+        new_df = download_ticker(ticker, incremental_start, args.end)
         if new_df is None:
             print(
                 f"  [{i}/{len(tickers)}] SKIP {ticker} -- no data from yfinance",

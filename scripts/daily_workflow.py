@@ -14,6 +14,7 @@ Step 6: render Command Center (rich table; plain fallback if rich not installed)
 Usage:
   python scripts/daily_workflow.py
 """
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Infrastructure checks ──────────────────────────────────────────────────────
+
 
 def _check_symlink(root: Path) -> tuple[bool, str]:
     """Verify trading_data symlink/junction points to the C:\\ data root."""
@@ -59,15 +61,14 @@ def _check_model_status(root: Path) -> tuple[str, bool]:
     """
     try:
         import yaml
+
         with open(root / "config" / "model_config.yaml", "r", encoding="utf-8") as f:
             mcfg = yaml.safe_load(f)
         rel_path: str = (mcfg.get("training") or {}).get("model_path", "")
         model_file = (root / rel_path) if rel_path else None
         exists = bool(model_file and model_file.exists())
         name = Path(rel_path).name if rel_path else "unknown"
-        display = (
-            f"{name}  IC=0.0202  PASSED" if exists else f"{name}  [FILE MISSING]"
-        )
+        display = f"{name}  IC=0.0202  PASSED" if exists else f"{name}  [FILE MISSING]"
         return display, exists
     except Exception as exc:
         return f"model_config.yaml unreadable: {exc}", False
@@ -85,7 +86,7 @@ def _price_freshness_by_pillar(
 
     all_tickers: set[str] = set()
     for tlist in pillars.values():
-        for t in (tlist or []):
+        for t in tlist or []:
             if isinstance(t, str) and t.strip():
                 all_tickers.add(t.strip().upper())
 
@@ -105,7 +106,7 @@ def _price_freshness_by_pillar(
     result: dict[str, dict[str, int]] = {}
     for pillar, tlist in pillars.items():
         counts = {"fresh": 0, "stale": 0, "missing": 0}
-        for t in (tlist or []):
+        for t in tlist or []:
             if not isinstance(t, str):
                 continue
             tu = t.strip().upper()
@@ -190,6 +191,7 @@ def _gather_news_data(
 
 # ── Command Center renderer ────────────────────────────────────────────────────
 
+
 def _render_command_center(
     last_signal_path: Path,
     news_dir: Path,
@@ -206,7 +208,7 @@ def _render_command_center(
     # All tickers in universe (flattened)
     all_tickers: list[str] = []
     for tlist in pillars.values():
-        for t in (tlist or []):
+        for t in tlist or []:
             if isinstance(t, str) and t.strip():
                 all_tickers.append(t.strip().upper())
 
@@ -227,7 +229,9 @@ def _render_command_center(
         try:
             with open(valid_weights_path, "r", encoding="utf-8") as f:
                 _vw = json.load(f)
-            optimizer_weights = (_vw.get("weights") or {}) if isinstance(_vw, dict) else {}
+            optimizer_weights = (
+                (_vw.get("weights") or {}) if isinstance(_vw, dict) else {}
+            )
         except Exception:
             pass
 
@@ -271,6 +275,7 @@ def _render_command_center(
     else:
         try:
             from src.execution.fill_ledger import read_fill_ledger
+
             records = read_fill_ledger()
             net: dict[str, int] = {}
             for r in records:
@@ -299,7 +304,10 @@ def _render_command_center(
     if recon_path.exists():
         try:
             _recon_text = recon_path.read_text(encoding="utf-8")
-            if "avg_fill_price unavailable" not in _recon_text and "Unrealized PnL:" in _recon_text:
+            if (
+                "avg_fill_price unavailable" not in _recon_text
+                and "Unrealized PnL:" in _recon_text
+            ):
                 for _line in _recon_text.splitlines():
                     if "Unrealized PnL:" in _line:
                         if "+$" in _line:
@@ -307,7 +315,11 @@ def _render_command_center(
                             _end = _line.find(" ", _i + 2)
                             if _end < 0:
                                 _end = _line.find("(", _i)
-                            _val = _line[_i:_end].strip() if _end > 0 else _line[_i:].strip()
+                            _val = (
+                                _line[_i:_end].strip()
+                                if _end > 0
+                                else _line[_i:].strip()
+                            )
                             pnl_detail = f"{_val} unrealized"
                             pnl_icon = "[green]✓[/]"
                         elif "-$" in _line:
@@ -315,7 +327,11 @@ def _render_command_center(
                             _end = _line.find(" ", _i + 2)
                             if _end < 0:
                                 _end = _line.find("(", _i)
-                            _val = _line[_i:_end].strip() if _end > 0 else _line[_i:].strip()
+                            _val = (
+                                _line[_i:_end].strip()
+                                if _end > 0
+                                else _line[_i:].strip()
+                            )
                             pnl_detail = f"{_val} unrealized"
                             pnl_icon = "[red]✗[/]"
                         break
@@ -408,7 +424,9 @@ def _render_command_center(
         )
         infra.add_row("Prices", price_detail, price_icon)
 
-        news_detail = f"{news_today} articles today  ·  {news_tickers_count} tickers covered"
+        news_detail = (
+            f"{news_today} articles today  ·  {news_tickers_count} tickers covered"
+        )
         infra.add_row(
             "News",
             news_detail,
@@ -518,9 +536,15 @@ def _render_command_center(
             f"  News     : {news_today} articles today  "
             f"{news_tickers_count} tickers covered"
         )
-        print(f"  Fills    : {fills_detail}  {'OK' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}")
-        print(f"  PnL      : {pnl_detail}  {'OK' if pnl_icon == '[green]✓[/]' else ('FAIL' if pnl_icon == '[red]✗[/]' else '-')}")
-        print(f"  Risk     : {risk_detail}  {'OK' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}")
+        print(
+            f"  Fills    : {fills_detail}  {'OK' if fills_icon == '[green]✓[/]' else ('~' if fills_icon == '[yellow]~[/]' else '-')}"
+        )
+        print(
+            f"  PnL      : {pnl_detail}  {'OK' if pnl_icon == '[green]✓[/]' else ('FAIL' if pnl_icon == '[red]✗[/]' else '-')}"
+        )
+        print(
+            f"  Risk     : {risk_detail}  {'OK' if risk_icon == '[green]✓[/]' else ('~' if risk_icon == '[yellow]~[/]' else '-')}"
+        )
         print(f"  Regime   : {regime_detail}")
         print()
         if last_signal:
@@ -555,6 +579,7 @@ def _render_command_center(
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> int:
     try:
@@ -632,7 +657,10 @@ def main() -> int:
     if r35.returncode != 0:
         logger.warning("portfolio_optimizer failed — last_valid_weights.json unchanged")
     else:
-        print("[STATE] portfolio_state.json updated with new target weights and weekly lock.", flush=True)
+        print(
+            "[STATE] portfolio_state.json updated with new target weights and weekly lock.",
+            flush=True,
+        )
 
     # Step 3.5b: Intraweek regime check (Tue-Fri only)
     is_monday = datetime.today().weekday() == 0
@@ -655,8 +683,13 @@ def main() -> int:
                 if current_regime == "EMERGENCY":
                     reasons = rs.get("reasons", [])
                     logger.warning("EMERGENCY BRAKE TRIGGERED: %s", reasons)
-                    print(f"[EMERGENCY] Mid-week brake triggered: {reasons}", flush=True)
-                    print("[EMERGENCY] Liquidating to cash -- skipping all execution this session", flush=True)
+                    print(
+                        f"[EMERGENCY] Mid-week brake triggered: {reasons}", flush=True
+                    )
+                    print(
+                        "[EMERGENCY] Liquidating to cash -- skipping all execution this session",
+                        flush=True,
+                    )
                     execution_paused = True
 
                     state_path = ROOT / "outputs" / "portfolio_state.json"
@@ -669,11 +702,17 @@ def main() -> int:
                             ps["last_updated"] = datetime.now(timezone.utc).isoformat()
                             state_path.write_text(json.dumps(ps, indent=2))
                         except Exception as e:
-                            logger.warning("Could not update portfolio_state.json: %s", e)
+                            logger.warning(
+                                "Could not update portfolio_state.json: %s", e
+                            )
 
                     fills_path = ROOT / "outputs" / "fills" / "fills.jsonl"
                     try:
-                        ps = json.loads(state_path.read_text()) if state_path.exists() else {}
+                        ps = (
+                            json.loads(state_path.read_text())
+                            if state_path.exists()
+                            else {}
+                        )
                         holdings = ps.get("holdings", {})
                         if holdings:
                             now_iso = datetime.now(timezone.utc).isoformat()
@@ -693,7 +732,10 @@ def main() -> int:
                                             "order_comment": "EMERGENCY_LIQUIDATION",
                                         }
                                         fh.write(json.dumps(record) + "\n")
-                            print(f"[EMERGENCY] {len(holdings)} SELL orders written to fills ledger", flush=True)
+                            print(
+                                f"[EMERGENCY] {len(holdings)} SELL orders written to fills ledger",
+                                flush=True,
+                            )
                     except Exception as e:
                         logger.warning("Could not write emergency fills: %s", e)
             except Exception as e:
@@ -702,6 +744,7 @@ def main() -> int:
     # Risk guard (before step 3b): pause paper execution if drawdown or daily loss breach
     try:
         import yaml as _yaml
+
         with open(ROOT / "config" / "trading_config.yaml", "r", encoding="utf-8") as _f:
             _tc = _yaml.safe_load(_f) or {}
         _risk = _tc.get("risk", {})
@@ -711,23 +754,30 @@ def main() -> int:
         if _db_path.exists():
             import sqlite3
             import pandas as _pd
+
             _conn = sqlite3.connect(str(_db_path))
             _df = _pd.read_sql_query(
                 "SELECT port_return, date FROM portfolio_daily ORDER BY date", _conn
             )
             _conn.close()
             if len(_df) > 0:
-                _df["port_return"] = _pd.to_numeric(_df["port_return"], errors="coerce").fillna(0)
+                _df["port_return"] = _pd.to_numeric(
+                    _df["port_return"], errors="coerce"
+                ).fillna(0)
                 _equity = (1 + _df["port_return"]).cumprod()
                 _equity.iloc[0] = 1.0
                 _running_max = _equity.cummax()
                 _drawdown = (_equity - _running_max) / _running_max
                 _current_dd = float(_drawdown.iloc[-1])
                 _yesterday_return = float(_df["port_return"].iloc[-1])
-                if _current_dd < max_drawdown_pause or _yesterday_return < max_daily_loss:
+                if (
+                    _current_dd < max_drawdown_pause
+                    or _yesterday_return < max_daily_loss
+                ):
                     logger.warning(
                         "RISK GUARD: drawdown=%s daily=%s — paper execution paused",
-                        f"{_current_dd:.2%}", f"{_yesterday_return:.2%}",
+                        f"{_current_dd:.2%}",
+                        f"{_yesterday_return:.2%}",
                     )
                     execution_paused = True
     except Exception:
@@ -737,6 +787,7 @@ def main() -> int:
     auto_paper = False
     try:
         import yaml as _yaml
+
         with open(ROOT / "config" / "trading_config.yaml", "r", encoding="utf-8") as _f:
             _trading = (_yaml.safe_load(_f) or {}).get("trading", {})
         _exec = _trading.get("execution", {})
@@ -757,7 +808,16 @@ def main() -> int:
             us_tickers = [t for t in _all_tickers if "." not in t or t.endswith(".T")]
             us_ticker_str = ",".join(sorted(set(us_tickers)))
             r3b = subprocess.run(
-                [py, str(scripts_dir / "run_execution.py"), "--tickers", us_ticker_str, "--rebalance", "--mode", "paper", "--confirm-paper"],
+                [
+                    py,
+                    str(scripts_dir / "run_execution.py"),
+                    "--tickers",
+                    us_ticker_str,
+                    "--rebalance",
+                    "--mode",
+                    "paper",
+                    "--confirm-paper",
+                ],
                 cwd=str(ROOT),
                 capture_output=False,
                 timeout=120,
@@ -774,7 +834,12 @@ def main() -> int:
         try:
             yesterday_str = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
             r3c = subprocess.run(
-                [py, str(scripts_dir / "sync_fills_from_ibkr.py"), "--date", yesterday_str],
+                [
+                    py,
+                    str(scripts_dir / "sync_fills_from_ibkr.py"),
+                    "--date",
+                    yesterday_str,
+                ],
                 cwd=str(ROOT),
                 capture_output=False,
                 timeout=60,
@@ -801,7 +866,9 @@ def main() -> int:
     )
     logger.info("reconcile_fills.py exit code: %s", r5.returncode)
     if r5.returncode != 0:
-        logger.warning("reconcile_fills.py exited non-zero — check outputs/fills/fills.jsonl and ledger")
+        logger.warning(
+            "reconcile_fills.py exited non-zero — check outputs/fills/fills.jsonl and ledger"
+        )
 
     # Step 6: Risk report
     r6 = subprocess.run(
@@ -818,6 +885,7 @@ def main() -> int:
 
     try:
         from src.data.csv_provider import load_data_config
+
         data_dir: Path = load_data_config()["data_dir"]
     except Exception:
         data_dir = ROOT / "data" / "stock_market_data"
@@ -825,6 +893,7 @@ def main() -> int:
     pillars: dict = {}
     try:
         import yaml
+
         with open(ROOT / "config" / "universe.yaml", "r", encoding="utf-8") as f:
             pillars = (yaml.safe_load(f) or {}).get("pillars") or {}
     except Exception as e:

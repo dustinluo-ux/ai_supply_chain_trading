@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 CACHE_PATH = ROOT / "outputs" / ".regime_cache.json"
 
 
-def check_regime_change(regime_status_path: str | Path = "outputs/regime_status.json") -> bool:
+def check_regime_change(
+    regime_status_path: str | Path = "outputs/regime_status.json",
+) -> bool:
     """
     Read regime_status.json; if current regime != cached regime, send regime_change alert, update cache, return True.
     If file missing return False. If cache missing, write current regime and return False (first run).
@@ -54,16 +56,20 @@ def check_regime_change(regime_status_path: str | Path = "outputs/regime_status.
         return False
     # Regime changed: send alert and update cache
     from src.monitoring.telegram_alerts import send_alert
+
     vix = data.get("vix", 0)
     spy_below_sma = data.get("spy_below_sma", False)
     as_of = data.get("as_of", "—")
-    send_alert("regime_change", {
-        "old": cached_regime,
-        "new": current_regime,
-        "vix": float(vix) if vix is not None else 0,
-        "spy_below_sma": spy_below_sma,
-        "as_of": as_of,
-    })
+    send_alert(
+        "regime_change",
+        {
+            "old": cached_regime,
+            "new": current_regime,
+            "vix": float(vix) if vix is not None else 0,
+            "spy_below_sma": spy_below_sma,
+            "as_of": as_of,
+        },
+    )
     try:
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump({"regime": current_regime}, f)

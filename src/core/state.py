@@ -1,6 +1,7 @@
 """
 Pipeline-wide state (vendor events, scores, orders). No LangChain/LangGraph.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,11 +29,6 @@ class PipelineState:
     finished_at: Optional[datetime] = None
     vendor_events: list[VendorEvent] = field(default_factory=list)
     tickers_requested: list[str] = field(default_factory=list)
-    tickers_loaded: list[str] = field(default_factory=list)
-    signal_scores: dict[str, Decimal] = field(default_factory=dict)
-    regime: Optional[str] = None
-    nav: Optional[Decimal] = None
-    target_weights: dict[str, Decimal] = field(default_factory=dict)
     orders_submitted: int = 0
     orders_filled: int = 0
     warnings: list[str] = field(default_factory=list)

@@ -2,6 +2,7 @@
 Attribute realized P&L from fills to pods, compute rolling Sharpe/MDD per pod,
 and update pod_fitness.json. Helper to append per-pod weight snapshots to history.
 """
+
 from __future__ import annotations
 
 import json
@@ -176,7 +177,7 @@ def _compute_fitness(
         mean_ret = float(tail.mean())
         std_ret = float(tail.std())
         if std_ret and std_ret > 0:
-            sharpe = mean_ret / std_ret * (252 ** 0.5)
+            sharpe = mean_ret / std_ret * (252**0.5)
         else:
             sharpe = 0.0
         equity = (1 + tail).cumprod()
@@ -195,7 +196,9 @@ def _compute_fitness(
             "sharpe": fallback_sharpe,
             "mdd": fallback_mdd,
             "live": False,
-            "n_obs": len(daily_returns_series) if daily_returns_series is not None else 0,
+            "n_obs": (
+                len(daily_returns_series) if daily_returns_series is not None else 0
+            ),
         }
 
 
@@ -225,7 +228,9 @@ def update_pod_fitness(
                 logger.warning("Could not load pod_fitness.json: %s", e)
         for pod in ("core", "extension", "ballast"):
             if pod not in fitness:
-                fitness[pod] = dict(DEFAULT_FITNESS.get(pod, {"sharpe": 0.0, "mdd": 0.0}))
+                fitness[pod] = dict(
+                    DEFAULT_FITNESS.get(pod, {"sharpe": 0.0, "mdd": 0.0})
+                )
 
         # b. Load pod_weights_history.jsonl
         weights_history: list[dict] = []
@@ -237,7 +242,11 @@ def update_pod_fitness(
                         continue
                     try:
                         obj = json.loads(line)
-                        if isinstance(obj, dict) and "as_of" in obj and "pod_weights" in obj:
+                        if (
+                            isinstance(obj, dict)
+                            and "as_of" in obj
+                            and "pod_weights" in obj
+                        ):
                             weights_history.append(obj)
                     except json.JSONDecodeError:
                         continue
@@ -270,7 +279,12 @@ def update_pod_fitness(
                 fallback_sharpe = DEFAULT_FITNESS.get(pod, {}).get("sharpe")
             if fallback_mdd is None:
                 fallback_mdd = DEFAULT_FITNESS.get(pod, {}).get("mdd")
-            comp = _compute_fitness(series, min_obs=20, fallback_sharpe=fallback_sharpe, fallback_mdd=fallback_mdd)
+            comp = _compute_fitness(
+                series,
+                min_obs=20,
+                fallback_sharpe=fallback_sharpe,
+                fallback_mdd=fallback_mdd,
+            )
             fitness[pod]["sharpe"] = comp["sharpe"]
             fitness[pod]["mdd"] = comp["mdd"]
             fitness[pod]["live"] = comp["live"]

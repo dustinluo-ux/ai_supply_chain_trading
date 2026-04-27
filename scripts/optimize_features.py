@@ -6,6 +6,7 @@ Usage: python scripts/optimize_features.py
 
 Two-stage evaluation (Stage 1: fast IC/corr pre-filter; Stage 2: full walk-forward IC).
 """
+
 from __future__ import annotations
 
 import json
@@ -51,7 +52,12 @@ def _load_prices_and_news():
     news_signals = {}
     if eodhd_path.exists():
         df = pd.read_parquet(eodhd_path, engine="fastparquet")
-        if not df.empty and "Ticker" in df.columns and "Date" in df.columns and "Sentiment" in df.columns:
+        if (
+            not df.empty
+            and "Ticker" in df.columns
+            and "Date" in df.columns
+            and "Sentiment" in df.columns
+        ):
             for ticker, grp in df.groupby("Ticker"):
                 by_date = grp.groupby("Date")["Sentiment"].mean()
                 news_signals[ticker] = {
@@ -65,6 +71,7 @@ def _write_feature_names(config_path: Path, feature_names: list) -> None:
     """Set model_config.yaml feature_names; preserve other keys."""
     try:
         from ruamel.yaml import YAML
+
         yaml_loader = YAML()
         yaml_loader.preserve_quotes = True
         with open(config_path, "r", encoding="utf-8") as f:
@@ -78,19 +85,23 @@ def _write_feature_names(config_path: Path, feature_names: list) -> None:
             yaml_loader.dump(cfg, f)
     except ImportError:
         import yaml
+
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         if "features" not in cfg:
             cfg["features"] = {}
         cfg["features"]["feature_names"] = list(feature_names)
         with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            yaml.dump(
+                cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+            )
 
 
 def _update_model_path(config_path: Path, save_path: str) -> None:
     """Update training.model_path in model_config.yaml."""
     try:
         from ruamel.yaml import YAML
+
         yaml_loader = YAML()
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml_loader.load(f)
@@ -100,12 +111,15 @@ def _update_model_path(config_path: Path, save_path: str) -> None:
             yaml_loader.dump(cfg, f)
     except Exception:
         import yaml
+
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         if cfg and "training" in cfg:
             cfg["training"]["model_path"] = save_path
         with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            yaml.dump(
+                cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+            )
 
 
 def _fast_evaluate_combo(
@@ -137,7 +151,8 @@ def _fast_evaluate_combo(
     while fold_start + pd.Timedelta(days=week_days) <= test_end_dt:
         fold_end = fold_start + pd.Timedelta(days=week_days)
         train_slice = full_matrix[
-            (full_matrix["date"] >= train_anchor_dt) & (full_matrix["date"] < fold_start)
+            (full_matrix["date"] >= train_anchor_dt)
+            & (full_matrix["date"] < fold_start)
         ].copy()
         test_slice = full_matrix[
             (full_matrix["date"] >= fold_start) & (full_matrix["date"] < fold_end)
@@ -148,7 +163,9 @@ def _fast_evaluate_combo(
         # Z-score forward_ret by date (cross-sectional)
         for _df in (train_slice, test_slice):
             g = _df.groupby("date")["forward_ret"]
-            _df["forward_ret"] = g.transform(lambda x: (x - x.mean()) / x.std() if x.std() > 0 else x - x.mean())
+            _df["forward_ret"] = g.transform(
+                lambda x: (x - x.mean()) / x.std() if x.std() > 0 else x - x.mean()
+            )
         X_train = train_slice[cols].values
         y_train = train_slice["forward_ret"].values
         valid = np.isfinite(X_train).all(axis=1) & np.isfinite(y_train)
@@ -182,6 +199,7 @@ def _fast_evaluate_combo(
 def _max_pairwise_corr(matrix, feature_names: list) -> float:
     """Max absolute Pearson correlation between any two features in the list."""
     import numpy as np
+
     cols = [c for c in feature_names if c in matrix.columns]
     if len(cols) < 2:
         return 0.0
@@ -208,6 +226,7 @@ def main() -> int:
     config_path = ROOT / CONFIG_PATH
     with open(config_path, "r", encoding="utf-8") as f:
         import yaml
+
         model_cfg = yaml.safe_load(f)
     train_cfg = model_cfg.get("training", {})
     train_start = train_cfg.get("train_start", "2022-01-01")
@@ -221,9 +240,14 @@ def main() -> int:
 
     # Stage 1 — build full matrix ONCE over full date range (train + test); ensure 'date' column for Stage 2
     all_candidate_names = list(FEATURE_REGISTRY)
-    selector = FeatureSelector(ic_threshold=STAGE1_IC_THRESHOLD, corr_threshold=STAGE1_CORR_THRESHOLD, n_keep=MAX_FEATURES)
+    selector = FeatureSelector(
+        ic_threshold=STAGE1_IC_THRESHOLD,
+        corr_threshold=STAGE1_CORR_THRESHOLD,
+        n_keep=MAX_FEATURES,
+    )
     full_matrix = selector.build_feature_matrix(
-        prices_dict, news_signals,
+        prices_dict,
+        news_signals,
         start="2022-01-01",
         end=TEST_END,
         feature_columns=all_candidate_names,
@@ -237,9 +261,15 @@ def main() -> int:
 
     # Stage 1 uses only training rows
     train_end_dt = pd.to_datetime(train_end)
-    stage1_matrix = full_matrix[full_matrix["date"] <= train_end_dt] if "date" in full_matrix.columns else full_matrix
+    stage1_matrix = (
+        full_matrix[full_matrix["date"] <= train_end_dt]
+        if "date" in full_matrix.columns
+        else full_matrix
+    )
     protected = [f for f in FEATURE_REGISTRY if FEATURE_REGISTRY[f].get("protected")]
-    non_protected = [f for f in FEATURE_REGISTRY if f not in protected and f in stage1_matrix.columns]
+    non_protected = [
+        f for f in FEATURE_REGISTRY if f not in protected and f in stage1_matrix.columns
+    ]
     y = stage1_matrix["forward_ret"].values
 
     dropped_low_ic = []
@@ -252,7 +282,11 @@ def main() -> int:
         if np.sum(valid) < 20:
             continue
         r, _ = spearmanr(x[valid], y[valid], nan_policy="omit")
-        r = float(r) if r is not None and (not hasattr(r, "__len__") or len(r) > 0) else float("nan")
+        r = (
+            float(r)
+            if r is not None and (not hasattr(r, "__len__") or len(r) > 0)
+            else float("nan")
+        )
         if math.isnan(r) or abs(r) < STAGE1_IC_THRESHOLD:
             dropped_low_ic.append(col)
             continue
@@ -274,11 +308,17 @@ def main() -> int:
             continue
         survivors.append(col)
 
-    print(f"[Governor] Stage 1: {len(non_protected)} candidates evaluated -> {len(survivors)} survivors", flush=True)
+    print(
+        f"[Governor] Stage 1: {len(non_protected)} candidates evaluated -> {len(survivors)} survivors",
+        flush=True,
+    )
     if dropped_low_ic:
         print(f"[Governor] Dropped (low IC): {dropped_low_ic}", flush=True)
     if dropped_corr_protected:
-        print(f"[Governor] Dropped (corr with protected): {dropped_corr_protected}", flush=True)
+        print(
+            f"[Governor] Dropped (corr with protected): {dropped_corr_protected}",
+            flush=True,
+        )
 
     if len(survivors) == 0:
         print("[Governor] No candidates survived pre-filtering.", flush=True)
@@ -292,20 +332,29 @@ def main() -> int:
         if not isinstance(log_entries, list):
             log_entries = []
         baseline_ic = 0.0  # not computed
-        log_entries.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "event": "REVERSION",
-            "reason": "No candidates survived Stage 1 pre-filtering",
-            "baseline_features": list(protected),
-            "baseline_ic": baseline_ic,
-            "combinations_evaluated": 0,
-        })
+        log_entries.append(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "REVERSION",
+                "reason": "No candidates survived Stage 1 pre-filtering",
+                "baseline_features": list(protected),
+                "baseline_ic": baseline_ic,
+                "combinations_evaluated": 0,
+            }
+        )
         (ROOT / LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        (ROOT / LOG_PATH).write_text(json.dumps(log_entries, indent=2), encoding="utf-8")
-        print("[Governor] No superior model found. Reverting to Baseline (3-feature)", flush=True)
+        (ROOT / LOG_PATH).write_text(
+            json.dumps(log_entries, indent=2), encoding="utf-8"
+        )
+        print(
+            "[Governor] No superior model found. Reverting to Baseline (3-feature)",
+            flush=True,
+        )
         _write_feature_names(config_path, protected)
         pipeline = ModelTrainingPipeline(str(config_path))
-        X, y, _ = pipeline.prepare_training_data(prices_dict, technical_signals=None, news_signals=news_signals)
+        X, y, _ = pipeline.prepare_training_data(
+            prices_dict, technical_signals=None, news_signals=news_signals
+        )
         split = int(len(X) * 0.8)
         model = create_model(
             {**{"type": pipeline.active_model_type}, **pipeline.model_config},
@@ -322,6 +371,7 @@ def main() -> int:
 
     # Build combination list
     from itertools import combinations as icombs
+
     combinations_to_test = []
     combinations_to_test.append(tuple(protected))
     for c in survivors:
@@ -335,8 +385,14 @@ def main() -> int:
         combinations_to_test.append(tuple(protected + [c1, c2]))
     if len(combinations_to_test) > MAX_ITERATIONS:
         combinations_to_test = combinations_to_test[:MAX_ITERATIONS]
-        print(f"[Governor] Capped at {MAX_ITERATIONS} combinations (MAX_ITERATIONS limit)", flush=True)
-    print(f"[Governor] Stage 2: {len(combinations_to_test)} combinations to evaluate", flush=True)
+        print(
+            f"[Governor] Capped at {MAX_ITERATIONS} combinations (MAX_ITERATIONS limit)",
+            flush=True,
+        )
+    print(
+        f"[Governor] Stage 2: {len(combinations_to_test)} combinations to evaluate",
+        flush=True,
+    )
 
     # Stage 2 — full walk-forward evaluation
     log_entries = []
@@ -403,20 +459,30 @@ def main() -> int:
         run_entries.append(entry)
         log_entries.append(entry)
         (ROOT / LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        (ROOT / LOG_PATH).write_text(json.dumps(log_entries, indent=2), encoding="utf-8")
+        (ROOT / LOG_PATH).write_text(
+            json.dumps(log_entries, indent=2), encoding="utf-8"
+        )
 
         print(f"[Governor] Combo {i + 1}/{total}: {combo}", flush=True)
-        print(f"          IC={mean_ic:.4f} | folds={fold_ics} | pos={n_pos}/4 | max_corr={max_corr:.3f} -> {decision}", flush=True)
+        print(
+            f"          IC={mean_ic:.4f} | folds={fold_ics} | pos={n_pos}/4 | max_corr={max_corr:.3f} -> {decision}",
+            flush=True,
+        )
 
     # Winner selection and reversion
     winners = [e for e in run_entries if e.get("decision") == "ACCEPT"]
 
     if winners:
         best = max(winners, key=lambda e: e["mean_ic"])
-        print(f"[Governor] Winner: {best['features_tested']} IC={best['mean_ic']:.4f}", flush=True)
+        print(
+            f"[Governor] Winner: {best['features_tested']} IC={best['mean_ic']:.4f}",
+            flush=True,
+        )
         _write_feature_names(config_path, best["features_tested"])
         pipeline = ModelTrainingPipeline(str(config_path))
-        X, y, _ = pipeline.prepare_training_data(prices_dict, technical_signals=None, news_signals=news_signals)
+        X, y, _ = pipeline.prepare_training_data(
+            prices_dict, technical_signals=None, news_signals=news_signals
+        )
         split = int(len(X) * 0.8)
         model = create_model(
             {**{"type": pipeline.active_model_type}, **pipeline.model_config},
@@ -432,19 +498,28 @@ def main() -> int:
         print("[Governor] model_config.yaml updated.", flush=True)
         return 0
     else:
-        print("[Governor] No superior model found. Reverting to Baseline (3-feature)", flush=True)
-        log_entries.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "event": "REVERSION",
-            "reason": "No combination passed all three gates",
-            "baseline_features": list(protected),
-            "baseline_ic": baseline_ic,
-            "combinations_evaluated": len(combinations_to_test),
-        })
-        (ROOT / LOG_PATH).write_text(json.dumps(log_entries, indent=2), encoding="utf-8")
+        print(
+            "[Governor] No superior model found. Reverting to Baseline (3-feature)",
+            flush=True,
+        )
+        log_entries.append(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "REVERSION",
+                "reason": "No combination passed all three gates",
+                "baseline_features": list(protected),
+                "baseline_ic": baseline_ic,
+                "combinations_evaluated": len(combinations_to_test),
+            }
+        )
+        (ROOT / LOG_PATH).write_text(
+            json.dumps(log_entries, indent=2), encoding="utf-8"
+        )
         _write_feature_names(config_path, list(protected))
         pipeline = ModelTrainingPipeline(str(config_path))
-        X, y, _ = pipeline.prepare_training_data(prices_dict, technical_signals=None, news_signals=news_signals)
+        X, y, _ = pipeline.prepare_training_data(
+            prices_dict, technical_signals=None, news_signals=news_signals
+        )
         split = int(len(X) * 0.8)
         model = create_model(
             {**{"type": pipeline.active_model_type}, **pipeline.model_config},

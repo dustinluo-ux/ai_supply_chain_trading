@@ -76,7 +76,9 @@ def _load_eodhd_tickers() -> set[str]:
         return set()
     if "Ticker" not in df.columns:
         return set()
-    return {str(t).strip().upper() for t in df["Ticker"].dropna().unique() if str(t).strip()}
+    return {
+        str(t).strip().upper() for t in df["Ticker"].dropna().unique() if str(t).strip()
+    }
 
 
 def _load_etf_constituents() -> tuple[dict[str, set[str]], set[str]]:
@@ -92,7 +94,9 @@ def _load_etf_constituents() -> tuple[dict[str, set[str]], set[str]]:
             th = fd.top_holdings
             if th is not None and len(th) > 0:
                 # top_holdings index contains ticker symbols
-                members = {str(x).strip().upper() for x in th.index.tolist() if str(x).strip()}
+                members = {
+                    str(x).strip().upper() for x in th.index.tolist() if str(x).strip()
+                }
         except Exception:
             members = set()
         per_etf[etf] = members
@@ -193,11 +197,15 @@ def _minmax_normalize(values: dict[str, float]) -> dict[str, float]:
 
 
 def _count_whole_word_mentions(text: str, ticker: str) -> int:
-    pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(ticker)}(?![A-Za-z0-9])", re.IGNORECASE)
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9]){re.escape(ticker)}(?![A-Za-z0-9])", re.IGNORECASE
+    )
     return len(pattern.findall(text))
 
 
-def _pillar1_comention(candidates: set[str], seed_articles: list[dict]) -> tuple[dict[str, float], dict[str, int]]:
+def _pillar1_comention(
+    candidates: set[str], seed_articles: list[dict]
+) -> tuple[dict[str, float], dict[str, int]]:
     raw_counts: dict[str, int] = {t: 0 for t in candidates}
     log_scores: dict[str, float] = {t: 0.0 for t in candidates}
     for t in candidates:
@@ -215,7 +223,9 @@ def _pillar1_comention(candidates: set[str], seed_articles: list[dict]) -> tuple
     return norm, raw_counts
 
 
-def _pillar2_etf(candidates: set[str], etf_members: dict[str, set[str]]) -> dict[str, float]:
+def _pillar2_etf(
+    candidates: set[str], etf_members: dict[str, set[str]]
+) -> dict[str, float]:
     out: dict[str, float] = {}
     for t in candidates:
         cnt = 0
@@ -242,7 +252,9 @@ def _pillar3_keyword(candidates: set[str]) -> dict[str, float]:
                 for art in items:
                     if not isinstance(art, dict):
                         continue
-                    text = f"{art.get('title', '')} {art.get('description', '')}".lower()
+                    text = (
+                        f"{art.get('title', '')} {art.get('description', '')}".lower()
+                    )
                     for kw in kw_lower:
                         if kw in text:
                             count += 1
@@ -323,11 +335,17 @@ def main() -> int:
     seed_articles = _load_seed_articles(today_d)
     pillar1, raw_comention_counts = _pillar1_comention(candidate_pool, seed_articles)
     p1_nonzero = sum(1 for t in candidate_pool if raw_comention_counts.get(t, 0) > 0)
-    print(f"[SCOUT] Pillar 1 complete: {p1_nonzero} candidates with co-mention > 0.", flush=True)
+    print(
+        f"[SCOUT] Pillar 1 complete: {p1_nonzero} candidates with co-mention > 0.",
+        flush=True,
+    )
 
     pillar2 = _pillar2_etf(candidate_pool, etf_members)
     p2_nonzero = sum(1 for t in candidate_pool if pillar2.get(t, 0.0) > 0.0)
-    print(f"[SCOUT] Pillar 2 complete: {p2_nonzero} candidates in at least one ETF.", flush=True)
+    print(
+        f"[SCOUT] Pillar 2 complete: {p2_nonzero} candidates in at least one ETF.",
+        flush=True,
+    )
 
     pillar3 = _pillar3_keyword(candidate_pool)
     print("[SCOUT] Pillar 3 complete.", flush=True)
@@ -358,7 +376,9 @@ def main() -> int:
         history.setdefault(t, [])
         months = {str(e.get("month", "")) for e in history[t] if isinstance(e, dict)}
         if as_of_month not in months:
-            history[t].append({"month": as_of_month, "composite": float(r["composite_score"])})
+            history[t].append(
+                {"month": as_of_month, "composite": float(r["composite_score"])}
+            )
 
     for r in rows:
         t = r["ticker"]
@@ -388,7 +408,9 @@ def main() -> int:
     n_entry = sum(1 for r in rows if r.get("entry_candidate"))
     print("[SCOUT] === PIT SCOUTING RESULTS ===", flush=True)
     print(f"[SCOUT] Candidates scored: {len(rows)}", flush=True)
-    print(f"[SCOUT] Entry candidates (>=2 months above threshold): {n_entry}", flush=True)
+    print(
+        f"[SCOUT] Entry candidates (>=2 months above threshold): {n_entry}", flush=True
+    )
     print("[SCOUT] Top 5:", flush=True)
     for i, r in enumerate(rows[:5], start=1):
         print(
@@ -402,8 +424,12 @@ def main() -> int:
     try:
         import subprocess
         import sys
-        _next = (today_d.replace(day=1) if today_d.month == 12
-                 else today_d.replace(day=1, month=today_d.month + 1))
+
+        _next = (
+            today_d.replace(day=1)
+            if today_d.month == 12
+            else today_d.replace(day=1, month=today_d.month + 1)
+        )
         if today_d.month == 12:
             _next = date(today_d.year + 1, 1, 1)
         else:
@@ -414,13 +440,21 @@ def main() -> int:
         _script = str(Path(__file__).resolve())
         _tr = f'cmd /c cd /d "{_root}" && "{_py}" "{_script}"'
         _sch = [
-            "schtasks", "/Create", "/F",
-            "/TN", "AITrading_MonthlyScouting",
-            "/TR", _tr,
-            "/SC", "MONTHLY",
-            "/D", "1",
-            "/ST", "06:00",
-            "/SD", _sd_str,
+            "schtasks",
+            "/Create",
+            "/F",
+            "/TN",
+            "AITrading_MonthlyScouting",
+            "/TR",
+            _tr,
+            "/SC",
+            "MONTHLY",
+            "/D",
+            "1",
+            "/ST",
+            "06:00",
+            "/SD",
+            _sd_str,
         ]
         _sr = subprocess.run(_sch, capture_output=True, text=True)
         if _sr.returncode != 0:
@@ -430,7 +464,10 @@ def main() -> int:
                 flush=True,
             )
         else:
-            print(f"[SCOUT] Next run scheduled: {_next} 06:00 (AITrading_MonthlyScouting)", flush=True)
+            print(
+                f"[SCOUT] Next run scheduled: {_next} 06:00 (AITrading_MonthlyScouting)",
+                flush=True,
+            )
     except Exception as _se:
         print(f"[SCOUT][WARN] Scheduler registration failed: {_se}", flush=True)
 

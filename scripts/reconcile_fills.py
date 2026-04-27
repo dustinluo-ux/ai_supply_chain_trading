@@ -11,6 +11,7 @@ Usage:
 Defaults: fills → outputs/fills/fills.jsonl, signal → outputs/last_signal.json.
 Exit 0 always.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -131,9 +132,17 @@ def _main() -> int:
         held_qty = net_position.get(ticker, 0)
         price = last_close.get(ticker)
         avg_fill = avg_fill_held.get(ticker)
-        cost_basis = (avg_fill * held_qty) if (avg_fill is not None and held_qty != 0) else None
-        market_value = (held_qty * price) if (price is not None and held_qty != 0) else None
-        unreal_pnl = ((price - avg_fill) * held_qty) if (price is not None and avg_fill is not None and held_qty != 0) else None
+        cost_basis = (
+            (avg_fill * held_qty) if (avg_fill is not None and held_qty != 0) else None
+        )
+        market_value = (
+            (held_qty * price) if (price is not None and held_qty != 0) else None
+        )
+        unreal_pnl = (
+            ((price - avg_fill) * held_qty)
+            if (price is not None and avg_fill is not None and held_qty != 0)
+            else None
+        )
 
         # Status
         if intended_qty == 0 and held_qty == 0:
@@ -155,7 +164,19 @@ def _main() -> int:
         else:
             status = "FLAT"
 
-        rows.append((ticker, intended_qty, held_qty, avg_fill, price, cost_basis, market_value, unreal_pnl, status))
+        rows.append(
+            (
+                ticker,
+                intended_qty,
+                held_qty,
+                avg_fill,
+                price,
+                cost_basis,
+                market_value,
+                unreal_pnl,
+                status,
+            )
+        )
 
     # Sort: non-flat first, then by ticker
     rows.sort(key=lambda r: (0 if (r[1] != 0 or r[2] != 0) else 1, r[0]))
@@ -209,29 +230,39 @@ def _main() -> int:
     flat = sum(1 for r in rows if r[8] == "FLAT")
     over_under = sum(1 for r in rows if r[8] in ("OVER", "UNDER"))
     total_notional = sum(r[6] for r in rows if r[6] is not None)
-    lines.extend([
-        "",
-        "  SUMMARY",
-        f"    Matched:    {matched}    Unintended: {unintended}",
-        f"    Missing:    {missing}    Flat:       {flat}",
-        f"    Diverged:   {over_under}    (OVER + UNDER)",
-        f"    Total held notional: ${total_notional:,.0f}",
-    ])
+    lines.extend(
+        [
+            "",
+            "  SUMMARY",
+            f"    Matched:    {matched}    Unintended: {unintended}",
+            f"    Missing:    {missing}    Flat:       {flat}",
+            f"    Diverged:   {over_under}    (OVER + UNDER)",
+            f"    Total held notional: ${total_notional:,.0f}",
+        ]
+    )
     total_cost_basis = sum(r[5] for r in rows if r[5] is not None)
     total_mkt_value = sum(r[6] for r in rows if r[6] is not None)
     if total_cost_basis and total_cost_basis > 0:
         unreal_pnl_total = total_mkt_value - total_cost_basis
         pct = 100.0 * unreal_pnl_total / total_cost_basis
         pct_s = f"+{pct:.2f}%" if pct >= 0 else f"{pct:.2f}%"
-        pnl_total_s = f"+${unreal_pnl_total:,.0f}" if unreal_pnl_total >= 0 else f"-${abs(unreal_pnl_total):,.0f}"
-        lines.extend([
-            "  " + "-" * 50,
-            f"  Total Cost Basis:    ${total_cost_basis:,.0f}",
-            f"  Total Market Value:  ${total_mkt_value:,.0f}",
-            f"  Unrealized PnL:      {pnl_total_s}  ({pct_s})",
-        ])
+        pnl_total_s = (
+            f"+${unreal_pnl_total:,.0f}"
+            if unreal_pnl_total >= 0
+            else f"-${abs(unreal_pnl_total):,.0f}"
+        )
+        lines.extend(
+            [
+                "  " + "-" * 50,
+                f"  Total Cost Basis:    ${total_cost_basis:,.0f}",
+                f"  Total Market Value:  ${total_mkt_value:,.0f}",
+                f"  Unrealized PnL:      {pnl_total_s}  ({pct_s})",
+            ]
+        )
     else:
-        lines.append("  Note: avg_fill_price unavailable until sync_fills_from_ibkr.py is run.")
+        lines.append(
+            "  Note: avg_fill_price unavailable until sync_fills_from_ibkr.py is run."
+        )
     report = "\n".join(lines)
     print(report, flush=True)
 

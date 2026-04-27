@@ -6,6 +6,7 @@ Weight = (risk_pct * price) / (ATR * atr_multiplier), then normalized to sum = t
 
 Config: config/trading_config.yaml → position_sizing.risk_pct, position_sizing.atr_multiplier.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,16 +21,21 @@ DEFAULT_RISK_PCT = 0.02
 DEFAULT_ATR_MULTIPLIER = 2.0
 
 
-def compute_atr_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+def compute_atr_series(
+    high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14
+) -> pd.Series:
     """
     True Range then ATR(period). Returns series aligned to close index.
     """
     prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     atr = tr.rolling(window=period, min_periods=1).mean()
     return atr
 
@@ -95,11 +101,19 @@ def get_sizing_params_from_config(config: Any) -> tuple[float, float]:
     Returns (risk_pct, atr_multiplier). Uses defaults if key missing.
     """
     try:
-        risk = float(config.get_param("trading_config.position_sizing.risk_pct", DEFAULT_RISK_PCT))
+        risk = float(
+            config.get_param(
+                "trading_config.position_sizing.risk_pct", DEFAULT_RISK_PCT
+            )
+        )
     except (AttributeError, KeyError, TypeError):
         risk = DEFAULT_RISK_PCT
     try:
-        mult = float(config.get_param("trading_config.position_sizing.atr_multiplier", DEFAULT_ATR_MULTIPLIER))
+        mult = float(
+            config.get_param(
+                "trading_config.position_sizing.atr_multiplier", DEFAULT_ATR_MULTIPLIER
+            )
+        )
     except (AttributeError, KeyError, TypeError):
         mult = DEFAULT_ATR_MULTIPLIER
     return risk, mult

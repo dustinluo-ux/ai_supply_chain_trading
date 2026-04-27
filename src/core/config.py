@@ -4,6 +4,7 @@ Environment-level configuration: .env loading and base path resolution.
 Single source of truth for env vars and data paths. YAML config remains in
 src/utils/config_manager.py. All values are computed at module import time.
 """
+
 from pathlib import Path
 import os
 

@@ -4,6 +4,7 @@ Abstract base class for provider-agnostic news interface.
 Independent of NewsDataSource in src/data/news_base.py (which handles JSON caching).
 Providers may implement both.
 """
+
 from abc import ABC, abstractmethod
 from typing import Dict, List
 

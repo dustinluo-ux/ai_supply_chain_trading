@@ -1,6 +1,7 @@
 """
 Skeptic gate: concentrated positions screened with bear-style fundamentals (yfinance only).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from decimal import Decimal
 from typing import Optional
 
 WEIGHT_TRIGGER = Decimal("0.15")
+_DISTRESS_FLAGS = {"DISTRESSED_DEBT", "DISTRESSED_LIQUIDITY", "DISTRESSED_DRAWDOWN"}
 
 
 @dataclass
@@ -114,7 +116,8 @@ def run_gate(weights: dict[str, float], ticker_list: list[str]) -> GateResult:
             fnd = fetch_bear_fundamentals(t)
             _audit_bear(fnd)
             bear_findings.append(fnd)
-            if len(fnd.flags) >= 2:
+            has_distress = any(f in _DISTRESS_FLAGS for f in fnd.flags)
+            if len(fnd.flags) >= 2 and has_distress:
                 fatal_tickers.append(t)
 
         if fatal_tickers:

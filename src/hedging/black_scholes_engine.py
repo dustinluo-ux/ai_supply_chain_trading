@@ -20,7 +20,9 @@ def get_put_price(S: float, K: float, T: float, r: float, sigma: float) -> float
     return float(max(put, 0.0))
 
 
-def find_target_delta_strike(S: float, T: float, r: float, sigma: float, target_delta: float = 0.20) -> float:
+def find_target_delta_strike(
+    S: float, T: float, r: float, sigma: float, target_delta: float = 0.20
+) -> float:
     """Find strike where |put delta| equals target_delta (e.g. 0.20 for 20-delta, 0.10 for 10-delta)."""
     S = float(S)
     T = float(T)
@@ -69,4 +71,3 @@ def estimate_smh_put_cost(
     K = find_target_delta_strike(S=S, T=T, r=r, sigma=sigma, target_delta=target_delta)
     put_price = get_put_price(S=S, K=K, T=T, r=r, sigma=sigma)
     return float(put_price), float(K), float(sigma)
-

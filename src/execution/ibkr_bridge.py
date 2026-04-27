@@ -4,6 +4,7 @@ Live Execution Bridge for IBKR: account monitoring, risk (Smart Stop), order dis
 Uses src.data.ib_provider.IBDataProvider and src.execution.ib_executor.IBExecutor.
 Design: docs/LIVE_EXECUTION_BRIDGE_DESIGN.md
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,10 +24,13 @@ LIVE_SPINE_TAG = "LIVE_SPINE"
 @dataclass
 class LiveSignal:
     """One signal to dispatch; is_propagated True → order comment PROHIBITED_LLM_DISCOVERY_LINK."""
+
     ticker: str
     weight: float  # target weight 0..1
     direction: str  # "BUY" | "SELL"
-    is_propagated: bool  # True if from SentimentPropagator (source_type == "propagated")
+    is_propagated: (
+        bool  # True if from SentimentPropagator (source_type == "propagated")
+    )
     atr_per_share: float
     entry_price: float
     metadata: Optional[Dict[str, Any]] = None
@@ -119,8 +123,11 @@ class RiskManager:
         else:
             try:
                 from src.utils.config_manager import get_config
+
                 self._atr_mult = float(
-                    get_config().get_param("trading_config.position_sizing.atr_multiplier", 2.0)
+                    get_config().get_param(
+                        "trading_config.position_sizing.atr_multiplier", 2.0
+                    )
                 )
             except Exception:
                 self._atr_mult = 2.0
@@ -173,16 +180,21 @@ class CircuitBreaker:
         if self._config is None:
             try:
                 from src.utils.config_manager import get_config
+
                 self._config = get_config()
             except Exception:
                 pass
         if self._config is not None:
             try:
                 self._enabled = bool(
-                    self._config.get_param("strategy_params.circuit_breaker.enabled", True)
+                    self._config.get_param(
+                        "strategy_params.circuit_breaker.enabled", True
+                    )
                 )
                 self._max_1d_pct = float(
-                    self._config.get_param("strategy_params.circuit_breaker.max_1d_drawdown_pct", 0.05)
+                    self._config.get_param(
+                        "strategy_params.circuit_breaker.max_1d_drawdown_pct", 0.05
+                    )
                 )
             except Exception:
                 pass
@@ -200,6 +212,7 @@ class CircuitBreaker:
             return None
         # Simple: use oldest as proxy for "1d ago" or find closest to now - 1d
         import time
+
         now = time.time()
         one_day_sec = 86400.0
         target = now - one_day_sec
@@ -233,7 +246,11 @@ class CircuitBreaker:
         """If 1d drawdown <= -max_1d_drawdown_pct, call pause() and return True."""
         dd = self.check_1d_drawdown(current_nav)
         if dd is not None and dd <= -self._max_1d_pct:
-            logger.warning("CircuitBreaker: 1d drawdown %.2f%% >= max %.2f%% → pausing", dd * 100, self._max_1d_pct * 100)
+            logger.warning(
+                "CircuitBreaker: 1d drawdown %.2f%% >= max %.2f%% → pausing",
+                dd * 100,
+                self._max_1d_pct * 100,
+            )
             self.pause()
             return True
         return False
@@ -245,6 +262,7 @@ class CircuitBreaker:
 @dataclass
 class RebalanceOrder:
     """One rebalance order: only generated if |drift| > threshold and |delta_dollars| > min_trade."""
+
     ticker: str
     side: str  # "BUY" | "SELL"
     quantity: int
@@ -272,8 +290,11 @@ class RebalanceLogic:
         else:
             try:
                 from src.utils.config_manager import get_config
+
                 self._drift_threshold = float(
-                    get_config().get_param("strategy_params.rebalancing.drift_threshold_pct", 0.05)
+                    get_config().get_param(
+                        "strategy_params.rebalancing.drift_threshold_pct", 0.05
+                    )
                 )
             except Exception:
                 self._drift_threshold = 0.05
@@ -282,8 +303,11 @@ class RebalanceLogic:
         else:
             try:
                 from src.utils.config_manager import get_config
+
                 self._min_trade_dollar = float(
-                    get_config().get_param("strategy_params.rebalancing.min_trade_dollar_value", 500.0)
+                    get_config().get_param(
+                        "strategy_params.rebalancing.min_trade_dollar_value", 500.0
+                    )
                 )
             except Exception:
                 self._min_trade_dollar = 500.0
@@ -341,17 +365,19 @@ class RebalanceLogic:
             if quantity <= 0:
                 continue
             side = "BUY" if delta_dollars > 0 else "SELL"
-            orders.append(RebalanceOrder(
-                ticker=ticker,
-                side=side,
-                quantity=quantity,
-                delta_dollars=delta_dollars,
-                drift=drift,
-                target_weight=target_w,
-                current_weight=current_w,
-                target_dollars=target_dollars,
-                current_dollars=current_d,
-            ))
+            orders.append(
+                RebalanceOrder(
+                    ticker=ticker,
+                    side=side,
+                    quantity=quantity,
+                    delta_dollars=delta_dollars,
+                    drift=drift,
+                    target_weight=target_w,
+                    current_weight=current_w,
+                    target_dollars=target_dollars,
+                    current_dollars=current_d,
+                )
+            )
         return orders
 
 
@@ -450,7 +476,9 @@ class OrderDispatcher:
             signal.entry_price,
             signal.atr_per_share,
         )
-        comment = PROHIBITED_LLM_DISCOVERY_LINK if signal.is_propagated else LIVE_SPINE_TAG
+        comment = (
+            PROHIBITED_LLM_DISCOVERY_LINK if signal.is_propagated else LIVE_SPINE_TAG
+        )
         try:
             result = self._place_order_with_stop(
                 ticker=signal.ticker,
@@ -465,7 +493,9 @@ class OrderDispatcher:
             result["comment"] = comment
             return result
         except Exception as e:
-            logger.exception("OrderDispatcher dispatch failed for %s: %s", signal.ticker, e)
+            logger.exception(
+                "OrderDispatcher dispatch failed for %s: %s", signal.ticker, e
+            )
             return {
                 "order_id": None,
                 "ticker": signal.ticker,
@@ -516,7 +546,7 @@ class OrderDispatcher:
         _current_pos = 0
         try:
             _positions = self._account.get_existing_positions()
-            for _rec in (_positions or []):
+            for _rec in _positions or []:
                 if str(_rec.get("symbol", "")).upper() == ticker.upper():
                     _current_pos = int(_rec.get("position", 0))
                     break
@@ -581,7 +611,9 @@ class OrderDispatcher:
             result["comment"] = comment
             return result
         except Exception as e:
-            logger.exception("OrderDispatcher dispatch_from_delta failed for %s: %s", ticker, e)
+            logger.exception(
+                "OrderDispatcher dispatch_from_delta failed for %s: %s", ticker, e
+            )
             return {
                 "order_id": None,
                 "ticker": ticker,
@@ -606,7 +638,9 @@ def check_fill(
     Returns a dict with keys:
       ticker, side, quantity_expected, delta_actual, passed (bool), reason (str)
     """
-    expected_delta = quantity_submitted if side.upper() == "BUY" else -quantity_submitted
+    expected_delta = (
+        quantity_submitted if side.upper() == "BUY" else -quantity_submitted
+    )
     actual_delta = position_after - position_before
 
     if expected_delta > 0 and actual_delta <= 0:

@@ -7,10 +7,10 @@ override; load YAML in the caller when you want file-driven settings.
 
 This module is not imported elsewhere yet (standalone build).
 """
+
 from __future__ import annotations
 
 import sys
-import time
 from typing import Any
 
 from ib_insync import IB, util
@@ -222,7 +222,9 @@ def get_live_prices(ib: IB, contracts: list) -> dict[str, float]:
         # Delayed is free and works on paper accounts without a live data subscription.
         ib.reqMarketDataType(3)
     except Exception as exc:
-        _warn(f"reqMarketDataType(3) failed: {exc}; continuing (prices may be unavailable)")
+        _warn(
+            f"reqMarketDataType(3) failed: {exc}; continuing (prices may be unavailable)"
+        )
 
     for contract in contracts:
         symbol = _symbol_from_contract(contract)

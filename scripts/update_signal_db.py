@@ -13,6 +13,7 @@ Usage:
 
 Exit 0 on success, 1 on fatal error.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -108,34 +109,42 @@ def _read_signals_csv(path: Path) -> list[dict]:
             # No header or unexpected — treat first row as data
             if header:
                 _row = header
-                rows.append({
-                    "date": _row[0] if len(_row) > 0 else None,
-                    "ticker": _row[1] if len(_row) > 1 else None,
-                    "target_weight": _row[2] if len(_row) > 2 else None,
-                    "latest_close": _row[3] if len(_row) > 3 else None,
-                    "notional_units": _row[4] if len(_row) > 4 else None,
-                    "score": _row[5] if len(_row) > 5 else None,
-                    "vol_triggered": _row[6] if len(_row) > 6 else None,
-                })
+                rows.append(
+                    {
+                        "date": _row[0] if len(_row) > 0 else None,
+                        "ticker": _row[1] if len(_row) > 1 else None,
+                        "target_weight": _row[2] if len(_row) > 2 else None,
+                        "latest_close": _row[3] if len(_row) > 3 else None,
+                        "notional_units": _row[4] if len(_row) > 4 else None,
+                        "score": _row[5] if len(_row) > 5 else None,
+                        "vol_triggered": _row[6] if len(_row) > 6 else None,
+                    }
+                )
 
         for row in reader:
             if len(row) < 2:
                 continue
-            rows.append({
-                "date": row[0] if len(row) > 0 else None,
-                "ticker": row[1] if len(row) > 1 else None,
-                "target_weight": row[2] if len(row) > 2 else None,
-                "latest_close": row[3] if len(row) > 3 else None,
-                "notional_units": row[4] if len(row) > 4 else None,
-                "score": row[5] if len(row) > 5 else None,
-                "vol_triggered": row[6] if len(row) > 6 else None,
-            })
+            rows.append(
+                {
+                    "date": row[0] if len(row) > 0 else None,
+                    "ticker": row[1] if len(row) > 1 else None,
+                    "target_weight": row[2] if len(row) > 2 else None,
+                    "latest_close": row[3] if len(row) > 3 else None,
+                    "notional_units": row[4] if len(row) > 4 else None,
+                    "score": row[5] if len(row) > 5 else None,
+                    "vol_triggered": row[6] if len(row) > 6 else None,
+                }
+            )
     return rows
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Upsert signal DB and compute forward returns")
-    parser.add_argument("--signals", type=str, default=None, help="Path to daily_signals.csv")
+    parser = argparse.ArgumentParser(
+        description="Upsert signal DB and compute forward returns"
+    )
+    parser.add_argument(
+        "--signals", type=str, default=None, help="Path to daily_signals.csv"
+    )
     parser.add_argument("--db", type=str, default=None, help="Path to trading.db")
     args = parser.parse_args()
 
@@ -177,15 +186,17 @@ def main() -> int:
         ticker = str(r["ticker"] or "").strip()
         if not date_str or not ticker or ticker.lower() == "ticker":
             continue  # skip malformed or header-as-data rows
-        upsert_rows.append((
-            date_str,
-            ticker,
-            _safe_float(r["target_weight"]),
-            _safe_float(r["latest_close"]),
-            _safe_int(r["notional_units"]),
-            _safe_float(r["score"]),
-            _safe_int(r["vol_triggered"]),
-        ))
+        upsert_rows.append(
+            (
+                date_str,
+                ticker,
+                _safe_float(r["target_weight"]),
+                _safe_float(r["latest_close"]),
+                _safe_int(r["notional_units"]),
+                _safe_float(r["score"]),
+                _safe_int(r["vol_triggered"]),
+            )
+        )
 
     with con:
         con.executemany(
@@ -213,7 +224,10 @@ def main() -> int:
     print(f"INFO: Loading prices for {len(all_tickers)} tickers...", flush=True)
     prices_dict = load_prices(data_dir, all_tickers)
     if not prices_dict:
-        print("WARN: No price data loaded; skipping forward return computation.", flush=True)
+        print(
+            "WARN: No price data loaded; skipping forward return computation.",
+            flush=True,
+        )
         con.close()
         return 0
 
@@ -252,7 +266,9 @@ def main() -> int:
             entry_price = _safe_float(entry_close)
             if entry_price is None:
                 asof_val = (
-                    close_series.asof(sig_date) if hasattr(close_series, "asof") else None
+                    close_series.asof(sig_date)
+                    if hasattr(close_series, "asof")
+                    else None
                 )
                 if asof_val is None or pd.isna(asof_val):
                     continue
@@ -265,7 +281,14 @@ def main() -> int:
                 else:
                     ret_pct = exit_price / entry_price - 1.0
                 fr_rows.append(
-                    (sig_date_str, ticker, horizon_name, entry_price, exit_price, ret_pct)
+                    (
+                        sig_date_str,
+                        ticker,
+                        horizon_name,
+                        entry_price,
+                        exit_price,
+                        ret_pct,
+                    )
                 )
 
         if fr_rows:
@@ -277,7 +300,8 @@ def main() -> int:
                     fr_rows,
                 )
             print(
-                f"INFO: {sig_date_str}: wrote {len(fr_rows)} forward_return rows.", flush=True
+                f"INFO: {sig_date_str}: wrote {len(fr_rows)} forward_return rows.",
+                flush=True,
             )
 
     # --- Build portfolio_daily from 1d forward returns ---
@@ -318,8 +342,14 @@ def main() -> int:
         if "SPY" in prices_dict:
             spy_date = pd.Timestamp(fr_date_str)
             spy_series = prices_dict["SPY"]["close"]
-            spy_close = spy_series.asof(spy_date) if hasattr(spy_series, "asof") else None
-            if spy_close is not None and not pd.isna(spy_close) and float(spy_close) > 0:
+            spy_close = (
+                spy_series.asof(spy_date) if hasattr(spy_series, "asof") else None
+            )
+            if (
+                spy_close is not None
+                and not pd.isna(spy_close)
+                and float(spy_close) > 0
+            ):
                 spy_next = _nth_trading_close(spy_series, spy_date, 1)
                 if spy_next is not None:
                     spy_return = spy_next / float(spy_close) - 1.0
@@ -331,14 +361,24 @@ def main() -> int:
                 """INSERT OR REPLACE INTO portfolio_daily
                    (date, port_return, spy_return, alpha, n_positions, tickers_held)
                    VALUES (?,?,?,?,?,?)""",
-                (fr_date_str, port_return, spy_return, alpha, n_positions, tickers_held),
+                (
+                    fr_date_str,
+                    port_return,
+                    spy_return,
+                    alpha,
+                    n_positions,
+                    tickers_held,
+                ),
             )
         pd_rows_written += 1
 
     if pd_rows_written:
         print(f"INFO: Wrote {pd_rows_written} portfolio_daily rows.", flush=True)
     else:
-        print("INFO: portfolio_daily: no new rows (forward prices not yet available or already computed).", flush=True)
+        print(
+            "INFO: portfolio_daily: no new rows (forward prices not yet available or already computed).",
+            flush=True,
+        )
 
     con.close()
     print("Done.", flush=True)

@@ -5,6 +5,7 @@ rolling min-max (252-day) for unbounded to prevent look-ahead bias.
 Category-weighted Master Score: Trend 40%, Momentum 30%, Volume 20%, Volatility 10%
 (weights and indicator→category mapping in config/technical_master_score.yaml).
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,7 +16,8 @@ import numpy as np
 import pandas as pd
 
 import numpy as _np
-if not hasattr(_np, 'NaN'):
+
+if not hasattr(_np, "NaN"):
     _np.NaN = _np.nan  # numpy 2.x removed NaN; patch for pandas_ta compatibility
 
 try:
@@ -34,7 +36,11 @@ logger = logging.getLogger(__name__)
 OHLCV_COLS = ["open", "high", "low", "close", "volume"]
 
 # Default config path (overridable)
-DEFAULT_MASTER_SCORE_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "technical_master_score.yaml"
+DEFAULT_MASTER_SCORE_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "config"
+    / "technical_master_score.yaml"
+)
 
 
 def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,7 +61,9 @@ def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         df = pd.DataFrame(selected, index=df.index)
     missing = [c for c in OHLCV_COLS if c not in df.columns]
     if missing:
-        raise ValueError(f"DataFrame missing required columns: {missing}. Found: {list(df.columns)}")
+        raise ValueError(
+            f"DataFrame missing required columns: {missing}. Found: {list(df.columns)}"
+        )
     return df
 
 
@@ -67,7 +75,9 @@ def _safe_series(series: pd.Series, index: pd.Index) -> pd.Series:
     return out
 
 
-def _safe_df_columns(df_out: Optional[pd.DataFrame], index: pd.Index) -> dict[str, pd.Series]:
+def _safe_df_columns(
+    df_out: Optional[pd.DataFrame], index: pd.Index
+) -> dict[str, pd.Series]:
     """Extract columns from a multi-column DataFrame result; reindex and fillna(0)."""
     if df_out is None or (hasattr(df_out, "empty") and df_out.empty):
         return {}
@@ -103,7 +113,16 @@ def _rolling_minmax(series: pd.Series, window: int = 252) -> pd.Series:
 _DEFAULT_WEIGHTS = {"trend": 0.40, "momentum": 0.30, "volume": 0.20, "volatility": 0.10}
 _DEFAULT_CATEGORIES = {
     "trend": ["adx_norm", "macd_norm"],
-    "momentum": ["rsi_norm", "willr_norm", "stoch_STOCHk_14_3_3_norm", "stoch_STOCHd_14_3_3_norm", "roc_norm", "cci_norm", "momentum_5d_norm", "momentum_20d_norm"],
+    "momentum": [
+        "rsi_norm",
+        "willr_norm",
+        "stoch_STOCHk_14_3_3_norm",
+        "stoch_STOCHd_14_3_3_norm",
+        "roc_norm",
+        "cci_norm",
+        "momentum_5d_norm",
+        "momentum_20d_norm",
+    ],
     "volume": ["volume_ratio_norm", "cmf_norm", "obv_norm"],
     "volatility": ["atr_norm", "bb_position_norm"],
 }
@@ -132,20 +151,28 @@ def load_master_score_config(config_path: Optional[Path] = None) -> dict[str, An
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) if yaml else {}
-        def_weights = data.get("DEFENSIVE_WEIGHTS", data.get("BEAR_WEIGHTS", _defensive))
+        def_weights = data.get(
+            "DEFENSIVE_WEIGHTS", data.get("BEAR_WEIGHTS", _defensive)
+        )
         return {
             "category_weights": data.get("category_weights", _DEFAULT_WEIGHTS.copy()),
             "rolling_window": int(data.get("rolling_window", 252)),
             "categories": data.get("categories", _DEFAULT_CATEGORIES.copy()),
             "weight_mode": data.get("weight_mode", "fixed"),
             "BULL_WEIGHTS": data.get("BULL_WEIGHTS", _DEFAULT_WEIGHTS.copy()),
-            "DEFENSIVE_WEIGHTS": def_weights.copy() if isinstance(def_weights, dict) else _defensive.copy(),
+            "DEFENSIVE_WEIGHTS": (
+                def_weights.copy()
+                if isinstance(def_weights, dict)
+                else _defensive.copy()
+            ),
             "BEAR_WEIGHTS": data.get("BEAR_WEIGHTS", _defensive).copy(),
             "SIDEWAYS_WEIGHTS": data.get("SIDEWAYS_WEIGHTS", _sideways).copy(),
             "news_weight": float(data.get("news_weight", 0.0)),
         }
     except Exception as e:
-        logger.warning("Could not load technical_master_score.yaml: %s; using defaults.", e)
+        logger.warning(
+            "Could not load technical_master_score.yaml: %s; using defaults.", e
+        )
         return {
             "category_weights": _DEFAULT_WEIGHTS.copy(),
             "rolling_window": 252,
@@ -176,7 +203,7 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = _ensure_ohlcv(df)
     idx = df.index
-    o, h, l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]
+    _o, h, l, c, v = df["open"], df["high"], df["low"], df["close"], df["volume"]  # noqa: F841
 
     out = df[OHLCV_COLS].copy()
 
@@ -220,7 +247,9 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
         if bb is not None and not bb.empty:
             for col in bb.columns:
                 out[f"bb_{col}"] = _safe_series(bb[col], idx)
-            bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get("bb_BBL_20_2.0", pd.Series(0.0, index=idx))
+            bu, bl = out.get("bb_BBU_20_2.0", pd.Series(0.0, index=idx)), out.get(
+                "bb_BBL_20_2.0", pd.Series(0.0, index=idx)
+            )
             out["bb_position"] = ((c - bl) / (bu - bl + 1e-8)).clip(0, 1).fillna(0.5)
     except Exception as e:
         logger.debug("Bollinger: %s", e)
@@ -336,7 +365,7 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # Static scaling for bounded indicators (P0: only RSI active)
     if "rsi" in out.columns:
-        out["rsi_norm"] = (out["rsi"].clip(0, 100).fillna(50) / 100.0)
+        out["rsi_norm"] = out["rsi"].clip(0, 100).fillna(50) / 100.0
     # if "willr" in out.columns:
     #     out["willr_norm"] = (out["willr"].clip(-100, 0).fillna(-50) + 100.0) / 100.0
     # for col in ["stoch_STOCHk_14_3_3", "stoch_STOCHd_14_3_3"]:
@@ -348,20 +377,31 @@ def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # Rolling min-max for unbounded indicators
     _unbounded = [
-        "atr", "roc", "momentum_5d", "momentum_20d",
-        "cmf", "volume_ratio", "obv",
+        "atr",
+        "roc",
+        "momentum_5d",
+        "momentum_20d",
+        "cmf",
+        "volume_ratio",
+        "obv",
     ]
     for col in _unbounded:
         if col in out.columns and f"{col}_norm" not in out.columns:
             s = out[col].replace([np.inf, -np.inf], np.nan)
             out[f"{col}_norm"] = _rolling_minmax(s, window=_rolling_window)
-    adx_cols = [c for c in out.columns if c.startswith("adx_") and not c.endswith("_norm")]
+    adx_cols = [
+        c for c in out.columns if c.startswith("adx_") and not c.endswith("_norm")
+    ]
     if adx_cols and "adx_norm" not in out.columns:
         s = out[adx_cols[0]].replace([np.inf, -np.inf], np.nan)
         out["adx_norm"] = _rolling_minmax(s, window=_rolling_window)
-    macd_cols = [c for c in out.columns if c.startswith("macd_") and not c.endswith("_norm")]
+    macd_cols = [
+        c for c in out.columns if c.startswith("macd_") and not c.endswith("_norm")
+    ]
     if macd_cols and "macd_norm" not in out.columns:
-        line_col = next((c for c in macd_cols if "MACD_" in c or "macd_" in c), macd_cols[0])
+        line_col = next(
+            (c for c in macd_cols if "MACD_" in c or "macd_" in c), macd_cols[0]
+        )
         s = out[line_col].replace([np.inf, -np.inf], np.nan)
         out["macd_norm"] = _rolling_minmax(s, window=_rolling_window)
 
@@ -428,11 +468,40 @@ def compute_signal_strength(
         if regime_state == "BULL":
             c_weights = config.get("BULL_WEIGHTS", _DEFAULT_WEIGHTS).copy()
         elif regime_state == "BEAR":
-            c_weights = config.get("DEFENSIVE_WEIGHTS", config.get("BEAR_WEIGHTS", {"trend": 0.20, "momentum": 0.10, "volume": 0.20, "volatility": 0.50})).copy()
+            c_weights = config.get(
+                "DEFENSIVE_WEIGHTS",
+                config.get(
+                    "BEAR_WEIGHTS",
+                    {
+                        "trend": 0.20,
+                        "momentum": 0.10,
+                        "volume": 0.20,
+                        "volatility": 0.50,
+                    },
+                ),
+            ).copy()
         elif regime_state == "SIDEWAYS":
-            c_weights = config.get("SIDEWAYS_WEIGHTS", {c: 0.25 for c in ("trend", "momentum", "volume", "volatility")}).copy()
+            c_weights = config.get(
+                "SIDEWAYS_WEIGHTS",
+                {c: 0.25 for c in ("trend", "momentum", "volume", "volatility")},
+            ).copy()
         elif spy_above_sma200 is not None:
-            c_weights = config.get("BULL_WEIGHTS", _DEFAULT_WEIGHTS).copy() if spy_above_sma200 else config.get("DEFENSIVE_WEIGHTS", config.get("BEAR_WEIGHTS", {"trend": 0.20, "momentum": 0.10, "volume": 0.20, "volatility": 0.50})).copy()
+            c_weights = (
+                config.get("BULL_WEIGHTS", _DEFAULT_WEIGHTS).copy()
+                if spy_above_sma200
+                else config.get(
+                    "DEFENSIVE_WEIGHTS",
+                    config.get(
+                        "BEAR_WEIGHTS",
+                        {
+                            "trend": 0.20,
+                            "momentum": 0.10,
+                            "volume": 0.20,
+                            "volatility": 0.50,
+                        },
+                    ),
+                ).copy()
+            )
         else:
             c_weights = config.get("category_weights", _DEFAULT_WEIGHTS).copy()
     else:
@@ -460,7 +529,11 @@ def compute_signal_strength(
     master_score = round(float(master_score), 4)
 
     # News Alpha overlay: blend with news_composite when enabled (override from AdaptiveSelector when provided)
-    news_weight = float(news_weight_override) if news_weight_override is not None else (config.get("news_weight", 0.0) or 0.0)
+    news_weight = (
+        float(news_weight_override)
+        if news_weight_override is not None
+        else (config.get("news_weight", 0.0) or 0.0)
+    )
     if news_weight > 0 and news_composite is not None:
         nc = float(news_composite)
         nc = max(0.0, min(1.0, nc))

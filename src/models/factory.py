@@ -114,14 +114,18 @@ def get_best_model(
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     training = config.get("training", {})
-    train_start = training.get("train_start", "2022-01-01")
-    train_end = training.get("train_end", "2023-12-31")
+    _train_start = training.get("train_start", "2022-01-01")  # noqa: F841
+    _train_end = training.get("train_end", "2023-12-31")  # noqa: F841
     test_start = training.get("test_start", "2024-01-01")
     test_end = training.get("test_end", "2024-12-31")
     config_path_abs = config_path.resolve()
     root = config_path_abs.parent.parent
     model_save_dir_str = training.get("model_save_dir", "models/saved/")
-    model_save_dir = root / model_save_dir_str if not Path(model_save_dir_str).is_absolute() else Path(model_save_dir_str)
+    model_save_dir = (
+        root / model_save_dir_str
+        if not Path(model_save_dir_str).is_absolute()
+        else Path(model_save_dir_str)
+    )
     ic_gate = float(training.get("factory_ic_gate", 0.01))
 
     cache_file = _cache_path()
@@ -145,6 +149,7 @@ def get_best_model(
                         ic = float(cached.get("ic", 0.0))
                         if model_type and model_path:
                             from .model_factory import MODEL_REGISTRY
+
                             model_class = MODEL_REGISTRY.get(model_type)
                             if model_class is not None:
                                 model = model_class.load_model(model_path)
@@ -177,7 +182,10 @@ def get_best_model(
                 news_signals=news_signals,
             )
         except Exception as e:
-            print(f"[FACTORY][WARN] {model_type} train() failed: {type(e).__name__}: {e}", flush=True)
+            print(
+                f"[FACTORY][WARN] {model_type} train() failed: {type(e).__name__}: {e}",
+                flush=True,
+            )
             continue
         try:
             mean_ic, _ = pipeline.evaluate_ic(
@@ -188,13 +196,19 @@ def get_best_model(
                 news_signals=news_signals,
             )
         except Exception as e:
-            print(f"[FACTORY][WARN] {model_type} evaluate_ic() failed: {type(e).__name__}: {e}", flush=True)
+            print(
+                f"[FACTORY][WARN] {model_type} evaluate_ic() failed: {type(e).__name__}: {e}",
+                flush=True,
+            )
             continue
         results.append((model, model_type, float(mean_ic)))
 
     passed = [(m, t, ic) for m, t, ic in results if ic > ic_gate]
     tie_order = ["catboost", "xgboost", "ridge"]
-    passed.sort(key=lambda x: (x[2], -(tie_order.index(x[1]) if x[1] in tie_order else 999)), reverse=True)
+    passed.sort(
+        key=lambda x: (x[2], -(tie_order.index(x[1]) if x[1] in tie_order else 999)),
+        reverse=True,
+    )
     if not passed:
         return (None, "tech_only", 0.0)
 
@@ -214,15 +228,21 @@ def get_best_model(
         config["tracks"]["A"] = {}
     config["tracks"]["A"]["model_path"] = str(save_path.resolve())
     with open(config_path_abs, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(
+            config, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump({
-            "model_type": model_type,
-            "ic": ic,
-            "model_path": str(save_path.resolve()),
-            "selected_at": datetime.now(timezone.utc).isoformat(),
-        }, f, indent=2)
+        json.dump(
+            {
+                "model_type": model_type,
+                "ic": ic,
+                "model_path": str(save_path.resolve()),
+                "selected_at": datetime.now(timezone.utc).isoformat(),
+            },
+            f,
+            indent=2,
+        )
 
     return (model, model_type, ic)

@@ -1,6 +1,7 @@
 """
 Price fetch with vendor fallback: local CSV → Marketaux → YFinance.
 """
+
 from __future__ import annotations
 
 import logging
@@ -173,7 +174,6 @@ def _try_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame | None:
         return None
 
 
-
 def _run_vendor(
     ticker: str,
     vendor: str,
@@ -246,6 +246,8 @@ def get_prices(
             out[ticker] = _cast_ohlc_to_decimal(df)
             continue
 
-        logger.error("[resilience] %s: all vendors failed — omitting from result", ticker)
+        logger.error(
+            "[resilience] %s: all vendors failed — omitting from result", ticker
+        )
 
     return out

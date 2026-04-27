@@ -2,6 +2,7 @@
 Dynamic weighting: Rolling (PyPortfolioOpt EfficientFrontier/HRP), Regime (hmmlearn HMM), ML (Random Forest + TimeSeriesSplit).
 All weight calculations use only data from T-1 or earlier to prevent look-ahead bias.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +17,7 @@ try:
     from pypfopt.risk_models import CovarianceShrinkage
     from pypfopt.efficient_frontier import EfficientFrontier
     from pypfopt.hierarchical_portfolio import HRPOpt
+
     HAS_PYPFOPT = True
 except ImportError:
     HAS_PYPFOPT = False
@@ -23,6 +25,7 @@ except ImportError:
 # Optional: hmmlearn for regime detection
 try:
     from hmmlearn import hmm
+
     HAS_HMMLEARN = True
 except ImportError:
     HAS_HMMLEARN = False
@@ -31,13 +34,14 @@ except ImportError:
 try:
     from sklearn.ensemble import RandomForestRegressor
     from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
 
 CAT_NAMES = ["trend", "momentum", "volume", "volatility"]
-WEIGHT_FLOOR = 0.10   # no category below 10%
-WEIGHT_CEIL = 0.50   # no category above 50%
+WEIGHT_FLOOR = 0.10  # no category below 10%
+WEIGHT_CEIL = 0.50  # no category above 50%
 
 
 def get_optimized_weights(
@@ -140,12 +144,22 @@ def get_regime_hmm(
         return (None, None)
     X = returns.values.reshape(-1, 1)
     try:
-        model = hmm.GaussianHMM(n_components=n_components, covariance_type="full", random_state=42, n_iter=100)
+        model = hmm.GaussianHMM(
+            n_components=n_components,
+            covariance_type="full",
+            random_state=42,
+            n_iter=100,
+        )
         model.fit(X)
         states = model.predict(X)
         last_state = int(states[-1])
         means = model.means_.ravel()
-        sigmas = np.array([float(np.sqrt(np.maximum(model.covars_[k].ravel()[0], 1e-12))) for k in range(n_components)])
+        sigmas = np.array(
+            [
+                float(np.sqrt(np.maximum(model.covars_[k].ravel()[0], 1e-12)))
+                for k in range(n_components)
+            ]
+        )
         # Map: highest mean = BULL, lowest = BEAR, middle = SIDEWAYS
         order = np.argsort(means)[::-1]
         state_to_label = {}
@@ -155,17 +169,35 @@ def get_regime_hmm(
             state_to_label[int(order[i])] = "SIDEWAYS"
         if n_components == 2:
             state_to_label[int(order[1])] = "BEAR"
-        state_label = state_to_label.get(last_state, "SIDEWAYS" if n_components == 3 else "BEAR")
+        state_label = state_to_label.get(
+            last_state, "SIDEWAYS" if n_components == 3 else "BEAR"
+        )
         mu = float(means[last_state])
         sigma = float(sigmas[last_state])
         # Transition matrix (Persistence Check): row/col order BULL, BEAR, SIDEWAYS for logs
         transmat = model.transmat_
-        label_order = [int(order[0]), int(order[-1]), int(order[1])] if n_components == 3 else [int(order[0]), int(order[1])]
+        label_order = (
+            [int(order[0]), int(order[-1]), int(order[1])]
+            if n_components == 3
+            else [int(order[0]), int(order[1])]
+        )
         if n_components == 3:
             transmat_display = transmat[np.ix_(label_order, label_order)]
-            info = {"state": state_label, "mu": mu, "sigma": sigma, "transmat": transmat_display.tolist(), "transmat_labels": ["BULL", "BEAR", "SIDEWAYS"]}
+            info = {
+                "state": state_label,
+                "mu": mu,
+                "sigma": sigma,
+                "transmat": transmat_display.tolist(),
+                "transmat_labels": ["BULL", "BEAR", "SIDEWAYS"],
+            }
         else:
-            info = {"state": state_label, "mu": mu, "sigma": sigma, "transmat": transmat.tolist(), "transmat_labels": ["BULL", "BEAR"]}
+            info = {
+                "state": state_label,
+                "mu": mu,
+                "sigma": sigma,
+                "transmat": transmat.tolist(),
+                "transmat_labels": ["BULL", "BEAR"],
+            }
         return (state_label, info)
     except Exception:
         return (None, None)
@@ -230,6 +262,7 @@ ADAPTIVE_LOOKBACK_OCCURRENCES = 3
 
 def _default_regime_ledger_path() -> Path:
     from src.signals.performance_logger import _default_ledger_path
+
     return _default_ledger_path()
 
 
@@ -248,7 +281,11 @@ class AdaptiveSelector:
     ):
         self.csv_path = Path(csv_path)
         self.lookback_occurrences = lookback_occurrences
-        self.ledger_path = Path(ledger_path) if ledger_path is not None else _default_regime_ledger_path()
+        self.ledger_path = (
+            Path(ledger_path)
+            if ledger_path is not None
+            else _default_regime_ledger_path()
+        )
 
     def get_optimal_weights(self, current_regime: str | None) -> float:
         """
@@ -262,9 +299,16 @@ class AdaptiveSelector:
             df = pd.read_csv(self.csv_path, encoding="utf-8")
         except Exception:
             return DEFAULT_NEWS_WEIGHT
-        if df.empty or "regime" not in df.columns or "return" not in df.columns or "news_weight_used" not in df.columns:
+        if (
+            df.empty
+            or "regime" not in df.columns
+            or "return" not in df.columns
+            or "news_weight_used" not in df.columns
+        ):
             return DEFAULT_NEWS_WEIGHT
-        regime_rows = df[df["regime"].astype(str).str.strip() == str(current_regime).strip()]
+        regime_rows = df[
+            df["regime"].astype(str).str.strip() == str(current_regime).strip()
+        ]
         if len(regime_rows) < self.lookback_occurrences:
             return DEFAULT_NEWS_WEIGHT
         last_n = regime_rows.tail(self.lookback_occurrences)
@@ -304,14 +348,19 @@ class AdaptiveSelector:
         if regime_rows.empty:
             return
         from src.signals.metrics import calculate_regime_sortino
+
         sortino_by_strategy: dict[str, float] = {}
         for sid in regime_rows["Strategy_ID"].unique():
             sid = str(sid).strip()
-            subset = regime_rows[regime_rows["Strategy_ID"].astype(str).str.strip() == sid]
+            subset = regime_rows[
+                regime_rows["Strategy_ID"].astype(str).str.strip() == sid
+            ]
             rets = subset["Return"].dropna().values
             if len(rets) < 1:
                 continue
-            sortino_by_strategy[sid] = calculate_regime_sortino(rets, risk_free_rate=0.0)
+            sortino_by_strategy[sid] = calculate_regime_sortino(
+                rets, risk_free_rate=0.0
+            )
         if not sortino_by_strategy:
             return
         best_sid = max(sortino_by_strategy, key=sortino_by_strategy.get)
@@ -334,9 +383,14 @@ def parse_strategy_id(strategy_id: str) -> dict[str, float]:
     """
     Parse Strategy_ID (e.g. nw0.3_h5_r1.0 or nw0.3_r0.5) into news_weight, signal_horizon_days, sideways_risk_scale.
     """
-    out = {"news_weight": DEFAULT_NEWS_WEIGHT, "signal_horizon_days": 5.0, "sideways_risk_scale": 0.5}
+    out = {
+        "news_weight": DEFAULT_NEWS_WEIGHT,
+        "signal_horizon_days": 5.0,
+        "sideways_risk_scale": 0.5,
+    }
     s = str(strategy_id).strip()
     import re
+
     # nw0.3 or nw0.30
     m = re.search(r"nw([\d.]+)", s, re.I)
     if m:
@@ -367,7 +421,11 @@ class StrategySelector:
     """
 
     def __init__(self, ledger_path: str | Path | None = None):
-        self.ledger_path = Path(ledger_path) if ledger_path is not None else _default_regime_ledger_path()
+        self.ledger_path = (
+            Path(ledger_path)
+            if ledger_path is not None
+            else _default_regime_ledger_path()
+        )
 
     def get_winning_profile(self, current_regime: str | None) -> dict[str, Any] | None:
         """
@@ -408,10 +466,16 @@ class StrategySelector:
             win_rate = float(np.mean(rets > 0)) if len(rets) else 0.0
             gross_loss = float(np.abs(np.sum(losses))) if len(losses) else 1e-8
             gross_profit = float(np.sum(wins)) if len(wins) else 0.0
-            profit_factor = gross_profit / gross_loss if gross_loss > 0 else (10.0 if gross_profit > 0 else 0.0)
+            profit_factor = (
+                gross_profit / gross_loss
+                if gross_loss > 0
+                else (10.0 if gross_profit > 0 else 0.0)
+            )
             avg_dd = float(subset["Max_Drawdown"].mean())
             # Tie-break: higher win rate first; then lowest Max_Drawdown (least negative = max)
-            if win_rate > best_win_rate or (win_rate == best_win_rate and avg_dd > best_drawdown):
+            if win_rate > best_win_rate or (
+                win_rate == best_win_rate and avg_dd > best_drawdown
+            ):
                 best_win_rate = win_rate
                 best_drawdown = avg_dd
                 best_sid = sid
@@ -421,7 +485,11 @@ class StrategySelector:
             return None
         # Sharpe (annualized from weekly returns): mean*52 / (std*sqrt(52))
         ann_ret = float(np.mean(best_rets)) * 52
-        ann_vol = float(np.std(best_rets)) * np.sqrt(52) if len(best_rets) > 1 and np.std(best_rets) > 0 else 1e-8
+        ann_vol = (
+            float(np.std(best_rets)) * np.sqrt(52)
+            if len(best_rets) > 1 and np.std(best_rets) > 0
+            else 1e-8
+        )
         sharpe = ann_ret / ann_vol if ann_vol > 0 else 0.0
         if sharpe < 0:
             return None

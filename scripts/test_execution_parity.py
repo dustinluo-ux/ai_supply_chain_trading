@@ -49,16 +49,24 @@ def get_backtest_weights(date: str | pd.Timestamp) -> pd.Series:
     Call backtest entry: compute_target_weights from scripts/backtest_technical_library.
     Returns final target weights (intent.weights) for that date from the backtest path.
     """
-    from backtest_technical_library import load_config, load_prices, compute_target_weights
+    from backtest_technical_library import (
+        load_config,
+        load_prices,
+        compute_target_weights,
+    )
 
     config = load_config()
     data_dir = config["data_dir"]
     tickers = _discover_tickers(data_dir)
     if not tickers:
-        raise FileNotFoundError("No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs.")
+        raise FileNotFoundError(
+            "No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs."
+        )
     prices_dict = load_prices(data_dir, tickers)
     if not prices_dict:
-        raise ValueError("Backtest load_prices returned empty; check data_dir and tickers.")
+        raise ValueError(
+            "Backtest load_prices returned empty; check data_dir and tickers."
+        )
     as_of = pd.to_datetime(date).normalize()
     backtest_cfg = _backtest_config()
     top_n = backtest_cfg.get("backtest", {}).get("portfolio_size", 3)
@@ -83,10 +91,14 @@ def get_execution_weights(date: str | pd.Timestamp) -> pd.Series:
     data_dir = config["data_dir"]
     tickers = _discover_tickers(data_dir)
     if not tickers:
-        raise FileNotFoundError("No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs.")
+        raise FileNotFoundError(
+            "No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs."
+        )
     prices_dict = load_prices(data_dir, tickers)
     if not prices_dict:
-        raise ValueError("Execution load_prices returned empty; check data_dir and tickers.")
+        raise ValueError(
+            "Execution load_prices returned empty; check data_dir and tickers."
+        )
     as_of = pd.to_datetime(date).normalize()
     backtest_cfg = _backtest_config()
     top_n = backtest_cfg.get("backtest", {}).get("portfolio_size", 3)
@@ -108,7 +120,9 @@ def assert_parity(date: str | pd.Timestamp) -> None:
     backtest_weights = get_backtest_weights(date)
     execution_weights = get_execution_weights(date)
 
-    all_idx = backtest_weights.index.union(execution_weights.index).unique().sort_values()
+    all_idx = (
+        backtest_weights.index.union(execution_weights.index).unique().sort_values()
+    )
     bt = backtest_weights.reindex(all_idx, fill_value=0.0).sort_index()
     ex = execution_weights.reindex(all_idx, fill_value=0.0).sort_index()
 
@@ -125,7 +139,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="P1 parity harness: assert backtest and execution target weights match for a rebalance date.",
     )
-    parser.add_argument("--date", type=str, required=True, help="Rebalance date YYYY-MM-DD")
+    parser.add_argument(
+        "--date", type=str, required=True, help="Rebalance date YYYY-MM-DD"
+    )
     args = parser.parse_args()
 
     try:

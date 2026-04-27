@@ -10,6 +10,7 @@ Usage:
 
 No wiring into signal_engine — research/validation only.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,11 +38,19 @@ IC_GATE = 0.01
 
 def _load_news_signals_from_parquet(parquet_path: Path) -> dict:
     if not parquet_path.exists():
-        print(f"[INFO] No news parquet found at {parquet_path}; training with neutral news defaults.", flush=True)
+        print(
+            f"[INFO] No news parquet found at {parquet_path}; training with neutral news defaults.",
+            flush=True,
+        )
         return {}
     df = pd.read_parquet(parquet_path, engine="fastparquet")
     news_signals: dict = {}
-    if not df.empty and "Ticker" in df.columns and "Date" in df.columns and "Sentiment" in df.columns:
+    if (
+        not df.empty
+        and "Ticker" in df.columns
+        and "Date" in df.columns
+        and "Sentiment" in df.columns
+    ):
         for ticker, grp in df.groupby("Ticker"):
             by_date = grp.groupby("Date")["Sentiment"].mean()
             news_signals[ticker] = {
@@ -49,7 +58,10 @@ def _load_news_signals_from_parquet(parquet_path: Path) -> dict:
                 for d, s in by_date.items()
             }
     n_ticker_days = sum(len(v) for v in news_signals.values())
-    print(f"[INFO] Loaded EODHD news: {n_ticker_days} ticker-days of sentiment data.", flush=True)
+    print(
+        f"[INFO] Loaded EODHD news: {n_ticker_days} ticker-days of sentiment data.",
+        flush=True,
+    )
     return news_signals
 
 
@@ -66,13 +78,17 @@ def _train_eval_and_save(
     pipeline.active_model_type = model_type
     pipeline.model_config = pipeline.config["models"][model_type]
 
-    model = pipeline.train(prices_dict, technical_signals=None, news_signals=news_signals)
+    model = pipeline.train(
+        prices_dict, technical_signals=None, news_signals=news_signals
+    )
     train_cfg = pipeline.config.get("training", {})
     test_start = train_cfg.get("test_start", "2024-01-01")
     test_end = train_cfg.get("test_end", "2024-12-31")
     ic, _ = pipeline.evaluate_ic(
-        model, prices_dict,
-        test_start=test_start, test_end=test_end,
+        model,
+        prices_dict,
+        test_start=test_start,
+        test_end=test_end,
         news_signals=news_signals,
     )
     passed = ic >= IC_GATE
@@ -82,7 +98,9 @@ def _train_eval_and_save(
     if passed:
         save_dir_cfg = str(pipeline.config["training"]["model_save_dir"])
         _save_dir_raw = Path(save_dir_cfg)
-        save_dir = _save_dir_raw if _save_dir_raw.is_absolute() else (ROOT / _save_dir_raw)
+        save_dir = (
+            _save_dir_raw if _save_dir_raw.is_absolute() else (ROOT / _save_dir_raw)
+        )
         try:
             save_dir.mkdir(parents=True, exist_ok=True)
             from datetime import datetime, timezone
@@ -91,7 +109,9 @@ def _train_eval_and_save(
             save_path = save_dir / f"{model_type}_{timestamp}.pkl"
             model.save_model(str(save_path))
             if not save_path.exists():
-                print(f"[ERROR] Save failed - file not found at {save_path}", flush=True)
+                print(
+                    f"[ERROR] Save failed - file not found at {save_path}", flush=True
+                )
                 return ic, False, None
             ic_json_path = save_path.with_suffix(".json")
             tmp_json = ic_json_path.with_name(ic_json_path.name + ".tmp")
@@ -107,7 +127,10 @@ def _train_eval_and_save(
                     json.dump(sidecar, _jf, indent=2)
                 tmp_json.replace(ic_json_path)
             except Exception as _e_ic:
-                print(f"[ERROR][{model_type}] IC sidecar JSON write failed: {_e_ic}", flush=True)
+                print(
+                    f"[ERROR][{model_type}] IC sidecar JSON write failed: {_e_ic}",
+                    flush=True,
+                )
             print(f"[Pipeline][{model_type}] Model saved to {save_path}", flush=True)
             return ic, True, save_path
         except Exception as e:
@@ -118,12 +141,34 @@ def _train_eval_and_save(
 
 def main() -> int:
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--skip-tournament", action="store_true", default=False, help="Use feature_names from config, skip tournament")
-    parser.add_argument("--no-residual", action="store_true", help="Override residual_target to False at runtime (absolute target); does not modify config file")
-    parser.add_argument("--sentiment-engine", choices=["none", "finbert", "gemini"], default="finbert")
-    parser.add_argument("--news-dir", type=str, default=None, help="Optional parquet path override for EODHD news data")
-    parser.add_argument("--train-both", action="store_true", default=False, help="Train CatBoost and Ridge sequentially")
+    parser.add_argument(
+        "--skip-tournament",
+        action="store_true",
+        default=False,
+        help="Use feature_names from config, skip tournament",
+    )
+    parser.add_argument(
+        "--no-residual",
+        action="store_true",
+        help="Override residual_target to False at runtime (absolute target); does not modify config file",
+    )
+    parser.add_argument(
+        "--sentiment-engine", choices=["none", "finbert", "gemini"], default="finbert"
+    )
+    parser.add_argument(
+        "--news-dir",
+        type=str,
+        default=None,
+        help="Optional parquet path override for EODHD news data",
+    )
+    parser.add_argument(
+        "--train-both",
+        action="store_true",
+        default=False,
+        help="Train CatBoost and Ridge sequentially",
+    )
     args = parser.parse_args()
 
     cfg = get_config()
@@ -161,9 +206,16 @@ def main() -> int:
         print(f"[Factory] Selected features: {selected}", flush=True)
     else:
         feature_names = model_cfg.get("features", {}).get("feature_names", [])
-        print(f"[train] --skip-tournament: using feature_names from config: {feature_names}", flush=True)
+        print(
+            f"[train] --skip-tournament: using feature_names from config: {feature_names}",
+            flush=True,
+        )
 
-    model_types = ["catboost", "ridge"] if args.train_both else [ModelTrainingPipeline(CONFIG_PATH).active_model_type]
+    model_types = (
+        ["catboost", "ridge"]
+        if args.train_both
+        else [ModelTrainingPipeline(CONFIG_PATH).active_model_type]
+    )
     overall_pass = True
     first_saved_path: Path | None = None
     for model_type in model_types:
@@ -187,7 +239,9 @@ def main() -> int:
             cfg["tracks"]["A"] = {}
         cfg["tracks"]["A"]["model_path"] = str(first_saved_path.resolve())
         with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            yaml.dump(
+                cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+            )
         print(f"[Config] Updated tracks.A.model_path to {first_saved_path}", flush=True)
 
     return 0 if overall_pass else 1

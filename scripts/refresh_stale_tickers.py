@@ -7,6 +7,7 @@ Usage:
   python scripts/refresh_stale_tickers.py
   python scripts/refresh_stale_tickers.py --tickers CSCO IBM QCOM SMCI TXN
 """
+
 from __future__ import annotations
 
 import argparse
@@ -100,8 +101,12 @@ def refresh_ticker(ticker: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tickers", nargs="+", default=DEFAULT_TICKERS,
-                        help="Tickers to refresh (default: CSCO IBM QCOM SMCI TXN)")
+    parser.add_argument(
+        "--tickers",
+        nargs="+",
+        default=DEFAULT_TICKERS,
+        help="Tickers to refresh (default: CSCO IBM QCOM SMCI TXN)",
+    )
     args = parser.parse_args()
 
     print(f"Refreshing {len(args.tickers)} tickers (from={FROM_DATE}):")

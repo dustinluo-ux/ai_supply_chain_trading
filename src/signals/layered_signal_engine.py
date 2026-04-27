@@ -5,6 +5,7 @@ Layer 3: technical/sentiment cross-sectional ranking.
 Layer 2: fundamental-cycle cross-sectional ranking (quarterly, forward-filled).
 Layer 1: macro-regime, quality filter, and earnings-event caps (post-signal only).
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,10 +40,12 @@ L2_BASE_SIGNALS = [
     "gross_margin_delta",
     "last_rev_surprise_pct",
     "fcf_yield",
+    "fcff_adjusted",
     "roic",
     "fcf_conversion",
     "net_capex_sales",
     "net_debt_ebitda",
+    "rd_cap_variance_pct",
 ]
 
 L1_REQUIRED_SIGNALS = [
@@ -51,11 +54,18 @@ L1_REQUIRED_SIGNALS = [
     "last_eps_surprise_pct",
     "last_earnings_date",
     "next_earnings_date",
+    "edgar_audit_flag",
 ]
 
 
 def load_layered_config(path: str | Path | None = None) -> dict[str, Any]:
-    cfg_path = Path(path) if path is not None else Path(__file__).resolve().parents[2] / "config" / "layered_signal_config.yaml"
+    cfg_path = (
+        Path(path)
+        if path is not None
+        else Path(__file__).resolve().parents[2]
+        / "config"
+        / "layered_signal_config.yaml"
+    )
     with cfg_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     if not isinstance(cfg, dict):
@@ -89,7 +99,9 @@ def _load_tes_series(tickers: pd.Series) -> pd.Series:
         logger.warning("TES scores unavailable; tes_score set to NaN")
     out = tickers.astype(str).str.upper().map(tes_map).astype(float)
     if out.isna().all():
-        logger.warning("TES score absent for all tickers; Layer 2 uses non-TES signals only")
+        logger.warning(
+            "TES score absent for all tickers; Layer 2 uses non-TES signals only"
+        )
     return out
 
 
@@ -110,8 +122,23 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     Returns:
         DataFrame with all intermediate and output columns appended.
     """
-    required = ["date", "ticker"] + L3_SIGNALS + L1_REQUIRED_SIGNALS
-    _require_columns(df, required)
+    out = df.copy()
+    if "edgar_audit_flag" not in out.columns:
+        out["edgar_audit_flag"] = True
+    else:
+        out["edgar_audit_flag"] = out["edgar_audit_flag"].fillna(True)
+        if not pd.api.types.is_bool_dtype(out["edgar_audit_flag"]):
+            out["edgar_audit_flag"] = (
+                out["edgar_audit_flag"].astype("boolean").fillna(True).astype(bool)
+            )
+
+    # Fill missing L1 columns with NaN — downstream uses .notna() guards so NaN = no trigger
+    for col in L1_REQUIRED_SIGNALS:
+        if col not in out.columns:
+            out[col] = np.nan
+
+    required = ["date", "ticker"] + L3_SIGNALS
+    _require_columns(out, required)
 
     w_cfg = (config or {}).get("layer_weights", {})
     fw = float(w_cfg.get("fundamental_cycle_weight", 0.6))
@@ -119,14 +146,17 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     if abs((fw + tw) - 1.0) > 1e-9:
         raise ValueError("layer_weights must sum to 1.0")
 
-    out = df.copy()
-    # filing_date (optional): fundamentals audit metadata only; not in L2_BASE_SIGNALS / L1_REQUIRED_SIGNALS.
+    # filing_date (optional): fundamentals metadata; not in L2_BASE_SIGNALS / L1_REQUIRED_SIGNALS.
     for col in L2_BASE_SIGNALS:
         if col not in out.columns:
             out[col] = np.nan
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
-    out["last_earnings_date"] = pd.to_datetime(out["last_earnings_date"], errors="coerce")
-    out["next_earnings_date"] = pd.to_datetime(out["next_earnings_date"], errors="coerce")
+    out["last_earnings_date"] = pd.to_datetime(
+        out["last_earnings_date"], errors="coerce"
+    )
+    out["next_earnings_date"] = pd.to_datetime(
+        out["next_earnings_date"], errors="coerce"
+    )
 
     # Layer 3: technical/sentiment cross-sectional z-scores and ranks.
     for sig in L3_SIGNALS:
@@ -134,13 +164,16 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         r_col = f"rank_{sig}"
         out[z_col] = _cross_section_zscore(out[sig], out["date"])
         out[r_col] = _cross_section_rank01(out[z_col], out["date"])
-    out["layer3_composite"] = out[[f"rank_{s}" for s in L3_SIGNALS]].mean(axis=1, skipna=True)
+    out["layer3_composite"] = out[[f"rank_{s}" for s in L3_SIGNALS]].mean(
+        axis=1, skipna=True
+    )
 
     # Layer 2 input prep: add TES score.
     out["tes_score"] = _load_tes_series(out["ticker"])
     out["inventory_days_neg"] = -1.0 * out["inventory_days"]
     out["inventory_days_accel_neg"] = -1.0 * out["inventory_days_accel"]
     out["net_debt_ebitda_neg"] = -1.0 * out["net_debt_ebitda"]
+    out["rd_cap_variance_pct_neg"] = -1.0 * out["rd_cap_variance_pct"]
 
     # Forward-fill fundamentals by ticker with age cap.
     out = out.sort_values(["ticker", "date"]).reset_index(drop=True)
@@ -153,10 +186,12 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         "gross_margin_delta",
         "last_rev_surprise_pct",
         "fcf_yield",
+        "fcff_adjusted",
         "roic",
         "fcf_conversion",
         "net_capex_sales",
         "net_debt_ebitda_neg",
+        "rd_cap_variance_pct_neg",
         "tes_score",
     ]
     stale_any = pd.Series(False, index=out.index)
@@ -188,10 +223,12 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         "gross_margin_delta",
         "last_rev_surprise_pct",
         "fcf_yield",
+        "fcff_adjusted",
         "roic",
         "fcf_conversion",
         "net_capex_sales",
         "net_debt_ebitda_neg",
+        "rd_cap_variance_pct_neg",
         "tes_score",
     ]
     if out["tes_score"].isna().all():
@@ -203,10 +240,12 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             "gross_margin_delta",
             "last_rev_surprise_pct",
             "fcf_yield",
+            "fcff_adjusted",
             "roic",
             "fcf_conversion",
             "net_capex_sales",
             "net_debt_ebitda_neg",
+            "rd_cap_variance_pct_neg",
         ]
 
     for col in l2_rank_inputs:
@@ -233,15 +272,29 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     out["layer3_pseudo_weight"] = out["L3_rank"] * 2.0 - 1.0
     out["layer2_pseudo_weight"] = out["L2_rank"] * 2.0 - 1.0
 
-    out["layer3_pseudo_weight"] = out["layer3_pseudo_weight"] - out.groupby("date")["layer3_pseudo_weight"].transform("mean")
-    out["layer2_pseudo_weight"] = out["layer2_pseudo_weight"] - out.groupby("date")["layer2_pseudo_weight"].transform("mean")
+    out["layer3_pseudo_weight"] = out["layer3_pseudo_weight"] - out.groupby("date")[
+        "layer3_pseudo_weight"
+    ].transform("mean")
+    out["layer2_pseudo_weight"] = out["layer2_pseudo_weight"] - out.groupby("date")[
+        "layer2_pseudo_weight"
+    ].transform("mean")
 
-    l2_for_combo = out["layer2_pseudo_weight"].where(out["layer2_pseudo_weight"].notna(), out["layer3_pseudo_weight"])
+    l2_for_combo = out["layer2_pseudo_weight"].where(
+        out["layer2_pseudo_weight"].notna(), out["layer3_pseudo_weight"]
+    )
     out["w_raw_combined"] = fw * l2_for_combo + tw * out["layer3_pseudo_weight"]
-    out.loc[out["l2_coverage_flag"], "w_raw_combined"] = out.loc[out["l2_coverage_flag"], "layer3_pseudo_weight"]
+    out.loc[out["l2_coverage_flag"], "w_raw_combined"] = out.loc[
+        out["l2_coverage_flag"], "layer3_pseudo_weight"
+    ]
 
     # Layer 1 multipliers.
-    for col in ("fcf_yield", "roic", "fcf_conversion", "net_capex_sales", "net_debt_ebitda"):
+    for col in (
+        "fcf_yield",
+        "roic",
+        "fcf_conversion",
+        "net_capex_sales",
+        "net_debt_ebitda",
+    ):
         if col not in out.columns:
             out[col] = np.nan
     qf_cfg = (config or {}).get("quality_filter") or {}
@@ -253,7 +306,10 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         (out["fcf_ttm"].isna() | out["fcf_ttm"].gt(0))
         & (out["debt_to_equity"].isna() | out["debt_to_equity"].le(max_lev))
         & (out["fcf_yield"].isna() | out["fcf_yield"].ge(fcf_yield_min))
-        & (out["net_debt_ebitda"].isna() | out["net_debt_ebitda"].le(net_debt_ebitda_max))
+        & (
+            out["net_debt_ebitda"].isna()
+            | out["net_debt_ebitda"].le(net_debt_ebitda_max)
+        )
         & (out["roic"].isna() | out["roic"].ge(roic_min))
     )
     out["l1_quality_pass"] = quality_pass
@@ -307,17 +363,30 @@ def compute_layered_positions(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         out["l1_regime"] = "ABSENT"
         out["l1_regime_multiplier"] = 1.0
 
+    qa_cfg = (config or {}).get("quality_audit") or {}
+    edgar_cap = float(qa_cfg.get("edgar_audit_cap", 0.5))
+    # Parquet semantics: True = SEC vs FMP audit passed (or audit not required); False = failed/error.
+    # Scale down when the audit does not pass (risk of mis-stated R&D / SBC).
+    out["l1_edgar_audit_multiplier"] = np.where(
+        out["edgar_audit_flag"].astype(bool), 1.0, edgar_cap
+    )
+
     out["l1_combined_multiplier"] = (
         out["l1_quality_multiplier"]
         * out["l1_post_earnings_multiplier"]
         * out["l1_pre_earnings_multiplier"]
         * out["l1_regime_multiplier"]
+        * out["l1_edgar_audit_multiplier"]
     )
     out["w_after_l1"] = out["w_raw_combined"] * out["l1_combined_multiplier"]
 
     # Net-zero normalization per date.
-    out["w_demeaned"] = out["w_after_l1"] - out.groupby("date")["w_after_l1"].transform("mean")
+    out["w_demeaned"] = out["w_after_l1"] - out.groupby("date")["w_after_l1"].transform(
+        "mean"
+    )
     abs_sum = out["w_demeaned"].abs().groupby(out["date"]).transform("sum")
-    out["final_position_weight"] = np.where(abs_sum.gt(0), out["w_demeaned"] / abs_sum * 2.0, 0.0)
+    out["final_position_weight"] = np.where(
+        abs_sum.gt(0), out["w_demeaned"] / abs_sum * 2.0, 0.0
+    )
 
     return out

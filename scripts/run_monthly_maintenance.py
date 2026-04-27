@@ -8,6 +8,7 @@ Monthly BAU orchestrator:
 
 Fail-fast on any step failure (non-zero return or subprocess exception).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,7 +48,9 @@ def _write_status(payload: dict) -> None:
     tmp.replace(STATUS_PATH)
 
 
-def _run_subprocess(step_num: int, step_name: str, cmd: list[str], dry_run: bool) -> int:
+def _run_subprocess(
+    step_num: int, step_name: str, cmd: list[str], dry_run: bool
+) -> int:
     print(f"[STEP {step_num}] {step_name}", flush=True)
     print("  CMD: " + " ".join(cmd), flush=True)
     if dry_run:
@@ -90,9 +93,15 @@ def _register_next_run() -> tuple[int, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run monthly maintenance steps sequentially.")
-    parser.add_argument("--step", type=int, default=1, help="Start from step N (1-5) for recovery.")
-    parser.add_argument("--dry-run", action="store_true", help="Print steps only; do not execute.")
+    parser = argparse.ArgumentParser(
+        description="Run monthly maintenance steps sequentially."
+    )
+    parser.add_argument(
+        "--step", type=int, default=1, help="Start from step N (1-5) for recovery."
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print steps only; do not execute."
+    )
     args = parser.parse_args()
 
     if args.step < 1 or args.step > 5:
@@ -104,7 +113,12 @@ def main() -> int:
         (
             1,
             "Quarterly fundamentals refresh",
-            [sys.executable, str(ROOT / "scripts" / "fetch_quarterly_fundamentals.py"), "--mode", "quarterly"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "fetch_quarterly_fundamentals.py"),
+                "--mode",
+                "quarterly",
+            ],
             True,
         ),
         (
@@ -116,19 +130,32 @@ def main() -> int:
         (
             3,
             "Conditional ML retrain (--skip-tournament)",
-            [sys.executable, str(ROOT / "scripts" / "train_ml_model.py"), "--skip-tournament"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "train_ml_model.py"),
+                "--skip-tournament",
+            ],
             should_retrain,
         ),
         (
             4,
             "E2E validation dry-run",
-            [sys.executable, str(ROOT / "scripts" / "run_e2e_pipeline.py"), "--skip-data", "--dry-run"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_e2e_pipeline.py"),
+                "--skip-data",
+                "--dry-run",
+            ],
             True,
         ),
         (
             5,
             "Weekly rebalance dry-run final check",
-            [sys.executable, str(ROOT / "scripts" / "run_weekly_rebalance.py"), "--dry-run"],
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_weekly_rebalance.py"),
+                "--dry-run",
+            ],
             True,
         ),
     ]
@@ -159,7 +186,10 @@ def main() -> int:
             return 1
 
     if args.dry_run:
-        print("[DRY-RUN] Planned 5-step monthly maintenance flow; no commands executed.", flush=True)
+        print(
+            "[DRY-RUN] Planned 5-step monthly maintenance flow; no commands executed.",
+            flush=True,
+        )
         return 0
 
     sched_rc, sched_msg = _register_next_run()

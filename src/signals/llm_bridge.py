@@ -5,15 +5,25 @@ Uses Google Gemini (google-genai) for sentiment, category, and upstream/downstre
 entity extraction. API key from GOOGLE_API_KEY (or GEMINI_API_KEY). No imports from legacy/.
 Design: docs/GEMINI_BRIDGE_DESIGN.md
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
 import re
+import time
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+
+# Models tried in order on 429 — each has an independent QPM quota bucket.
+# Ordered roughly by capability; all are adequate for structured JSON extraction.
+_ROTATION_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
 
 # Optional: pydantic for structured output
 try:
@@ -67,15 +77,20 @@ class GeminiAnalyzer:
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         from dotenv import load_dotenv
+
         load_dotenv()
         if not GENAI_AVAILABLE or genai is None:
             raise ImportError(
                 "google-genai is required for GeminiAnalyzer. pip install google-genai"
             )
         if not HAS_PYDANTIC or DeepAnalysisOutput is None:
-            raise ImportError("pydantic is required for GeminiAnalyzer. pip install pydantic")
+            raise ImportError(
+                "pydantic is required for GeminiAnalyzer. pip install pydantic"
+            )
 
-        self._api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        self._api_key = (
+            api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        )
         if not self._api_key:
             raise ValueError(
                 "Gemini API key not found. Set GOOGLE_API_KEY or GEMINI_API_KEY in .env"
@@ -90,7 +105,9 @@ class GeminiAnalyzer:
             from src.utils.config_manager import get_config
 
             return str(
-                get_config().get_param("strategy_params.llm_analysis.model", "gemini-2.0-flash")
+                get_config().get_param(
+                    "strategy_params.llm_analysis.model", "gemini-2.0-flash"
+                )
             )
         except Exception:
             return "gemini-2.0-flash"
@@ -123,26 +140,67 @@ Return ONLY this JSON object, no markdown:
 }}"""
 
     def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini with JSON response; return raw JSON string. Proxy bypass per legacy."""
+        """Call Gemini with JSON response; return raw JSON string. Proxy bypass per legacy.
+
+        On 429, rotates through _ROTATION_MODELS (independent QPM buckets) before sleeping.
+        Sleep only kicks in after all models in the rotation are exhausted.
+        """
         proxy_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]
         saved = {v: os.environ.pop(v, None) for v in proxy_vars}
+        # Build rotation: primary first, then remaining candidates
+        rotation = [self._model] + [m for m in _ROTATION_MODELS if m != self._model]
+        # One full rotation pass + one final sleep-and-retry on primary
+        max_attempts = len(rotation) + 1
         try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.3,
-                    max_output_tokens=1024,
-                ),
-            )
-            out = getattr(response, "text", None) or ""
-            if not out and getattr(response, "candidates", None):
-                cand = response.candidates[0] if response.candidates else None
-                if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None) and cand.content.parts:
-                    out = getattr(cand.content.parts[0], "text", None) or ""
-            out = (out or "").strip()
-            return out
+            for attempt in range(max_attempts):
+                model = rotation[attempt % len(rotation)]
+                try:
+                    response = self._client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.3,
+                            max_output_tokens=1024,
+                        ),
+                    )
+                    out = getattr(response, "text", None) or ""
+                    if not out and getattr(response, "candidates", None):
+                        cand = response.candidates[0] if response.candidates else None
+                        if (
+                            cand
+                            and getattr(cand, "content", None)
+                            and getattr(cand.content, "parts", None)
+                            and cand.content.parts
+                        ):
+                            out = getattr(cand.content.parts[0], "text", None) or ""
+                    if model != self._model:
+                        logger.info("Gemini succeeded on fallback model=%s", model)
+                    return (out or "").strip()
+                except Exception as exc:
+                    is_rate_limit = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(
+                        exc
+                    )
+                    if not is_rate_limit or attempt >= max_attempts - 1:
+                        raise
+                    next_model = rotation[(attempt + 1) % len(rotation)]
+                    if attempt + 1 == len(rotation):
+                        # Exhausted all models; sleep 30s then retry primary
+                        logger.warning(
+                            "Gemini 429 on all %d models; sleeping 30s before retry on %s",
+                            len(rotation),
+                            next_model,
+                        )
+                        time.sleep(30)
+                    else:
+                        logger.warning(
+                            "Gemini 429 on %s (attempt %d/%d); rotating to %s",
+                            model,
+                            attempt + 1,
+                            max_attempts,
+                            next_model,
+                        )
+            return ""  # unreachable
         finally:
             for k, v in saved.items():
                 if v is not None:
@@ -178,8 +236,16 @@ Return ONLY this JSON object, no markdown:
         if not isinstance(rel, dict):
             rel = {}
         data["relationships"] = {
-            "upstream": list(rel.get("upstream", [])) if isinstance(rel.get("upstream"), list) else [],
-            "downstream": list(rel.get("downstream", [])) if isinstance(rel.get("downstream"), list) else [],
+            "upstream": (
+                list(rel.get("upstream", []))
+                if isinstance(rel.get("upstream"), list)
+                else []
+            ),
+            "downstream": (
+                list(rel.get("downstream", []))
+                if isinstance(rel.get("downstream"), list)
+                else []
+            ),
         }
         # Clamp sentiment to [-1, 1]
         s = data.get("sentiment", 0.0)
@@ -189,7 +255,9 @@ Return ONLY this JSON object, no markdown:
             data["sentiment"] = 0.0
         # Validate category
         allowed = ("SUPPLY_CHAIN_DISRUPTION", "DEMAND_SHOCK", "M&A", "MACRO")
-        data["category"] = data.get("category") if data.get("category") in allowed else "MACRO"
+        data["category"] = (
+            data.get("category") if data.get("category") in allowed else "MACRO"
+        )
         data["reasoning"] = str(data.get("reasoning", ""))[:500]
         try:
             return DeepAnalysisOutput(**data)

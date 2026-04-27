@@ -2,6 +2,7 @@
 Intraweek regime monitor: VIX, SPY 200-SMA, SMH daily return.
 Writes outputs/regime_status.json. Exit 0 always. ASCII-only print (Windows cp1252).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,11 +17,30 @@ sys.path.insert(0, str(ROOT))
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(description="Regime monitor: VIX, SPY 200-SMA, SMH daily return.")
-    parser.add_argument("--vix-threshold", type=float, default=30, help="VIX above this => EMERGENCY")
-    parser.add_argument("--smh-threshold", type=float, default=-0.05, help="SMH daily return below this => EMERGENCY")
-    parser.add_argument("--bull-score-floor", type=float, default=0.50, help="Score floor when SPY > 200-SMA (BULL)")
-    parser.add_argument("--bear-score-floor", type=float, default=0.65, help="Score floor when SPY < 200-SMA (BEAR)")
+    parser = argparse.ArgumentParser(
+        description="Regime monitor: VIX, SPY 200-SMA, SMH daily return."
+    )
+    parser.add_argument(
+        "--vix-threshold", type=float, default=30, help="VIX above this => EMERGENCY"
+    )
+    parser.add_argument(
+        "--smh-threshold",
+        type=float,
+        default=-0.05,
+        help="SMH daily return below this => EMERGENCY",
+    )
+    parser.add_argument(
+        "--bull-score-floor",
+        type=float,
+        default=0.50,
+        help="Score floor when SPY > 200-SMA (BULL)",
+    )
+    parser.add_argument(
+        "--bear-score-floor",
+        type=float,
+        default=0.65,
+        help="Score floor when SPY < 200-SMA (BEAR)",
+    )
     args = parser.parse_args()
     vix_threshold = args.vix_threshold
     smh_threshold = args.smh_threshold
@@ -29,6 +49,7 @@ def _main() -> int:
     vix_series = None  # for Z-score (last 20 observations)
     try:
         import yfinance as yf
+
         t = yf.Ticker("^VIX")
         hist = t.history(period="25d")
         if hist is not None and not hist.empty and "Close" in hist.columns:
@@ -42,9 +63,14 @@ def _main() -> int:
     spy_below_sma = False
     try:
         import yfinance as yf
+
         t = yf.Ticker("SPY")
         spy_hist = t.history(period="220d")
-        if spy_hist is not None and len(spy_hist) >= 200 and "Close" in spy_hist.columns:
+        if (
+            spy_hist is not None
+            and len(spy_hist) >= 200
+            and "Close" in spy_hist.columns
+        ):
             spy_close = float(spy_hist["Close"].iloc[-1])
             spy_sma200 = float(spy_hist["Close"].iloc[-200:].mean())
             spy_below_sma = spy_close < spy_sma200
@@ -56,6 +82,7 @@ def _main() -> int:
     smh_returns_20d = None
     try:
         import yfinance as yf
+
         t = yf.Ticker("SMH")
         smh_hist = t.history(period="25d")
         if smh_hist is not None and len(smh_hist) >= 2 and "Close" in smh_hist.columns:
@@ -75,7 +102,10 @@ def _main() -> int:
     if use_vix_z and use_smh_z:
         print("[Regime] Z-score BEAR triggers active (VIX and SMH).", flush=True)
     elif not use_vix_z or not use_smh_z:
-        print("[Regime] Insufficient history for Z-score -- using absolute thresholds.", flush=True)
+        print(
+            "[Regime] Insufficient history for Z-score -- using absolute thresholds.",
+            flush=True,
+        )
 
     vix_trigger = False
     if vix is not None:
@@ -104,11 +134,19 @@ def _main() -> int:
 
     emergency_reasons = []
     if vix_trigger:
-        emergency_reasons.append(f"VIX {vix:.1f} (Z-score or backstop)" if use_vix_z else f"VIX {vix:.1f} > {vix_threshold}")
+        emergency_reasons.append(
+            f"VIX {vix:.1f} (Z-score or backstop)"
+            if use_vix_z
+            else f"VIX {vix:.1f} > {vix_threshold}"
+        )
     if spy_below_sma:
         emergency_reasons.append("SPY < 200-SMA")
     if smh_shock and smh_daily is not None:
-        emergency_reasons.append(f"SMH {smh_daily:.1%} (Z-score or -7%% backstop)" if use_smh_z else f"SMH {smh_daily:.1%} < {smh_threshold:.0%}")
+        emergency_reasons.append(
+            f"SMH {smh_daily:.1%} (Z-score or -7%% backstop)"
+            if use_smh_z
+            else f"SMH {smh_daily:.1%} < {smh_threshold:.0%}"
+        )
 
     regime = "EMERGENCY" if emergency_reasons else "NORMAL"
 
@@ -118,7 +156,12 @@ def _main() -> int:
     # regime_stress: continuous [0, 1] from VIX, SMH, SPY components
     vix_stress = 0.0
     try:
-        if use_vix_z and vix_series is not None and vix_z is not None and math.isfinite(vix_z):
+        if (
+            use_vix_z
+            and vix_series is not None
+            and vix_z is not None
+            and math.isfinite(vix_z)
+        ):
             vix_stress = 1.0 / (1.0 + math.exp(-(vix_z - 1.0)))
         elif vix is not None and math.isfinite(vix):
             vix_stress = 1.0 / (1.0 + math.exp(-(vix - 20.0) / 5.0))
@@ -148,10 +191,18 @@ def _main() -> int:
         "reasons": emergency_reasons,
         "score_floor": score_floor,
         "vix": vix if (vix is not None and math.isfinite(vix)) else None,
-        "spy_close": spy_close if (spy_close is not None and math.isfinite(spy_close)) else None,
-        "spy_sma200": spy_sma200 if (spy_sma200 is not None and math.isfinite(spy_sma200)) else None,
+        "spy_close": (
+            spy_close if (spy_close is not None and math.isfinite(spy_close)) else None
+        ),
+        "spy_sma200": (
+            spy_sma200
+            if (spy_sma200 is not None and math.isfinite(spy_sma200))
+            else None
+        ),
         "spy_below_sma": spy_below_sma,
-        "smh_daily_return": smh_daily if (smh_daily is not None and math.isfinite(smh_daily)) else None,
+        "smh_daily_return": (
+            smh_daily if (smh_daily is not None and math.isfinite(smh_daily)) else None
+        ),
         "smh_shock": smh_shock,
         "thresholds": {
             "vix": vix_threshold,
@@ -170,7 +221,11 @@ def _main() -> int:
     # --- Bayesian Meta-Allocator ---
     try:
         import yaml as _yaml
-        from pods.meta_allocator import compute_pod_weights, load_pod_fitness, save_pod_fitness
+        from pods.meta_allocator import (
+            compute_pod_weights,
+            load_pod_fitness,
+        )
+
         _mcfg_path = ROOT / "config" / "model_config.yaml"
         _pods_cfg: dict = {}
         if _mcfg_path.exists():
@@ -178,7 +233,9 @@ def _main() -> int:
                 _mcfg = _yaml.safe_load(_f) or {}
             _pods_cfg = _mcfg.get("pods", {})
         _fitness_path = ROOT / _pods_cfg.get("fitness_path", "outputs/pod_fitness.json")
-        _meta_weights_path = ROOT / _pods_cfg.get("meta_weights_path", "outputs/meta_weights.json")
+        _meta_weights_path = ROOT / _pods_cfg.get(
+            "meta_weights_path", "outputs/meta_weights.json"
+        )
         _meta_cfg = _pods_cfg.get("meta_allocator", {})
         _pod_fitness = load_pod_fitness(_fitness_path)
         _meta_weights = compute_pod_weights(
@@ -211,6 +268,7 @@ def _main() -> int:
         import os as _os
         import yaml as _yaml
         import pandas as _pd
+
         load_dotenv(ROOT / ".env")
         _data_dir = _os.environ.get("DATA_DIR", "")
         _data_dir = Path(_data_dir) if _data_dir else None
@@ -228,6 +286,7 @@ def _main() -> int:
         if _data_dir and _tickers:
             try:
                 from src.data.csv_provider import load_prices as _load_prices
+
                 _prices_dict = _load_prices(_data_dir, _tickers)
             except Exception:
                 _prices_dict = {}
@@ -260,7 +319,9 @@ def _main() -> int:
             if _smh_csv.exists():
                 try:
                     _smh_df = _pd.read_csv(_smh_csv, index_col=0, parse_dates=False)
-                    _smh_df.index = _pd.to_datetime(_smh_df.index, format="mixed", dayfirst=True)
+                    _smh_df.index = _pd.to_datetime(
+                        _smh_df.index, format="mixed", dayfirst=True
+                    )
                     _smh_prices = _smh_df
                 except Exception:
                     pass
@@ -276,6 +337,7 @@ def _main() -> int:
                 pass
 
         from src.monitoring.structural_breakdown import assess_structural_breakdown
+
         _breakdown_out = assess_structural_breakdown(
             regime_status=out,
             prices_dict=_prices_dict,
@@ -297,14 +359,32 @@ def _main() -> int:
 
     if regime == "NORMAL":
         vix_s = f"{vix:.1f}" if (vix is not None and math.isfinite(vix)) else "N/A"
-        spy_s = f"{spy_close:.1f}" if (spy_close is not None and math.isfinite(spy_close)) else "N/A"
-        sma_s = f"{spy_sma200:.1f}" if (spy_sma200 is not None and math.isfinite(spy_sma200)) else "N/A"
+        spy_s = (
+            f"{spy_close:.1f}"
+            if (spy_close is not None and math.isfinite(spy_close))
+            else "N/A"
+        )
+        sma_s = (
+            f"{spy_sma200:.1f}"
+            if (spy_sma200 is not None and math.isfinite(spy_sma200))
+            else "N/A"
+        )
         cmp = ">=" if not spy_below_sma else "<"
-        smh_s = f"{smh_daily:+.1%}" if (smh_daily is not None and math.isfinite(smh_daily)) else "N/A"
-        print(f"[REGIME] NORMAL  -- VIX {vix_s} | SPY {spy_s} {cmp} SMA200 {sma_s} | SMH {smh_s} | score_floor={score_floor} | stress={regime_stress:.3f}", flush=True)
+        smh_s = (
+            f"{smh_daily:+.1%}"
+            if (smh_daily is not None and math.isfinite(smh_daily))
+            else "N/A"
+        )
+        print(
+            f"[REGIME] NORMAL  -- VIX {vix_s} | SPY {spy_s} {cmp} SMA200 {sma_s} | SMH {smh_s} | score_floor={score_floor} | stress={regime_stress:.3f}",
+            flush=True,
+        )
     else:
         reasons_str = " | ".join(emergency_reasons)
-        print(f"[REGIME] EMERGENCY -- {reasons_str} | stress={regime_stress:.3f}", flush=True)
+        print(
+            f"[REGIME] EMERGENCY -- {reasons_str} | stress={regime_stress:.3f}",
+            flush=True,
+        )
     return 0
 
 

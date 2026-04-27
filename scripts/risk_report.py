@@ -5,6 +5,7 @@ Reads last_optimized_weights.json for max concentration; queries portfolio_daily
 for returns, computes equity curve, max drawdown, 20d vol, beta vs SPY, VaR 95%.
 Writes outputs/risk_report_YYYY-MM-DD.md. Exit 0 always.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,8 +24,18 @@ sys.path.insert(0, str(ROOT))
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Risk report from portfolio_daily.")
-    parser.add_argument("--db", type=Path, default=ROOT / "outputs" / "trading.db", help="Path to trading.db")
-    parser.add_argument("--weights", type=Path, default=ROOT / "outputs" / "last_optimized_weights.json", help="Path to last_optimized_weights.json")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=ROOT / "outputs" / "trading.db",
+        help="Path to trading.db",
+    )
+    parser.add_argument(
+        "--weights",
+        type=Path,
+        default=ROOT / "outputs" / "last_optimized_weights.json",
+        help="Path to last_optimized_weights.json",
+    )
     args = parser.parse_args()
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -59,7 +70,7 @@ def _main() -> int:
     if n_rows == 0:
         max_dd = None
         port_vol_20d = None
-        spy_vol_20d = None
+        _spy_vol_20d = None  # noqa: F841
         beta = None
         var_95 = None
         latest_return = None
@@ -80,14 +91,14 @@ def _main() -> int:
             port_last = df["port_return"].iloc[-20:]
             spy_last = df["spy_return"].iloc[-20:]
             port_vol_20d = float(port_last.std() * np.sqrt(252)) * 100
-            spy_vol_20d = float(spy_last.std() * np.sqrt(252)) * 100
+            _spy_vol_20d = float(spy_last.std() * np.sqrt(252)) * 100  # noqa: F841
             cov = np.cov(port_last, spy_last)
             var_spy = np.var(spy_last)
             beta = float(cov[0, 1] / var_spy) if var_spy > 0 else None
             var_95 = float(np.percentile(port_last, 5)) * 100
         else:
             port_vol_20d = None
-            spy_vol_20d = None
+            _spy_vol_20d = None  # noqa: F841
             beta = None
             var_95 = None
 
@@ -100,15 +111,39 @@ def _main() -> int:
         f"Data window: {n_rows} trading days",
         "",
         "PORTFOLIO METRICS",
-        f"  Max Drawdown:        {max_dd:.2%}" if max_dd is not None else "  Max Drawdown:        N/A",
-        f"  Port Vol (20d ann.): {port_vol_20d:.2f}%" if port_vol_20d is not None else "  Port Vol (20d ann.): N/A",
-        f"  Beta vs SPY:         {beta:.2f}" if beta is not None else "  Beta vs SPY:         N/A",
-        f"  VaR 95% 1d:         {var_95:.2f}%" if var_95 is not None else "  VaR 95% 1d:         N/A",
+        (
+            f"  Max Drawdown:        {max_dd:.2%}"
+            if max_dd is not None
+            else "  Max Drawdown:        N/A"
+        ),
+        (
+            f"  Port Vol (20d ann.): {port_vol_20d:.2f}%"
+            if port_vol_20d is not None
+            else "  Port Vol (20d ann.): N/A"
+        ),
+        (
+            f"  Beta vs SPY:         {beta:.2f}"
+            if beta is not None
+            else "  Beta vs SPY:         N/A"
+        ),
+        (
+            f"  VaR 95% 1d:         {var_95:.2f}%"
+            if var_95 is not None
+            else "  VaR 95% 1d:         N/A"
+        ),
         "",
         "POSITION RISK",
         f"  Active Positions:    {len(weights)}",
-        f"  Max Concentration:   {max_conc:.1f}%" if max_conc is not None else "  Max Concentration:   N/A",
-        f"  Latest Daily Return: {latest_return:+.2f}%" if latest_return is not None else "  Latest Daily Return: N/A",
+        (
+            f"  Max Concentration:   {max_conc:.1f}%"
+            if max_conc is not None
+            else "  Max Concentration:   N/A"
+        ),
+        (
+            f"  Latest Daily Return: {latest_return:+.2f}%"
+            if latest_return is not None
+            else "  Latest Daily Return: N/A"
+        ),
         "",
         "RISK STATUS",
     ]

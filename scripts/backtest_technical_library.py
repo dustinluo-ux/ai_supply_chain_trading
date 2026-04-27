@@ -8,6 +8,7 @@ Weekly rebalance with:
 - AdaptiveSelector: pass --performance-csv with --news-dir to evolve weights from last 3 regime occurrences; weekly Return/Drawdown/Regime/news_weight logged to CSV.
 Saves log to outputs/backtest_master_score_*.txt
 """
+
 from __future__ import annotations
 import os
 
@@ -29,23 +30,25 @@ sys.path.insert(0, str(ROOT))
 FRICTION_BPS = 15  # 0.15% per trade (slippage + commission)
 BENCHMARK_TICKER = "SPY"
 SMA_KILL_SWITCH_DAYS = 200
-KILL_SWITCH_MODE = "cash"  # "cash" = 100% cash when SPY < 200 SMA; "half" = 50% position size
+KILL_SWITCH_MODE = (
+    "cash"  # "cash" = 100% cash when SPY < 200 SMA; "half" = 50% position size
+)
 MAX_GLOBAL_POSITIONS = 1
 # Daily risk check: exit position same day if single-day return <= this (e.g. -0.05 = -5%)
 DAILY_EXIT_PCT = -0.05
 
 # First date of valid (post-SPAC-merger) price data for known SPAC-origin tickers
 SPAC_IPO_DATES = {
-    "OKLO": "2024-05-10",   # AltC Acquisition Corp merger closed ~May 2024
-    "GEV": "2024-04-02",    # GE Vernova spun off from GE on 2024-04-02
-    "ARM": "2023-09-14",    # Arm Holdings IPO 2023-09-14
-    "ALAB": "2024-03-20",   # Astera Labs IPO 2024-03-20
-    "SMR": "2022-05-02",    # NuScale Power SPAC merger closed ~2022-05-02
-    "CEG": "2022-02-02",    # Constellation Energy spun off from Exelon 2022-02-02
+    "OKLO": "2024-05-10",  # AltC Acquisition Corp merger closed ~May 2024
+    "GEV": "2024-04-02",  # GE Vernova spun off from GE on 2024-04-02
+    "ARM": "2023-09-14",  # Arm Holdings IPO 2023-09-14
+    "ALAB": "2024-03-20",  # Astera Labs IPO 2024-03-20
+    "SMR": "2022-05-02",  # NuScale Power SPAC merger closed ~2022-05-02
+    "CEG": "2022-02-02",  # Constellation Energy spun off from Exelon 2022-02-02
 }
 
 BACKTEST_EXCLUDE = {
-    "SSNLF",   # Samsung non-listed OTC share — illiquid, untradeable in practice
+    "SSNLF",  # Samsung non-listed OTC share — illiquid, untradeable in practice
 }
 
 # --- Centralized data loading (src.data.csv_provider) ---
@@ -77,7 +80,9 @@ def _preflight_data_check(
             return False, 0, "csv_not_found"
         try:
             df = pd.read_csv(path, index_col=0, parse_dates=False)
-            idx = pd.to_datetime(df.index, format="mixed", dayfirst=True, errors="coerce")
+            idx = pd.to_datetime(
+                df.index, format="mixed", dayfirst=True, errors="coerce"
+            )
             idx = pd.to_datetime(idx, utc=True, errors="coerce").tz_localize(None)
             idx = pd.DatetimeIndex(idx).dropna()
             if len(idx) == 0:
@@ -102,7 +107,10 @@ def _preflight_data_check(
             passed.append(t)
         else:
             refresh_needed.append(t)
-            print(f"[PREFLIGHT] {t}: insufficient rows={rows} in requested window; marked for refresh", flush=True)
+            print(
+                f"[PREFLIGHT] {t}: insufficient rows={rows} in requested window; marked for refresh",
+                flush=True,
+            )
 
     refreshed: list[str] = []
     if refresh_needed:
@@ -118,12 +126,18 @@ def _preflight_data_check(
                 refreshed.append(t)
             else:
                 failed_after_refresh.append(t)
-                print(f"[PREFLIGHT][WARN] {t}: still insufficient rows={rows} after refresh", flush=True)
+                print(
+                    f"[PREFLIGHT][WARN] {t}: still insufficient rows={rows} after refresh",
+                    flush=True,
+                )
 
     print("[PREFLIGHT] Data coverage report", flush=True)
     print(f"  passed:    {passed if passed else []}", flush=True)
     print(f"  refreshed: {refreshed if refreshed else []}", flush=True)
-    print(f"  failed:    {failed_after_refresh if failed_after_refresh else []}", flush=True)
+    print(
+        f"  failed:    {failed_after_refresh if failed_after_refresh else []}",
+        flush=True,
+    )
 
 
 def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
@@ -166,7 +180,11 @@ def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
                         sent = float(art["sentiment"])
                     except (TypeError, ValueError):
                         pass
-                elif "entities" in art and isinstance(art["entities"], list) and art["entities"]:
+                elif (
+                    "entities" in art
+                    and isinstance(art["entities"], list)
+                    and art["entities"]
+                ):
                     for ent in art["entities"]:
                         if isinstance(ent, dict) and ent.get("symbol") == ticker:
                             s = ent.get("sentiment_score", ent.get("sentiment"))
@@ -209,7 +227,9 @@ def _load_news_signals(news_dir: Path | str | None, tickers: list[str]) -> dict:
     return out
 
 
-def _spy_benchmark_series(data_dir: Path, sma_window: int = 200) -> tuple[pd.Series, pd.Series] | None:
+def _spy_benchmark_series(
+    data_dir: Path, sma_window: int = 200
+) -> tuple[pd.Series, pd.Series] | None:
     """Load SPY; return (close, sma200) aligned to SPY index. None if SPY not found."""
     path = find_csv_path(data_dir, BENCHMARK_TICKER)
     if not path:
@@ -245,7 +265,9 @@ def compute_target_weights(
     Delegates to src.core.target_weight_pipeline.compute_target_weights.
     Returns pd.Series indexed by tickers (full universe), weights sum to 0 or 1.
     """
-    from src.core.target_weight_pipeline import compute_target_weights as _compute_target_weights
+    from src.core.target_weight_pipeline import (
+        compute_target_weights as _compute_target_weights,
+    )
 
     tickers = list(prices_dict.keys())
     return _compute_target_weights(
@@ -271,7 +293,11 @@ def _build_weight_history(
     ohlcv_cols=None,
 ):
     """Build history DataFrame for rolling/ml weights. Only uses data <= monday (no look-ahead)."""
-    from src.signals.technical_library import calculate_all_indicators, compute_signal_strength
+    from src.signals.technical_library import (
+        calculate_all_indicators,
+        compute_signal_strength,
+    )
+
     rows = []
     for t in tickers:
         df = prices_dict.get(t)
@@ -288,7 +314,9 @@ def _build_weight_history(
             ind = calculate_all_indicators(slice_df)
         except Exception:
             continue
-        dates = ind.index[ind.index <= monday].sort_values(ascending=False)[:lookback_days]
+        dates = ind.index[ind.index <= monday].sort_values(ascending=False)[
+            :lookback_days
+        ]
         close = prices_dict[t]["close"]
         if isinstance(close, pd.DataFrame):
             close = close.iloc[:, 0]
@@ -341,29 +369,47 @@ def run_backtest_master_score(
     score_floor: float | None = None,
     regime_multiplier: float = 0.5,
 ) -> dict:
-    from src.signals.technical_library import (
-        calculate_all_indicators,
-        compute_signal_strength,
-        OHLCV_COLS,
+    from src.signals.technical_library import OHLCV_COLS
+    from src.signals.weight_model import (
+        get_optimized_weights,
+        get_ml_weights,
+        get_regime_hmm,
+        AdaptiveSelector,
+        StrategySelector,
     )
-    from src.signals.weight_model import get_optimized_weights, get_ml_weights, get_regime_hmm, AdaptiveSelector, StrategySelector
+
     if news_dir is not None:
-        from src.signals.news_engine import compute_news_composite, DEFAULT_SECTOR_MAP
+        from src.signals.news_engine import compute_news_composite
     if performance_csv is not None:
-        from src.signals.performance_logger import append_row as performance_append_row
+        from src.signals.performance_logger import append_row as _performance_append_row  # noqa: F401
     performance_csv_path = Path(performance_csv) if performance_csv else None
-    adaptive_selector = AdaptiveSelector(performance_csv_path) if (news_dir and performance_csv_path and news_weight_fixed is None and not dynamic_selector) else None
-    from src.signals.performance_logger import _default_ledger_path, update_regime_ledger
-    strategy_selector = StrategySelector(_default_ledger_path()) if dynamic_selector else None
+    adaptive_selector = (
+        AdaptiveSelector(performance_csv_path)
+        if (
+            news_dir
+            and performance_csv_path
+            and news_weight_fixed is None
+            and not dynamic_selector
+        )
+        else None
+    )
+    from src.signals.performance_logger import (
+        _default_ledger_path,
+        update_regime_ledger,
+    )
+
+    strategy_selector = (
+        StrategySelector(_default_ledger_path()) if dynamic_selector else None
+    )
     from src.signals.signal_engine import SignalEngine
     from src.core import PolicyEngine, PortfolioEngine
-    from src.core.intent import Intent
     from src.portfolio.position_sizer import (
         compute_weights as position_sizer_compute_weights,
         compute_atr_series,
         get_sizing_params_from_config,
     )
     from src.utils.config_manager import get_config as get_config_manager
+
     signal_engine = SignalEngine()
     policy_engine = PolicyEngine()
     portfolio_engine = PortfolioEngine()
@@ -376,23 +422,32 @@ def run_backtest_master_score(
         _mcfg_path = ROOT / "config" / "model_config.yaml"
         if _mcfg_path.exists():
             import yaml as _yaml
+
             with open(_mcfg_path, "r", encoding="utf-8") as _f:
                 _mcfg = _yaml.safe_load(_f)
             config_d = (_mcfg or {}).get("tracks", {}).get("D", {})
-    week_meta_list: list[tuple] = []  # (monday, regime_state, news_weight_used, active_strategy_id) per week
+    week_meta_list: list[tuple] = (
+        []
+    )  # (monday, regime_state, news_weight_used, active_strategy_id) per week
     # P0 safety initialization
     active_strategy_id = None
     last_regime = None
     tickers = list(prices_dict.keys())
     if len(tickers) < top_n:
         import logging as _logging
+
         _logging.getLogger(__name__).warning(
             "top_n=%d but only %d tickers loaded — clamping top_n to %d",
-            top_n, len(tickers), len(tickers),
+            top_n,
+            len(tickers),
+            len(tickers),
         )
         if verbose:
-            print(f"  [WARN] top_n={top_n} > loaded tickers ({len(tickers)}); "
-                  f"clamping top_n to {len(tickers)}", flush=True)
+            print(
+                f"  [WARN] top_n={top_n} > loaded tickers ({len(tickers)}); "
+                f"clamping top_n to {len(tickers)}",
+                flush=True,
+            )
         top_n = len(tickers)
     all_dates = sorted(set().union(*[df.index for df in prices_dict.values()]))
     all_dates = [d for d in all_dates if d.weekday() < 5]
@@ -404,14 +459,24 @@ def run_backtest_master_score(
         end = min(end, pd.to_datetime(end_date))
     mondays = pd.date_range(start, end, freq="W-MON")
     if len(mondays) < 2:
-        return {"sharpe": 0.0, "total_return": 0.0, "max_drawdown": 0.0, "weekly_returns": [], "error": "Not enough weeks"}
+        return {
+            "sharpe": 0.0,
+            "total_return": 0.0,
+            "max_drawdown": 0.0,
+            "weekly_returns": [],
+            "error": "Not enough weeks",
+        }
 
     # Market Kill-Switch: SPY 200-day SMA (optional)
-    spy_bench = _spy_benchmark_series(data_dir, sma_window=sma_window) if data_dir else None
+    spy_bench = (
+        _spy_benchmark_series(data_dir, sma_window=sma_window) if data_dir else None
+    )
     spy_close_native = None  # Raw SPY close for HMM (no reindex)
     if spy_bench is not None:
         spy_close_series, spy_sma_series = spy_bench
-        spy_close_native = spy_close_series.copy()  # For get_regime_hmm (needs native index)
+        spy_close_native = (
+            spy_close_series.copy()
+        )  # For get_regime_hmm (needs native index)
         kill_switch_active = True
         spy_close_series = spy_close_series.reindex(all_dates).ffill()
         spy_sma_series = spy_sma_series.reindex(all_dates).ffill()
@@ -420,56 +485,119 @@ def run_backtest_master_score(
         kill_switch_active = False
 
     if verbose:
-        print(f"  Backtest: {len(tickers)} tickers, {len(mondays)} rebalances, top_n={top_n}", flush=True)
-        print(f"  Weight mode: {weight_mode}" + (f" | Rolling method: {rolling_method}" if weight_mode == "rolling" else "") + f" | Execution: Next-Day Open | Friction: {FRICTION_BPS/10000:.2%} | Sizing: ATR-based (Stage 4)", flush=True)
-        print(f"  Kill-Switch: {'ON (SPY < 200 SMA -> ' + KILL_SWITCH_MODE + ')' if kill_switch_active else 'OFF (no SPY data)'}", flush=True)
+        print(
+            f"  Backtest: {len(tickers)} tickers, {len(mondays)} rebalances, top_n={top_n}",
+            flush=True,
+        )
+        print(
+            f"  Weight mode: {weight_mode}"
+            + (
+                f" | Rolling method: {rolling_method}"
+                if weight_mode == "rolling"
+                else ""
+            )
+            + f" | Execution: Next-Day Open | Friction: {FRICTION_BPS/10000:.2%} | Sizing: ATR-based (Stage 4)",
+            flush=True,
+        )
+        print(
+            f"  Kill-Switch: {'ON (SPY < 200 SMA -> ' + KILL_SWITCH_MODE + ')' if kill_switch_active else 'OFF (no SPY data)'}",
+            flush=True,
+        )
         if news_dir:
-            print(f"  News overlay: ON (news_dir={Path(news_dir).resolve()}) | 0.8 Technical + 0.2 News Composite", flush=True)
+            print(
+                f"  News overlay: ON (news_dir={Path(news_dir).resolve()}) | 0.8 Technical + 0.2 News Composite",
+                flush=True,
+            )
         if news_dir and performance_csv_path:
-            print(f"  AdaptiveSelector: ON (performance_csv={performance_csv_path.resolve()}) | weights from last 3 regime occurrences", flush=True)
+            print(
+                f"  AdaptiveSelector: ON (performance_csv={performance_csv_path.resolve()}) | weights from last 3 regime occurrences",
+                flush=True,
+            )
         if dynamic_selector:
-            print(f"  DynamicSelector: ON (regime_ledger) | override news_weight + sideways_risk_scale from winning profile", flush=True)
+            print(
+                f"  DynamicSelector: ON (regime_ledger) | override news_weight + sideways_risk_scale from winning profile",
+                flush=True,
+            )
     signals_df = pd.DataFrame(0.0, index=mondays, columns=tickers)
     if not llm_enabled and verbose:
-        print("  [CONFIG] Backtest running with LLM disabled; Gemini will not be called.", flush=True)
+        print(
+            "  [CONFIG] Backtest running with LLM disabled; Gemini will not be called.",
+            flush=True,
+        )
     backtest_news_signals = _load_news_signals(news_dir, tickers) if news_dir else {}
     # Wire EODHD historical news (fills in where Marketaux flat files are absent)
     from src.data.eodhd_news_loader import load_eodhd_news_signals as _load_eodhd
-    _eodhd_signals, _ = _load_eodhd(tickers, start_date=str(mondays[0].date()), end_date=str(mondays[-1].date()))
+
+    _eodhd_signals, _ = _load_eodhd(
+        tickers, start_date=str(mondays[0].date()), end_date=str(mondays[-1].date())
+    )
     for _t, _dates in _eodhd_signals.items():
         if _t not in backtest_news_signals:
             backtest_news_signals[_t] = {}
         for _d, _v in _dates.items():
-            if _d not in backtest_news_signals[_t]:   # EODHD fills gaps only — Marketaux takes priority
+            if (
+                _d not in backtest_news_signals[_t]
+            ):  # EODHD fills gaps only — Marketaux takes priority
                 backtest_news_signals[_t][_d] = _v
-    transmat_printed = False
     prev_regime: str | None = None
     for idx, monday in enumerate(mondays):
         spy_above_sma200 = None
         regime_state = None
-        regime_info = None
-        need_regime = kill_switch_active or weight_mode == "regime" or (news_dir and performance_csv_path) or (news_dir and news_weight_fixed is not None) or (news_weight_fixed is not None) or dynamic_selector
+        need_regime = (
+            kill_switch_active
+            or weight_mode == "regime"
+            or (news_dir and performance_csv_path)
+            or (news_dir and news_weight_fixed is not None)
+            or (news_weight_fixed is not None)
+            or dynamic_selector
+        )
         if need_regime:
             if spy_close_native is not None:
-                regime_state, regime_info = get_regime_hmm(spy_close_native, monday, min_obs=60, n_components=3)
-                if regime_state is None:
-                    regime_info = None
-                if regime_state is None and kill_switch_active and spy_close_series is not None and spy_sma_series is not None:
+                regime_state, _regime_info = get_regime_hmm(
+                    spy_close_native, monday, min_obs=60, n_components=3
+                )
+                if (
+                    regime_state is None
+                    and kill_switch_active
+                    and spy_close_series is not None
+                    and spy_sma_series is not None
+                ):
                     up_to = spy_close_series.index[spy_close_series.index <= monday]
                     if len(up_to) > 0:
                         last_d = up_to[-1]
                         spy_cl = spy_close_series.loc[last_d]
-                        sma_val = spy_sma_series.loc[last_d] if last_d in spy_sma_series.index else None
-                        if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
+                        sma_val = (
+                            spy_sma_series.loc[last_d]
+                            if last_d in spy_sma_series.index
+                            else None
+                        )
+                        if (
+                            pd.notna(spy_cl)
+                            and sma_val is not None
+                            and not pd.isna(sma_val)
+                        ):
                             spy_above_sma200 = bool(spy_cl >= sma_val)
                             regime_state = "BULL" if spy_above_sma200 else "BEAR"
-            if regime_state is None and kill_switch_active and spy_close_series is not None and spy_sma_series is not None:
+            if (
+                regime_state is None
+                and kill_switch_active
+                and spy_close_series is not None
+                and spy_sma_series is not None
+            ):
                 up_to = spy_close_series.index[spy_close_series.index <= monday]
                 if len(up_to) > 0:
                     last_d = up_to[-1]
                     spy_cl = spy_close_series.loc[last_d]
-                    sma_val = spy_sma_series.loc[last_d] if last_d in spy_sma_series.index else None
-                    if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
+                    sma_val = (
+                        spy_sma_series.loc[last_d]
+                        if last_d in spy_sma_series.index
+                        else None
+                    )
+                    if (
+                        pd.notna(spy_cl)
+                        and sma_val is not None
+                        and not pd.isna(sma_val)
+                    ):
                         spy_above_sma200 = bool(spy_cl >= sma_val)
 
         if regime_state == "BEAR" and prev_regime == "BEAR":
@@ -480,23 +608,49 @@ def run_backtest_master_score(
             effective_regime_state = regime_state
 
         spy_below_sma200 = False
-        if kill_switch_active and spy_close_series is not None and spy_sma_series is not None:
+        if (
+            kill_switch_active
+            and spy_close_series is not None
+            and spy_sma_series is not None
+        ):
             up_to = spy_close_series.index[spy_close_series.index <= monday]
             if len(up_to) > 0:
                 last_d = up_to[-1]
                 spy_cl = spy_close_series.loc[last_d]
-                sma_val = spy_sma_series.loc[last_d] if last_d in spy_sma_series.index else None
+                sma_val = (
+                    spy_sma_series.loc[last_d]
+                    if last_d in spy_sma_series.index
+                    else None
+                )
                 if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
                     spy_below_sma200 = bool(spy_cl < sma_val)
         category_weights_override = None
         if category_weights_override_param is not None and weight_mode == "fixed":
             category_weights_override = category_weights_override_param
         if weight_mode == "rolling":
-            hist = _build_weight_history(prices_dict, tickers, monday, "rolling", 60, ensure_ohlcv_fn=ensure_ohlcv, ohlcv_cols=OHLCV_COLS)
+            hist = _build_weight_history(
+                prices_dict,
+                tickers,
+                monday,
+                "rolling",
+                60,
+                ensure_ohlcv_fn=ensure_ohlcv,
+                ohlcv_cols=OHLCV_COLS,
+            )
             if hist is not None and len(hist) >= 10:
-                category_weights_override = get_optimized_weights(hist, lookback_days=60, forward_days=5, method=rolling_method)
+                category_weights_override = get_optimized_weights(
+                    hist, lookback_days=60, forward_days=5, method=rolling_method
+                )
         elif weight_mode == "ml":
-            hist = _build_weight_history(prices_dict, tickers, monday, "ml", 60, ensure_ohlcv_fn=ensure_ohlcv, ohlcv_cols=OHLCV_COLS)
+            hist = _build_weight_history(
+                prices_dict,
+                tickers,
+                monday,
+                "ml",
+                60,
+                ensure_ohlcv_fn=ensure_ohlcv,
+                ohlcv_cols=OHLCV_COLS,
+            )
             if hist is not None and len(hist) >= 20:
                 ml_weights, ml_cv_r2 = get_ml_weights(hist, lookback_days=60)
                 if ml_weights is not None:
@@ -510,21 +664,33 @@ def run_backtest_master_score(
         if news_weight_fixed is not None:
             news_weight_used = float(news_weight_fixed)
         elif news_dir:
-            news_weight_used = adaptive_selector.get_optimal_weights(regime_state) if adaptive_selector else 0.20
+            news_weight_used = (
+                adaptive_selector.get_optimal_weights(regime_state)
+                if adaptive_selector
+                else 0.20
+            )
         if dynamic_selector and regime_state and strategy_selector is not None:
             profile = strategy_selector.get_winning_profile(regime_state)
             if profile and profile.get("params"):
                 params = profile["params"]
                 news_weight_used = float(params.get("news_weight", news_weight_used))
-                signal_horizon_days_this_week = int(params.get("signal_horizon_days", signal_horizon_days))
-                sideways_risk_scale_this_week = float(params.get("sideways_risk_scale", sideways_risk_scale))
+                signal_horizon_days_this_week = int(
+                    params.get("signal_horizon_days", signal_horizon_days)
+                )
+                sideways_risk_scale_this_week = float(
+                    params.get("sideways_risk_scale", sideways_risk_scale)
+                )
                 sid = profile.get("strategy_id", "?")
                 active_strategy_id = sid
                 if verbose:
-                    print(f"  [SELECTOR] Regime: {regime_state} detected. Historical Best Profile found: {sid}. Overriding current session weights...", flush=True)
+                    print(
+                        f"  [SELECTOR] Regime: {regime_state} detected. Historical Best Profile found: {sid}. Overriding current session weights...",
+                        flush=True,
+                    )
             else:
                 try:
                     import yaml
+
                     cfg_path = ROOT / "config" / "technical_master_score.yaml"
                     if cfg_path.exists():
                         with open(cfg_path, "r", encoding="utf-8") as f:
@@ -532,30 +698,40 @@ def run_backtest_master_score(
                         news_weight_used = float(cfg.get("news_weight", 0.20))
                 except Exception:
                     news_weight_used = 0.20
-        
+
         sector_sentiments_this_week: dict[str, float] = {}
         if news_dir is not None:
             for t in tickers:
                 try:
                     r = compute_news_composite(
-                        Path(news_dir), t, monday,
-                        sector_sentiments=None, sector_map=None,
+                        Path(news_dir),
+                        t,
+                        monday,
+                        sector_sentiments=None,
+                        sector_map=None,
                         signal_horizon_days=signal_horizon_days_this_week,
                         llm_enabled=llm_enabled,
                     )
                     sector_sentiments_this_week[t] = r.get("sentiment_current", 0.5)
                 except Exception:
                     sector_sentiments_this_week[t] = 0.5
-        
+
         from src.utils.config_manager import get_config as _get_cfg
-        _propagation_enabled = _get_cfg().get_param("strategy_params.propagation.enabled", False)
-        
+
+        _propagation_enabled = _get_cfg().get_param(
+            "strategy_params.propagation.enabled", False
+        )
+
         data_context = {
             "prices_dict": prices_dict,
             "tickers": tickers,
             "weight_mode": weight_mode,
             "regime_state": regime_state,
-            "spy_above_sma200": spy_above_sma200 if weight_mode == "regime" and regime_state is None else None,
+            "spy_above_sma200": (
+                spy_above_sma200
+                if weight_mode == "regime" and regime_state is None
+                else None
+            ),
             "category_weights_override": category_weights_override,
             "news_dir": news_dir,
             "news_signals": backtest_news_signals,
@@ -568,6 +744,7 @@ def run_backtest_master_score(
         }
         week_scores, aux = signal_engine.generate(monday, tickers, data_context)
         from src.core.target_weight_pipeline import apply_ml_blend
+
         precomputed_indicators = aux.get("indicator_rows") or {}
         week_scores = apply_ml_blend(
             week_scores,
@@ -585,6 +762,7 @@ def run_backtest_master_score(
         if track == "D":
             from src.portfolio.long_short_optimizer import rebalance_alpha_sleeve
             from types import SimpleNamespace
+
             scores = pd.Series(week_scores)
             scores_buffer.append((monday, dict(week_scores)))
             _last_60 = scores_buffer[-60:]
@@ -592,11 +770,19 @@ def run_backtest_master_score(
                 {t: [row[1].get(t) for row in _last_60] for t in tickers},
                 index=[row[0] for row in _last_60],
             )
-            _prices_sliced = {t: df.loc[df.index <= monday].copy() for t, df in prices_dict.items() if df is not None and not df.empty}
+            _prices_sliced = {
+                t: df.loc[df.index <= monday].copy()
+                for t, df in prices_dict.items()
+                if df is not None and not df.empty
+            }
             regime_status = {"vix_z": 0.0}
-            weights_result, fsm_state = rebalance_alpha_sleeve(scores, scores_df, _prices_sliced, regime_status, config_d)
+            weights_result, fsm_state = rebalance_alpha_sleeve(
+                scores, scores_df, _prices_sliced, regime_status, config_d
+            )
             intent = SimpleNamespace(
-                tickers=[t for t in weights_result.index if weights_result.get(t, 0) != 0],
+                tickers=[
+                    t for t in weights_result.index if weights_result.get(t, 0) != 0
+                ],
                 weights=weights_result.to_dict(),
             )
             for t in tickers:
@@ -605,7 +791,9 @@ def run_backtest_master_score(
             fsm_states_per_week.append(str(fsm_state))
             fsm_triggers_per_week.append(config_d.pop("_last_fsm_trigger", "none"))
             # Maintain rolling FSM history for hysteresis (last 3 weeks)
-            config_d["fsm_state_history"] = (config_d.get("fsm_state_history", []) + [fsm_state])[-3:]
+            config_d["fsm_state_history"] = (
+                config_d.get("fsm_state_history", []) + [fsm_state]
+            )[-3:]
             config_d["prior_weights"] = weights_result.to_dict()
         else:
             policy_context = {
@@ -615,9 +803,15 @@ def run_backtest_master_score(
                 "kill_switch_mode": KILL_SWITCH_MODE,
                 "kill_switch_active": kill_switch_active,
             }
-            gated_scores, flags = policy_engine.apply(monday, week_scores, aux, policy_context)
+            gated_scores, flags = policy_engine.apply(
+                monday, week_scores, aux, policy_context
+            )
             if score_floor is not None:
-                gated_scores = {k: v for k, v in gated_scores.items() if float(v) >= float(score_floor)}
+                gated_scores = {
+                    k: v
+                    for k, v in gated_scores.items()
+                    if float(v) >= float(score_floor)
+                }
             action = flags.get("action", "Trade")
 
             # Cap how many non-US tickers can survive in gated_scores before top-N selection.
@@ -638,15 +832,22 @@ def run_backtest_master_score(
             gated_scores = accepted_scores
             if dropped_non_us:
                 import logging as _logging
+
                 _logging.getLogger(__name__).debug(
                     "[GLOBAL_CAP] %s dropped_non_us=%s max_global_positions=%s",
-                    monday.strftime("%Y-%m-%d") if hasattr(monday, "strftime") else monday,
+                    (
+                        monday.strftime("%Y-%m-%d")
+                        if hasattr(monday, "strftime")
+                        else monday
+                    ),
                     dropped_non_us,
                     int(max_global_positions),
                 )
 
             # Build a filtered prices_dict for HRP: only top candidate tickers, sliced to monday.
-            _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[: top_n * 2]
+            _top_candidates = sorted(gated_scores.items(), key=lambda x: -x[1])[
+                : top_n * 2
+            ]
             _prices_dict_hrp: dict = {}
             for _t, _ in _top_candidates:
                 if _t in prices_dict and prices_dict[_t] is not None:
@@ -665,8 +866,14 @@ def run_backtest_master_score(
 
             if effective_regime_state == "BEAR":
                 for t in tickers:
-                    intent.weights[t] = float(intent.weights.get(t, 0.0)) * float(regime_multiplier)
-            if effective_regime_state != "BEAR" and intent.tickers and not use_hrp_sizing:
+                    intent.weights[t] = float(intent.weights.get(t, 0.0)) * float(
+                        regime_multiplier
+                    )
+            if (
+                effective_regime_state != "BEAR"
+                and intent.tickers
+                and not use_hrp_sizing
+            ):
                 atr_per_share: dict[str, float] = {}
                 prices_at_monday: dict[str, float] = {}
                 for t in intent.tickers:
@@ -674,7 +881,12 @@ def run_backtest_master_score(
                     if df is None or len(df) < 15:
                         continue
                     slice_df = df.loc[df.index <= monday].tail(30)
-                    if slice_df.empty or "high" not in slice_df.columns or "low" not in slice_df.columns or "close" not in slice_df.columns:
+                    if (
+                        slice_df.empty
+                        or "high" not in slice_df.columns
+                        or "low" not in slice_df.columns
+                        or "close" not in slice_df.columns
+                    ):
                         continue
                     high_series = slice_df["high"]
                     low_series = slice_df["low"]
@@ -685,52 +897,99 @@ def run_backtest_master_score(
                         low_series = low_series.iloc[:, 0]
                     if isinstance(close_series, pd.DataFrame):
                         close_series = close_series.iloc[:, 0]
-                    atr_series = compute_atr_series(high_series, low_series, close_series, period=14)
+                    atr_series = compute_atr_series(
+                        high_series, low_series, close_series, period=14
+                    )
                     if len(atr_series) and pd.notna(atr_series.iloc[-1]):
                         atr_per_share[t] = float(atr_series.iloc[-1])
                     if len(slice_df) and pd.notna(close_series.iloc[-1]):
                         prices_at_monday[t] = float(close_series.iloc[-1])
                 cfg = get_config_manager()
                 risk_pct, atr_mult = get_sizing_params_from_config(cfg)
-                new_weights = position_sizer_compute_weights(intent.tickers, atr_per_share, prices_at_monday, risk_pct=risk_pct, atr_multiplier=atr_mult, target_exposure=1.0)
+                new_weights = position_sizer_compute_weights(
+                    intent.tickers,
+                    atr_per_share,
+                    prices_at_monday,
+                    risk_pct=risk_pct,
+                    atr_multiplier=atr_mult,
+                    target_exposure=1.0,
+                )
                 for t in tickers:
                     intent.weights[t] = float(new_weights.get(t, 0.0))
 
             for t in tickers:
                 w = intent.weights.get(t, 0.0)
-                if pd.isna(w): w = 0.0
+                if pd.isna(w):
+                    w = 0.0
                 signals_df.loc[monday, t] = float(w)
             _ws = sum(signals_df.loc[monday, t] for t in tickers)
-            if action != "Cash" and effective_regime_state != "BEAR" and _ws > 0 and _ws < 1.0 - 1e-5:
+            if (
+                action != "Cash"
+                and effective_regime_state != "BEAR"
+                and _ws > 0
+                and _ws < 1.0 - 1e-5
+            ):
                 for t in tickers:
                     signals_df.loc[monday, t] *= 1.0 / _ws
-            elif action != "Cash" and effective_regime_state == "BEAR" and _ws > 0 and abs(_ws - float(regime_multiplier)) > 1e-5:
+            elif (
+                action != "Cash"
+                and effective_regime_state == "BEAR"
+                and _ws > 0
+                and abs(_ws - float(regime_multiplier)) > 1e-5
+            ):
                 # Dynamic propagated tickers (not in `tickers`) may absorb part of the BEAR-halved
                 # weight; renormalize the tracked subset to the intended fractional exposure target.
                 for t in tickers:
                     signals_df.loc[monday, t] *= float(regime_multiplier) / _ws
             weight_sum = sum(signals_df.loc[monday, t] for t in tickers)
             if action == "Cash":
-                assert abs(weight_sum) < 1e-6, f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
+                assert (
+                    abs(weight_sum) < 1e-6
+                ), f"Expected 0.0 when CASH_OUT, got sum(weights)={weight_sum}"
             elif effective_regime_state == "BEAR":
                 # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
-                assert abs(weight_sum - float(regime_multiplier)) < 1e-5 or abs(weight_sum) < 1e-6, \
-                    f"Expected sum(weights)≈{float(regime_multiplier)} (or 0) when BEAR (fractional), got {weight_sum}"
+                assert (
+                    abs(weight_sum - float(regime_multiplier)) < 1e-5
+                    or abs(weight_sum) < 1e-6
+                ), f"Expected sum(weights)≈{float(regime_multiplier)} (or 0) when BEAR (fractional), got {weight_sum}"
             else:
                 # weight_sum == 0 is valid when every top-N winner is a non-tracked propagated ticker
-                assert abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6, \
-                    f"Expected sum(weights)≈1.0 (or 0) when trading, got {weight_sum}"
+                assert (
+                    abs(weight_sum - 1.0) < 1e-5 or abs(weight_sum) < 1e-6
+                ), f"Expected sum(weights)≈1.0 (or 0) when trading, got {weight_sum}"
 
             if verbose and intent.tickers and weight_sum > 0:
-                parts = [f"{t}={intent.weights.get(t, 0):.3f}" for t in intent.tickers if intent.weights.get(t, 0) > 0]
+                parts = [
+                    f"{t}={intent.weights.get(t, 0):.3f}"
+                    for t in intent.tickers
+                    if intent.weights.get(t, 0) > 0
+                ]
                 if parts:
-                    print(f"  [SIZING] {monday.date()} Top-N: " + " ".join(parts), flush=True)
+                    print(
+                        f"  [SIZING] {monday.date()} Top-N: " + " ".join(parts),
+                        flush=True,
+                    )
             if verbose and (weight_mode == "regime" or news_dir is not None):
-                regime_letter = {"BULL": "B", "BEAR": "E", "SIDEWAYS": "S"}.get(regime_state or "", "-")
-                news_buzz = "T" if (news_dir and intent.tickers and any(buzz_by_ticker.get(t, False) for t in intent.tickers)) else ("-" if not news_dir else "F")
-                print(f"  [STATE] {monday.date()} | Regime: {regime_letter} | News Buzz: {news_buzz} | Action: {action}", flush=True)
+                regime_letter = {"BULL": "B", "BEAR": "E", "SIDEWAYS": "S"}.get(
+                    regime_state or "", "-"
+                )
+                news_buzz = (
+                    "T"
+                    if (
+                        news_dir
+                        and intent.tickers
+                        and any(buzz_by_ticker.get(t, False) for t in intent.tickers)
+                    )
+                    else ("-" if not news_dir else "F")
+                )
+                print(
+                    f"  [STATE] {monday.date()} | Regime: {regime_letter} | News Buzz: {news_buzz} | Action: {action}",
+                    flush=True,
+                )
         prev_regime = regime_state
-        week_meta_list.append((monday, regime_state, news_weight_used, active_strategy_id))
+        week_meta_list.append(
+            (monday, regime_state, news_weight_used, active_strategy_id)
+        )
 
     close_cols = {}
     for t in tickers:
@@ -751,41 +1010,64 @@ def run_backtest_master_score(
     blocks = []
     for monday in signals_df.index:
         next_days = prices_df.index[prices_df.index > monday]
-        if len(next_days) == 0: continue
+        if len(next_days) == 0:
+            continue
         first_after_monday = next_days[0]
         first_day_of_period.add(first_after_monday)
         start_idx = prices_df.index.get_loc(first_after_monday)
         next_mondays = signals_df.index[signals_df.index > monday]
-        end_idx = prices_df.index.get_loc(prices_df.index[prices_df.index < next_mondays[0]][-1]) + 1 if len(next_mondays) else len(prices_df)
+        end_idx = (
+            prices_df.index.get_loc(
+                prices_df.index[prices_df.index < next_mondays[0]][-1]
+            )
+            + 1
+            if len(next_mondays)
+            else len(prices_df)
+        )
         blocks.append((start_idx, end_idx))
         for t in tickers:
             w = signals_df.loc[monday, t]
             if w != 0:
-                positions_df.iloc[start_idx:end_idx, positions_df.columns.get_loc(t)] = w
-    
+                positions_df.iloc[
+                    start_idx:end_idx, positions_df.columns.get_loc(t)
+                ] = w
+
     returns = prices_df.pct_change()
     returns = returns.clip(-0.25, 0.25)
     for d in first_day_of_period:
         if d in returns.index:
             for t in tickers:
                 if d in opens_df.index and opens_df.loc[d, t] > 0:
-                    returns.loc[d, t] = (prices_df.loc[d, t] - opens_df.loc[d, t]) / opens_df.loc[d, t]
-    
-    for (start_idx, end_idx) in blocks:
+                    returns.loc[d, t] = (
+                        prices_df.loc[d, t] - opens_df.loc[d, t]
+                    ) / opens_df.loc[d, t]
+
+    for start_idx, end_idx in blocks:
         for i in range(start_idx, end_idx):
             d = prices_df.index[i]
             for t in tickers:
                 col_idx = positions_df.columns.get_loc(t)
-                if positions_df.iloc[i, col_idx] > 0 and d in returns.index and returns.loc[d, t] <= DAILY_EXIT_PCT:
+                if (
+                    positions_df.iloc[i, col_idx] > 0
+                    and d in returns.index
+                    and returns.loc[d, t] <= DAILY_EXIT_PCT
+                ):
                     positions_df.iloc[i:end_idx, col_idx] = 0
-    
+
     portfolio_returns = (positions_df * returns).sum(axis=1).fillna(0)
     rebalance_dates = positions_df.diff().abs().sum(axis=1) > 0.01
-    portfolio_returns[rebalance_dates] -= (FRICTION_BPS / 10000.0)
+    portfolio_returns[rebalance_dates] -= FRICTION_BPS / 10000.0
     cumulative = (1 + portfolio_returns).cumprod()
     total_return = cumulative.iloc[-1] - 1 if len(cumulative) else 0.0
-    sharpe = (portfolio_returns.mean() * 252) / (portfolio_returns.std() * np.sqrt(252)) if portfolio_returns.std() > 0 else 0.0
-    max_dd = ((cumulative - cumulative.expanding().max()) / cumulative.expanding().max().replace(0, np.nan)).min()
+    sharpe = (
+        (portfolio_returns.mean() * 252) / (portfolio_returns.std() * np.sqrt(252))
+        if portfolio_returns.std() > 0
+        else 0.0
+    )
+    max_dd = (
+        (cumulative - cumulative.expanding().max())
+        / cumulative.expanding().max().replace(0, np.nan)
+    ).min()
 
     _regime_keys = ("BULL", "BEAR", "SIDEWAYS")
     _returns_by_regime: dict[str, list[float]] = {k: [] for k in _regime_keys}
@@ -801,7 +1083,9 @@ def run_backtest_master_score(
         slice_cum = cumulative.iloc[start_idx:end_idx]
         peak = slice_cum.max()
         trough = slice_cum.min()
-        weekly_drawdown = 0.0 if (peak == 0 or pd.isna(peak)) else (float(trough) / float(peak)) - 1.0
+        weekly_drawdown = (
+            0.0 if (peak == 0 or pd.isna(peak)) else (float(trough) / float(peak)) - 1.0
+        )
         _regime_key = regime_state_i if regime_state_i in _regime_keys else "SIDEWAYS"
         _returns_by_regime[_regime_key].append(weekly_return)
         _drawdowns_by_regime[_regime_key].append(weekly_drawdown)
@@ -851,8 +1135,11 @@ def run_backtest_master_score(
     }
     if track == "D":
         from collections import Counter
+
         out["track"] = "D"
-        out["gross_exposure_avg"] = float(np.mean(gross_exposure_per_week)) if gross_exposure_per_week else 0.0
+        out["gross_exposure_avg"] = (
+            float(np.mean(gross_exposure_per_week)) if gross_exposure_per_week else 0.0
+        )
         out["fsm_states_per_week"] = fsm_states_per_week
         out["fsm_trigger_counts"] = dict(Counter(fsm_triggers_per_week))
     return out
@@ -870,9 +1157,14 @@ def _print_safety_report():
 
 def main():
     import logging
-    logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(message)s")
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(name)s %(levelname)s: %(message)s"
+    )
     run_start_ts = datetime.now().isoformat()
-    parser = argparse.ArgumentParser(description="Backtest Technical Library (Master Score) strategy")
+    parser = argparse.ArgumentParser(
+        description="Backtest Technical Library (Master Score) strategy"
+    )
     parser.add_argument("--tickers", type=str, default=None)
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--start", "--start-date", type=str, default=None)
@@ -880,23 +1172,90 @@ def main():
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--weight-mode", type=str, default="fixed")
-    parser.add_argument("--rolling-method", type=str, default="max_sharpe", help="When weight-mode=rolling: hrp or max_sharpe")
+    parser.add_argument(
+        "--rolling-method",
+        type=str,
+        default="max_sharpe",
+        help="When weight-mode=rolling: hrp or max_sharpe",
+    )
     parser.add_argument("--news-dir", type=str, default=None)
     parser.add_argument("--news-weight", type=float, default=None)
     parser.add_argument("--ml-blend-weight", type=float, default=None)
-    parser.add_argument("--master-score-weights", type=str, default=None, help="Compact JSON dict for category weights override in fixed mode")
-    parser.add_argument("--signal-horizon-days", type=int, default=None, help="Signal horizon days for news (passed to run_backtest_master_score)")
-    parser.add_argument("--sideways-risk-scale", type=float, default=None, help="Sideways regime position scale (passed to run_backtest_master_score)")
-    parser.add_argument("--out-json", type=str, default=None, help="If set, write result dict (JSON-serializable subset) to this path")
-    parser.add_argument("--sentiment-engine", choices=["none", "finbert", "gemini"], default="none", help="Sentiment mode: none, finbert, or gemini")
-    parser.add_argument("--no-llm", action="store_true", default=False, help="Disable Gemini LLM gate (faster backtests)")
-    parser.add_argument("--no-ml", action="store_true", default=False, help="Disable ML blend (Technical+News only; use_ml_override=False)")
-    parser.add_argument("--no-safety-report", action="store_true", default=False, help="Skip _print_safety_report()")
-    parser.add_argument("--track", choices=["A", "B", "D"], default=None, help="Model track override: A=absolute, B=residual, D=Dynamic Alpha-Sleeve 130/30 long/short. Reads path from config/model_config.yaml tracks section.")
-    parser.add_argument("--max-global-positions", type=int, default=MAX_GLOBAL_POSITIONS, help="Maximum number of non-US tickers allowed in gated_scores before top-N selection")
-    parser.add_argument("--sma-window", type=int, default=200, help="Kill-switch SMA lookback window")
-    parser.add_argument("--score-floor", type=float, default=None, help="Minimum score threshold after policy gating")
-    parser.add_argument("--regime-multiplier", type=float, default=0.5, help="Exposure multiplier when SPY is below SMA")
+    parser.add_argument(
+        "--master-score-weights",
+        type=str,
+        default=None,
+        help="Compact JSON dict for category weights override in fixed mode",
+    )
+    parser.add_argument(
+        "--signal-horizon-days",
+        type=int,
+        default=None,
+        help="Signal horizon days for news (passed to run_backtest_master_score)",
+    )
+    parser.add_argument(
+        "--sideways-risk-scale",
+        type=float,
+        default=None,
+        help="Sideways regime position scale (passed to run_backtest_master_score)",
+    )
+    parser.add_argument(
+        "--out-json",
+        type=str,
+        default=None,
+        help="If set, write result dict (JSON-serializable subset) to this path",
+    )
+    parser.add_argument(
+        "--sentiment-engine",
+        choices=["none", "finbert", "gemini"],
+        default="none",
+        help="Sentiment mode: none, finbert, or gemini",
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        default=False,
+        help="Disable Gemini LLM gate (faster backtests)",
+    )
+    parser.add_argument(
+        "--no-ml",
+        action="store_true",
+        default=False,
+        help="Disable ML blend (Technical+News only; use_ml_override=False)",
+    )
+    parser.add_argument(
+        "--no-safety-report",
+        action="store_true",
+        default=False,
+        help="Skip _print_safety_report()",
+    )
+    parser.add_argument(
+        "--track",
+        choices=["A", "B", "D"],
+        default=None,
+        help="Model track override: A=absolute, B=residual, D=Dynamic Alpha-Sleeve 130/30 long/short. Reads path from config/model_config.yaml tracks section.",
+    )
+    parser.add_argument(
+        "--max-global-positions",
+        type=int,
+        default=MAX_GLOBAL_POSITIONS,
+        help="Maximum number of non-US tickers allowed in gated_scores before top-N selection",
+    )
+    parser.add_argument(
+        "--sma-window", type=int, default=200, help="Kill-switch SMA lookback window"
+    )
+    parser.add_argument(
+        "--score-floor",
+        type=float,
+        default=None,
+        help="Minimum score threshold after policy gating",
+    )
+    parser.add_argument(
+        "--regime-multiplier",
+        type=float,
+        default=0.5,
+        help="Exposure multiplier when SPY is below SMA",
+    )
     args = parser.parse_args()
 
     # Resolve model path override from --track flag (A/B only; D uses rebalance_alpha_sleeve, not model path)
@@ -905,6 +1264,7 @@ def main():
         _track_model_path_override = None
     elif args.track is not None:
         import yaml as _yaml
+
         _mcfg_path = ROOT / "config" / "model_config.yaml"
         with open(_mcfg_path, "r", encoding="utf-8") as _f:
             _mcfg = _yaml.safe_load(_f)
@@ -912,18 +1272,24 @@ def main():
         _raw_path = _track_cfg.get("model_path", "")
         if _raw_path:
             _p = Path(_raw_path)
-            _track_model_path_override = str(_p if _p.is_absolute() else ROOT / _raw_path)
+            _track_model_path_override = str(
+                _p if _p.is_absolute() else ROOT / _raw_path
+            )
             print(f"[TRACK] {args.track}: {_track_model_path_override}")
         else:
-            print(f"[WARN] --track {args.track} has no model_path in config/model_config.yaml tracks section")
+            print(
+                f"[WARN] --track {args.track} has no model_path in config/model_config.yaml tracks section"
+            )
 
     if args.tickers is not None:
         raw_tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     else:
         from src.utils.config_manager import get_config
+
         raw_tickers = get_config().get_watchlist()
 
     from dotenv import load_dotenv
+
     load_dotenv(ROOT / ".env")
     data_dir_str = os.getenv("DATA_DIR")
     if data_dir_str:
@@ -944,13 +1310,16 @@ def main():
             print(f"  [WARN] No CSV found for {t} in {data_dir}")
 
     if not tickers:
-        print("ERROR: No price data loaded. Verify ticker names and data directory structure.")
+        print(
+            "ERROR: No price data loaded. Verify ticker names and data directory structure."
+        )
         return 1
 
     # ── PRE-PROPAGATION EXPANSION ──────────────────────────────────────────
-# ── PRE-PROPAGATION EXPANSION ──────────────────────────────────────────
+    # ── PRE-PROPAGATION EXPANSION ──────────────────────────────────────────
     try:
         import yaml
+
         sp_path = ROOT / "config" / "strategy_params.yaml"
         if sp_path.exists():
             with open(sp_path, "r", encoding="utf-8") as f:
@@ -970,11 +1339,17 @@ def main():
                 if csv_path:
                     tickers.append(peer)
                     added.append(peer)
-                    print(f"  [PROPAGATION] Added price-verified propagated ticker {peer}")
+                    print(
+                        f"  [PROPAGATION] Added price-verified propagated ticker {peer}"
+                    )
                 else:
-                    print(f"  [PROPAGATION] No CSV for propagated ticker {peer}, skipping")
+                    print(
+                        f"  [PROPAGATION] No CSV for propagated ticker {peer}, skipping"
+                    )
             if added:
-                print(f"  [PROPAGATION] Propagation enriched {len(tickers)} sources (seed + {len(added)} peers)")
+                print(
+                    f"  [PROPAGATION] Propagation enriched {len(tickers)} sources (seed + {len(added)} peers)"
+                )
     except Exception as e:
         print(f"  [PROPAGATION] Pre-propagation expansion failed: {e}")
     # ── END PRE-PROPAGATION ────────────────────────────────────────────────
@@ -1007,7 +1382,9 @@ def main():
         to_drop = [t for t in prices_dict if prices_dict[t].index.max() < start_dt]
         for t in to_drop:
             max_date = prices_dict[t].index.max()
-            print(f"  [WARN] Dropping {t}: price data ends {max_date:%Y-%m-%d}, before window start {args.start}")
+            print(
+                f"  [WARN] Dropping {t}: price data ends {max_date:%Y-%m-%d}, before window start {args.start}"
+            )
             del prices_dict[t]
             tickers.remove(t)
         if not prices_dict:
@@ -1025,6 +1402,7 @@ def main():
     else:
         try:
             import yaml as _yaml
+
             _cfg_path = ROOT / "config" / "config.yaml"
             if _cfg_path.exists():
                 with open(_cfg_path, "r", encoding="utf-8") as _f:
@@ -1057,7 +1435,9 @@ def main():
             if isinstance(_parsed_msw, dict):
                 category_weights_override_resolved = _parsed_msw
             else:
-                print("[WARN] --master-score-weights must be a JSON object; skipping override")
+                print(
+                    "[WARN] --master-score-weights must be a JSON object; skipping override"
+                )
         except Exception as _msw_e:
             print(f"[WARN] Could not parse --master-score-weights: {_msw_e}")
 
@@ -1091,7 +1471,17 @@ def main():
     if args.out_json is not None:
         _json_subset = {
             k: result[k]
-            for k in ("sharpe", "total_return", "max_drawdown", "n_rebalances", "period_start", "period_end", "tickers", "weekly_returns", "aggregator_audit_summary")
+            for k in (
+                "sharpe",
+                "total_return",
+                "max_drawdown",
+                "n_rebalances",
+                "period_start",
+                "period_end",
+                "tickers",
+                "weekly_returns",
+                "aggregator_audit_summary",
+            )
             if k in result
         }
         if args.track == "D":
@@ -1106,8 +1496,15 @@ def main():
 
     _audit_metrics = {
         k: result[k]
-        for k in ("sharpe", "total_return", "max_drawdown",
-                  "n_rebalances", "period_start", "period_end", "tickers")
+        for k in (
+            "sharpe",
+            "total_return",
+            "max_drawdown",
+            "n_rebalances",
+            "period_start",
+            "period_end",
+            "tickers",
+        )
         if k in result
     }
     _audit_config = {
@@ -1122,8 +1519,8 @@ def main():
         "news_weight": news_weight_fixed_resolved,
     }
     _audit_output_paths = {
-        k: v for k, v in {"out": args.out,
-                           "out_dir": getattr(args, "out_dir", None)}.items()
+        k: v
+        for k, v in {"out": args.out, "out_dir": getattr(args, "out_dir", None)}.items()
         if v is not None
     }
     _audit_trade_summary = {
@@ -1148,6 +1545,7 @@ def main():
     print(f"  Max drawdown:  {result['max_drawdown']:.2%}")
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

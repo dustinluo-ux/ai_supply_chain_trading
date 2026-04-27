@@ -20,6 +20,7 @@ Usage:
     python scripts/run_calibration.py
     python scripts/run_calibration.py --start 2023-01-01 --end 2024-12-31
 """
+
 from __future__ import annotations
 
 import copy
@@ -72,7 +73,8 @@ RUNS: list[dict] = [
 
 
 def _apply_yaml_overrides(
-    yaml_path: Path, overrides: dict,
+    yaml_path: Path,
+    overrides: dict,
 ) -> Path:
     """Apply nested overrides to a YAML file. Returns backup path for restore."""
     backup_path = yaml_path.with_suffix(".yaml.bak")
@@ -115,16 +117,20 @@ def run_backtest(
     try:
         if yaml_overrides is not None:
             backup_path = _apply_yaml_overrides(
-                STRATEGY_PARAMS_PATH, yaml_overrides,
+                STRATEGY_PARAMS_PATH,
+                yaml_overrides,
             )
 
         cmd = [
             sys.executable,
             str(BACKTEST_SCRIPT),
-            "--start", start,
-            "--end", end,
+            "--start",
+            start,
+            "--end",
+            end,
             "--no-safety-report",
-            "--out-json", str(out_json),
+            "--out-json",
+            str(out_json),
             *extra_args,
         ]
         print(f"\n{'=' * 60}", flush=True)
@@ -251,9 +257,7 @@ def generate_report(results: dict[str, dict], start: str, end: str) -> None:
                 f"{f_sharpe - b_sharpe:+.4f} vs baseline."
             )
         else:
-            lines.append(
-                "- Full Alpha had **no effect** on Sharpe vs baseline."
-            )
+            lines.append("- Full Alpha had **no effect** on Sharpe vs baseline.")
 
         if c_sharpe > b_sharpe:
             lines.append(
@@ -266,9 +270,7 @@ def generate_report(results: dict[str, dict], start: str, end: str) -> None:
                 f"{c_sharpe - b_sharpe:+.4f} vs baseline."
             )
         else:
-            lines.append(
-                "- Capped overlay had **no effect** on Sharpe vs baseline."
-            )
+            lines.append("- Capped overlay had **no effect** on Sharpe vs baseline.")
 
         b_dd = abs(baseline["max_drawdown"])
         f_dd = abs(full["max_drawdown"])

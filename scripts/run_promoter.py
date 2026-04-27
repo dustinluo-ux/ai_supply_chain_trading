@@ -4,6 +4,7 @@ Promote optimizer winner params into config/strategy_params.yaml.
 Reads outputs/optimizer_results.json (from run_optimizer.py). Atomic YAML write (.tmp + rename).
 Standalone: python scripts/run_promoter.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,9 @@ STRATEGY_BAK = ROOT / "config" / "strategy_params.yaml.bak"
 def main() -> int:
     import yaml
 
-    parser = argparse.ArgumentParser(description="Promote optimizer winner into strategy_params.yaml.")
+    parser = argparse.ArgumentParser(
+        description="Promote optimizer winner into strategy_params.yaml."
+    )
     parser.add_argument(
         "--results-path",
         type=str,
@@ -52,7 +55,10 @@ def main() -> int:
         return 0
     params = winner.get("params")
     if not isinstance(params, dict) or not params:
-        print("[PROMOTER] ERROR: winner.params missing or empty in results file.", flush=True)
+        print(
+            "[PROMOTER] ERROR: winner.params missing or empty in results file.",
+            flush=True,
+        )
         return 1
 
     if not STRATEGY_PARAMS.exists():
@@ -77,6 +83,41 @@ def main() -> int:
     tmp.replace(STRATEGY_PARAMS)
 
     print(f"[PROMOTER] Promoted: {params} -> config/strategy_params.yaml", flush=True)
+
+    # Also promote layer weights to layered_signal_config.yaml if present in winning params.
+    _layered_cfg_path = ROOT / "config" / "layered_signal_config.yaml"
+    if _layered_cfg_path.exists() and (
+        "three_layer_engine_weight" in params
+        or isinstance(params.get("layer_weights"), dict)
+    ):
+        with open(_layered_cfg_path, encoding="utf-8") as f:
+            _lcfg = yaml.safe_load(f) or {}
+        if "three_layer_engine_weight" in params:
+            _lcfg["three_layer_engine_weight"] = float(
+                params["three_layer_engine_weight"]
+            )
+        if isinstance(params.get("layer_weights"), dict):
+            _lcfg.setdefault("layer_weights", {})
+            _lw = params["layer_weights"]
+            if "fundamental_cycle_weight" in _lw:
+                _lcfg["layer_weights"]["fundamental_cycle_weight"] = float(
+                    _lw["fundamental_cycle_weight"]
+                )
+            if "technical_sentiment_weight" in _lw:
+                _lcfg["layer_weights"]["technical_sentiment_weight"] = float(
+                    _lw["technical_sentiment_weight"]
+                )
+        _ltmp = _layered_cfg_path.with_name(_layered_cfg_path.name + ".tmp")
+        with open(_ltmp, "w", encoding="utf-8") as f:
+            yaml.dump(
+                _lcfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+            )
+        _ltmp.replace(_layered_cfg_path)
+        print(
+            f"[PROMOTER] Layer weights promoted -> config/layered_signal_config.yaml",
+            flush=True,
+        )
+
     return 0
 
 

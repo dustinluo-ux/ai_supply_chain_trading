@@ -2,12 +2,12 @@
 Additive risk overlay: tiered metadata from SPY trend, VIX level, and cross-sectional correlation.
 Observational only — does not modify order flow.
 """
+
 from __future__ import annotations
 
 import csv
 import logging
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +20,10 @@ import yaml
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_BENCHMARKS_DIR = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / "benchmarks"
+DEFAULT_BENCHMARKS_DIR = (
+    Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"))
+    / "benchmarks"
+)
 SPY_CSV = DEFAULT_BENCHMARKS_DIR / "SPY.csv"
 VIX_CSV = DEFAULT_BENCHMARKS_DIR / "VIX.csv"
 SMH_CSV = DEFAULT_BENCHMARKS_DIR / "SMH.csv"
@@ -34,6 +37,7 @@ def _load_benchmark_close(path: Path) -> pd.Series | None:
             return None
         df = pd.read_csv(path)
         df.columns = [str(c).strip().lower() for c in df.columns]
+        df = df.loc[:, ~df.columns.duplicated(keep="last")]
         if "close" not in df.columns and "adjusted_close" in df.columns:
             df["close"] = df["adjusted_close"]
         if "close" not in df.columns:
@@ -50,54 +54,6 @@ def _load_benchmark_close(path: Path) -> pd.Series | None:
     except Exception as e:
         logger.warning("[RiskOverlay] Failed to load benchmark %s: %s", path, e)
         return None
-
-
-def _ensure_spy_csv_subprocess() -> None:
-    script = ROOT / "scripts" / "download_spy.py"
-    if not script.exists():
-        logger.warning("[RiskOverlay] download_spy.py not found at %s", script)
-        return
-    try:
-        subprocess.run(
-            [sys.executable, str(script)],
-            cwd=str(ROOT),
-            timeout=120,
-            check=False,
-        )
-    except Exception as e:
-        logger.warning("[RiskOverlay] SPY download subprocess failed: %s", e)
-
-
-def _ensure_vix_csv_subprocess() -> None:
-    script = ROOT / "scripts" / "download_vix.py"
-    if not script.exists():
-        logger.warning("[RiskOverlay] download_vix.py not found at %s", script)
-        return
-    try:
-        subprocess.run(
-            [sys.executable, str(script)],
-            cwd=str(ROOT),
-            timeout=120,
-            check=False,
-        )
-    except Exception as e:
-        logger.warning("[RiskOverlay] VIX download subprocess failed: %s", e)
-
-
-def _ensure_smh_csv_subprocess() -> None:
-    script = ROOT / "scripts" / "download_smh.py"
-    if not script.exists():
-        logger.warning("[RiskOverlay] download_smh.py not found at %s", script)
-        return
-    try:
-        subprocess.run(
-            [sys.executable, str(script)],
-            cwd=str(ROOT),
-            timeout=120,
-            check=False,
-        )
-    except Exception as e:
-        logger.warning("[RiskOverlay] SMH download subprocess failed: %s", e)
 
 
 def _load_risk_overlay_config() -> dict[str, Any]:
@@ -123,7 +79,9 @@ def _load_risk_overlay_config() -> dict[str, Any]:
                     out[k] = float(ro[k])
         return out
     except Exception as e:
-        logger.warning("[RiskOverlay] Could not read strategy_params risk_overlay: %s", e)
+        logger.warning(
+            "[RiskOverlay] Could not read strategy_params risk_overlay: %s", e
+        )
         return defaults
 
 
@@ -150,7 +108,7 @@ def _avg_pairwise_correlation(
             close = slice_df["close"]
             if isinstance(close, pd.DataFrame):
                 close = close.iloc[:, 0]
-            r = close.pct_change().dropna().tail(lookback)
+            r = close.pct_change(fill_method=None).dropna().tail(lookback)
             if len(r) < max(20, lookback // 3):
                 continue
             rets[str(t)] = r
@@ -200,22 +158,25 @@ class RiskOverlay:
         self._spy = spy_series
         self._vix = vix_series
 
+        missing = [p for p in (spy_path, vix_path, smh_path) if not p.exists()]
+        if missing:
+            try:
+                sys.path.insert(0, str(ROOT / "scripts"))
+                from update_benchmarks import ensure_benchmarks
+
+                ensure_benchmarks()
+            except Exception as e:
+                logger.warning("[RiskOverlay] ensure_benchmarks failed: %s", e)
+
         if self._spy is None or self._spy.empty:
-            if not spy_path.exists():
-                _ensure_spy_csv_subprocess()
             self._spy = _load_benchmark_close(spy_path)
             if self._spy is None:
                 self._spy = pd.Series(dtype=float)
 
         if self._vix is None or self._vix.empty:
-            if not vix_path.exists():
-                _ensure_vix_csv_subprocess()
             self._vix = _load_benchmark_close(vix_path)
             if self._vix is None:
                 self._vix = pd.Series(dtype=float)
-
-        if not smh_path.exists():
-            _ensure_smh_csv_subprocess()
 
     def evaluate(self, as_of_date: Any) -> dict[str, Any]:
         """Return tier metadata and sizing hints (observational)."""
@@ -240,7 +201,13 @@ class RiskOverlay:
             vix_mult = float(self._cfg["vix_multiplier"])
 
             spy_c = self._spy.asof(as_of) if len(self._spy) else np.nan
-            spy_sma = self._spy.rolling(sma_w, min_periods=max(1, sma_w // 4)).mean().asof(as_of) if len(self._spy) else np.nan
+            spy_sma = (
+                self._spy.rolling(sma_w, min_periods=max(1, sma_w // 4))
+                .mean()
+                .asof(as_of)
+                if len(self._spy)
+                else np.nan
+            )
 
             if pd.isna(spy_c) or pd.isna(spy_sma):
                 tier1 = "BULL"
@@ -261,7 +228,10 @@ class RiskOverlay:
                 mult = 1.0
 
             max_pos, avg_corr = _avg_pairwise_correlation(
-                self._prices_dict, as_of, lookback, corr_thr,
+                self._prices_dict,
+                as_of,
+                lookback,
+                corr_thr,
             )
 
             return {

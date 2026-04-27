@@ -8,6 +8,7 @@ Usage:
     python scripts/update_benchmarks.py
     python scripts/update_benchmarks.py --start 2020-01-01
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,10 +51,13 @@ def _load_existing(csv_path: Path) -> pd.DataFrame | None:
     try:
         existing_df = pd.read_csv(csv_path, index_col=0, parse_dates=False)
         existing_df.index = pd.to_datetime(
-            existing_df.index, format="mixed", dayfirst=True,
+            existing_df.index,
+            format="mixed",
+            dayfirst=True,
         )
         existing_df.index = pd.to_datetime(
-            existing_df.index, utc=True,
+            existing_df.index,
+            utc=True,
         ).tz_localize(None)
         return existing_df
     except Exception:
@@ -159,7 +163,10 @@ def ensure_benchmarks(
         print(f"  Delay:    {delay}s between downloads", flush=True)
         print("=" * 60, flush=True)
     success, failed = _refresh_all_benchmarks(
-        start=start, end=end_s, delay=delay, verbose=verbose,
+        start=start,
+        end=end_s,
+        delay=delay,
+        verbose=verbose,
     )
     if verbose:
         print("=" * 60, flush=True)

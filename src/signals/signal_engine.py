@@ -14,13 +14,16 @@ SentimentPropagator (STRATEGY_LOGIC.md §2.1):
     the news_composite before it is blended with the technical score.
     If propagation data is missing, news_composite defaults to 0.5 (Neutral).
 """
+
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 
 from src.core.types import DataContext
 from src.utils.config_manager import get_config
@@ -52,12 +55,20 @@ class SignalEngine:
             from src.signals.sentiment_propagator import SentimentPropagator
 
             cfg = get_config()
-            tier1 = float(cfg.get_param("strategy_params.propagation.tier_1_weight", 0.5))
-            tier2 = float(cfg.get_param("strategy_params.propagation.tier_2_weight", 0.2))
-            self._propagator = SentimentPropagator(tier1_weight=tier1, tier2_weight=tier2)
+            tier1 = float(
+                cfg.get_param("strategy_params.propagation.tier_1_weight", 0.5)
+            )
+            tier2 = float(
+                cfg.get_param("strategy_params.propagation.tier_2_weight", 0.2)
+            )
+            self._propagator = SentimentPropagator(
+                tier1_weight=tier1, tier2_weight=tier2
+            )
             return self._propagator
         except Exception as exc:
-            logger.warning("SentimentPropagator init failed (supply chain DB missing?): %s", exc)
+            logger.warning(
+                "SentimentPropagator init failed (supply chain DB missing?): %s", exc
+            )
             return None
 
     # ------------------------------------------------------------------
@@ -88,7 +99,7 @@ class SignalEngine:
         data_context: DataContext,
     ) -> tuple[dict[str, float], dict[str, Any]]:
         """Backtest path: technical indicators + optional news + optional propagation."""
-        
+
         # --- 2. LOCAL IMPORTS ---
         from src.signals.technical_library import (
             OHLCV_COLS,
@@ -108,14 +119,20 @@ class SignalEngine:
         spy_above_sma200 = data_context.get("spy_above_sma200")
         category_weights_override = data_context.get("category_weights_override")
         news_dir = data_context.get("news_dir")
-        sector_sentiments_this_week = data_context.get("sector_sentiments_this_week") or {}
-        signal_horizon_days_this_week = data_context.get("signal_horizon_days_this_week", 5)
+        sector_sentiments_this_week = (
+            data_context.get("sector_sentiments_this_week") or {}
+        )
+        signal_horizon_days_this_week = data_context.get(
+            "signal_horizon_days_this_week", 5
+        )
         news_weight_used = data_context.get("news_weight_used", 0.0)
         ensure_ohlcv_fn = data_context.get("ensure_ohlcv")
         enable_propagation = data_context.get("enable_propagation", False)
         logger.info(
             "Propagation enabled: %s | news_dir: %s | news_weight: %.2f",
-            enable_propagation, str(news_dir) if news_dir is not None else False, news_weight_used,
+            enable_propagation,
+            str(news_dir) if news_dir is not None else False,
+            news_weight_used,
         )
 
         # ==============================================================
@@ -136,16 +153,18 @@ class SignalEngine:
 
             # Auto-detect if caller didn't provide regime data
             if effective_regime is None and effective_spy_above is None:
-                regime_ticker = str(
-                    data_context.get("regime_ticker", "SPY")
-                )
+                regime_ticker = str(data_context.get("regime_ticker", "SPY"))
                 effective_regime, effective_spy_above = self._detect_regime(
-                    prices_dict, as_of_date, regime_ticker=regime_ticker,
+                    prices_dict,
+                    as_of_date,
+                    regime_ticker=regime_ticker,
                 )
 
             # Resolve weights from ConfigManager
             resolved_category_weights = self._resolve_regime_weights(
-                cfg, effective_regime, effective_spy_above,
+                cfg,
+                effective_regime,
+                effective_spy_above,
             )
 
             if resolved_category_weights is not None:
@@ -167,7 +186,9 @@ class SignalEngine:
         # ==============================================================
         # Phase 1: Compute indicators + base news composites
         # ==============================================================
-        cached: dict[str, dict[str, Any]] = {}  # t -> {row, news_composite, sentiment_current}
+        cached: dict[str, dict[str, Any]] = (
+            {}
+        )  # t -> {row, news_composite, sentiment_current}
 
         for t in universe:
             if t not in prices_dict:
@@ -179,8 +200,14 @@ class SignalEngine:
             if slice_df.empty or len(slice_df) < min_required_days:
                 logger.info(
                     "%s skipped: %d days found, %d required (as_of=%s)",
-                    t, len(slice_df), min_required_days,
-                    as_of_date.strftime("%Y-%m-%d") if hasattr(as_of_date, "strftime") else as_of_date,
+                    t,
+                    len(slice_df),
+                    min_required_days,
+                    (
+                        as_of_date.strftime("%Y-%m-%d")
+                        if hasattr(as_of_date, "strftime")
+                        else as_of_date
+                    ),
                 )
                 week_scores[t] = 0.5
                 atr_norms[t] = 0.5
@@ -233,10 +260,15 @@ class SignalEngine:
                         news_composite_val = 0.5
                         buzz_by_ticker[t] = False
                 elif news_signals:
-                    ticker_news = news_signals.get(t) or news_signals.get(str(t).upper()) or {}
+                    ticker_news = (
+                        news_signals.get(t) or news_signals.get(str(t).upper()) or {}
+                    )
                     date_key = as_of_date.strftime("%Y-%m-%d")
                     date_payload = ticker_news.get(date_key)
-                    if isinstance(date_payload, dict) and date_payload.get("sentiment_score") is not None:
+                    if (
+                        isinstance(date_payload, dict)
+                        and date_payload.get("sentiment_score") is not None
+                    ):
                         try:
                             _sent = float(date_payload.get("sentiment_score"))
                             news_composite_val = _sent
@@ -259,7 +291,9 @@ class SignalEngine:
         if news_dir is not None:
             logger.info(
                 "News articles found > 0 for %d/%d tickers (as_of=%s)",
-                n_buzz, len(universe), as_of_date,
+                n_buzz,
+                len(universe),
+                as_of_date,
             )
 
         # ==============================================================
@@ -268,14 +302,27 @@ class SignalEngine:
         extended_universe: list[str] = list(universe)
         if enable_propagation and news_dir is not None:
             enriched_composites, propagated_targets = self._propagate_sentiments(
-                universe, cached, valid_tickers=set(prices_dict.keys()),
+                universe,
+                cached,
+                valid_tickers=set(prices_dict.keys()),
             )
             # Add only price-verified discovered tickers to extended universe (no duplicates)
             try:
-                from src.data.csv_provider import find_csv_path, load_data_config, load_prices
-                data_dir = load_data_config().get("data_dir") or Path("data/stock_market_data")
+                from src.data.csv_provider import (
+                    find_csv_path,
+                    load_data_config,
+                    load_prices,
+                )
+
+                data_dir = load_data_config().get("data_dir") or Path(
+                    "data/stock_market_data"
+                )
                 data_dir = Path(data_dir)
-                min_rsi = float(get_config().get_param("strategy_params.propagation.min_rsi_norm_for_entry", 0.50))
+                min_rsi = float(
+                    get_config().get_param(
+                        "strategy_params.propagation.min_rsi_norm_for_entry", 0.50
+                    )
+                )
                 logger.info("[RSI gate] min_rsi_norm_for_entry=%.2f (config)", min_rsi)
                 added_new: set[str] = set()
                 for target in propagated_targets:
@@ -307,14 +354,17 @@ class SignalEngine:
                     if rsi_val < min_rsi:
                         logger.info(
                             "[PROPAGATION SKIP] %s: rsi_norm=%.3f below min_rsi_norm_for_entry=%.2f",
-                            ticker_upper, rsi_val, min_rsi,
+                            ticker_upper,
+                            rsi_val,
+                            min_rsi,
                         )
                         continue
                     extended_universe.append(ticker_upper)
                     added_new.add(ticker_upper)
                     atr_norms[ticker_upper] = float(
                         ind.iloc[-2].get("atr_norm", 0.5)
-                        if len(ind) >= 2 else row.get("atr_norm", 0.5)
+                        if len(ind) >= 2
+                        else row.get("atr_norm", 0.5)
                     )
                     cached[ticker_upper] = {
                         "row": row,
@@ -323,7 +373,10 @@ class SignalEngine:
                         "new_network_links": [],
                     }
                     prices_dict[ticker_upper] = df
-                    logger.info("Added price-verified propagated ticker %s to scoring", ticker_upper)
+                    logger.info(
+                        "Added price-verified propagated ticker %s to scoring",
+                        ticker_upper,
+                    )
             except Exception as exc:
                 logger.debug("Extended-universe load skipped: %s", exc)
 
@@ -348,7 +401,11 @@ class SignalEngine:
                     entry["row"],
                     category_weights_override=resolved_category_weights,
                     news_composite=news_composite_val,
-                    news_weight_override=news_weight_used if (news_dir or news_composite_val is not None) else None,
+                    news_weight_override=(
+                        news_weight_used
+                        if (news_dir or news_composite_val is not None)
+                        else None
+                    ),
                 )
                 week_scores[t] = score
                 sub = (score_meta or {}).get("category_sub_scores", {}) or {}
@@ -363,6 +420,7 @@ class SignalEngine:
 
         # Cross-sectional exchange normalization (volume + volatility only)
         if category_sub_scores_by_ticker:
+
             def _exchange_group(ticker: str) -> str:
                 t = str(ticker).upper()
                 if t.endswith(".HK"):
@@ -381,10 +439,22 @@ class SignalEngine:
             else:
                 c_weights = cfg.get_param(
                     "technical_master_score.category_weights",
-                    {"trend": 0.40, "momentum": 0.30, "volume": 0.20, "volatility": 0.10},
-                ) or {"trend": 0.40, "momentum": 0.30, "volume": 0.20, "volatility": 0.10}
+                    {
+                        "trend": 0.40,
+                        "momentum": 0.30,
+                        "volume": 0.20,
+                        "volatility": 0.10,
+                    },
+                ) or {
+                    "trend": 0.40,
+                    "momentum": 0.30,
+                    "volume": 0.20,
+                    "volatility": 0.10,
+                }
 
-            sub_df = pd.DataFrame.from_dict(category_sub_scores_by_ticker, orient="index")
+            sub_df = pd.DataFrame.from_dict(
+                category_sub_scores_by_ticker, orient="index"
+            )
             for col in ("trend", "momentum", "volume", "volatility"):
                 if col not in sub_df.columns:
                     sub_df[col] = 0.5
@@ -411,9 +481,23 @@ class SignalEngine:
                 volume = float(vol_adj.at[t])
                 volatility = float(vola_adj.at[t])
                 week_scores[t] = round(
-                    (w_trend * trend + w_momentum * momentum + w_volume * volume + w_volatility * volatility) / w_sum,
+                    (
+                        w_trend * trend
+                        + w_momentum * momentum
+                        + w_volume * volume
+                        + w_volatility * volatility
+                    )
+                    / w_sum,
                     4,
                 )
+
+        project_root = Path(__file__).resolve().parents[2]
+        week_scores = self._apply_post_assembly_master_score(
+            week_scores,
+            prices_dict,
+            as_of_date,
+            project_root,
+        )
 
         # Expose indicator rows so backtest can pass precomputed_indicators to apply_ml_blend (avoids double calculate_all_indicators)
         indicator_rows = {}
@@ -432,6 +516,246 @@ class SignalEngine:
             "indicator_rows": indicator_rows,
         }
         return week_scores, aux
+
+    def _apply_post_assembly_master_score(
+        self,
+        week_scores: dict[str, float],
+        prices_dict: dict[str, pd.DataFrame],
+        as_of_date: pd.Timestamp,
+        project_root: Path,
+    ) -> dict[str, float]:
+        from src.data.csv_provider import find_csv_path, load_data_config
+        from src.signals.layered_signal_engine import load_layered_config
+
+        uni_path = project_root / "config" / "universe.yaml"
+        if not uni_path.exists():
+            return week_scores
+        uni_raw = yaml.safe_load(uni_path.read_text(encoding="utf-8")) or {}
+        ticker_meta = uni_raw.get("ticker_meta") or {}
+        layer_etfs = uni_raw.get("layer_etfs") or {}
+        if not isinstance(layer_etfs, dict):
+            layer_etfs = {}
+
+        try:
+            lcfg = load_layered_config(
+                project_root / "config" / "layered_signal_config.yaml"
+            )
+        except Exception as exc:
+            logger.warning("layered_signal_config load failed: %s", exc)
+            return week_scores
+
+        sw = lcfg.get("stance_weights") or {}
+        req_sw = ("bullish", "neutral", "bearish")
+        if not all(k in sw for k in req_sw):
+            logger.warning(
+                "stance_weights missing required keys — skipping stance multiplier"
+            )
+            m_bull = m_neu = m_bear = None
+        else:
+            m_bull = float(sw["bullish"])
+            m_neu = float(sw["neutral"])
+            m_bear = float(sw["bearish"])
+
+        il_cfg = lcfg.get("intra_layer_reversion") or {}
+        if "weight" not in il_cfg or "lookback_days" not in il_cfg:
+            logger.warning(
+                "intra_layer_reversion missing weight or lookback_days — skipping intra-layer signal"
+            )
+            il_weight = 0.0
+            il_lb = 7
+        else:
+            il_weight = float(il_cfg["weight"])
+            il_lb = int(il_cfg["lookback_days"])
+
+        gate_cfg = lcfg.get("layer_etf_gate") or {}
+        req_gate = ("momentum_days", "tanh_scale", "gate_min", "gate_max")
+        if not all(k in gate_cfg for k in req_gate):
+            logger.warning(
+                "layer_etf_gate missing required keys — ETF gate defaults to 1.0"
+            )
+            mom_days = 20
+            tanh_scale = 0.05
+            gate_min = 0.5
+            gate_max = 1.5
+        else:
+            mom_days = int(gate_cfg["momentum_days"])
+            tanh_scale = float(gate_cfg["tanh_scale"])
+            gate_min = float(gate_cfg["gate_min"])
+            gate_max = float(gate_cfg["gate_max"])
+
+        try:
+            dc = load_data_config()
+            data_dir = Path(
+                dc.get("data_dir") or (project_root / "data" / "stock_market_data")
+            )
+        except Exception:
+            data_dir = project_root / "data" / "stock_market_data"
+
+        def _norm_layer(layer_raw: str) -> str:
+            s = str(layer_raw).strip().lower()
+            return "infrastructure" if s == "infra" else s
+
+        def _is_etf_ticker(sym: str) -> bool:
+            meta = ticker_meta.get(sym) or ticker_meta.get(str(sym).upper())
+            if not isinstance(meta, dict):
+                return False
+            return str(meta.get("type", "stock")).lower() == "etf"
+
+        out = dict(week_scores)
+        for t in list(out.keys()):
+            if _is_etf_ticker(t):
+                continue
+            meta = ticker_meta.get(t) or ticker_meta.get(str(t).upper())
+            base = float(out[t])
+            if m_bull is not None:
+                stance = str((meta or {}).get("stance", "neutral")).lower()
+                mult = m_neu
+                if stance == "bullish":
+                    mult = m_bull
+                elif stance == "bearish":
+                    mult = m_bear
+                out[t] = max(0.0, min(1.0, base * mult))
+            else:
+                out[t] = base
+
+        if not prices_dict:
+            logger.warning(
+                "prices_dict unavailable — skipping intra-layer reversion and ETF layer gate"
+            )
+            return out
+
+        def _last_window_return(df: pd.DataFrame) -> float | None:
+            slice_df = df[df.index <= as_of_date].copy()
+            slice_df.columns = [str(c).lower() for c in slice_df.columns]
+            slice_df = slice_df.sort_index()
+            if slice_df.empty or "close" not in slice_df.columns:
+                return None
+            close_raw = slice_df["close"]
+            if isinstance(close_raw, pd.DataFrame):
+                close_raw = close_raw.iloc[:, 0]
+            close = close_raw.astype(float)
+            need = int(il_lb) + 1
+            if len(close) < need:
+                return None
+            c_end = float(close.iloc[-1])
+            c_start = float(close.iloc[-need])
+            if pd.isna(c_end) or pd.isna(c_start) or c_start == 0:
+                return None
+            return float(c_end / c_start - 1.0)
+
+        def _etf_basket_mean_momentum(etf_syms: list[str]) -> float | None:
+            rets: list[float] = []
+            for et in etf_syms:
+                p = find_csv_path(data_dir, et)
+                if not p:
+                    bench = Path(data_dir).parent / "benchmarks" / f"{et.upper()}.csv"
+                    if bench.exists():
+                        p = str(bench)
+                if not p:
+                    continue
+                try:
+                    edf = pd.read_csv(p, index_col=0, parse_dates=False)
+                    edf.index = pd.to_datetime(
+                        edf.index, errors="coerce", utc=True
+                    ).tz_convert(None)
+                    edf = edf[~edf.index.isna()].sort_index()
+                    edf.columns = [str(c).lower() for c in edf.columns]
+                except Exception:
+                    continue
+                if "close" not in edf.columns:
+                    continue
+                close_raw = edf[edf.index <= as_of_date]["close"]
+                if isinstance(close_raw, pd.DataFrame):
+                    close_raw = close_raw.iloc[:, 0]
+                sl = close_raw.astype(float)
+                if len(sl) < mom_days + 1:
+                    continue
+                c_end = float(sl.iloc[-1])
+                c0 = float(sl.iloc[-(mom_days + 1)])
+                if c0 == 0 or pd.isna(c_end) or pd.isna(c0):
+                    continue
+                rets.append(c_end / c0 - 1.0)
+            if not rets:
+                return None
+            return sum(rets) / len(rets)
+
+        layer_gates: dict[str, float] = {}
+        for lk, syms in layer_etfs.items():
+            if not isinstance(syms, list):
+                continue
+            usyms = [
+                str(x).strip().upper()
+                for x in syms
+                if isinstance(x, str) and str(x).strip()
+            ]
+            if not usyms:
+                continue
+            mu_m = _etf_basket_mean_momentum(usyms)
+            if mu_m is None or tanh_scale == 0:
+                layer_gates[str(lk)] = 1.0
+            else:
+                raw_t = math.tanh(mu_m / tanh_scale)
+                layer_gates[str(lk)] = gate_min + (raw_t + 1.0) / 2.0 * (
+                    gate_max - gate_min
+                )
+
+        rets: dict[str, float | None] = {}
+        groups: dict[str, list[str]] = {}
+        for t in list(out.keys()):
+            if _is_etf_ticker(t):
+                continue
+            meta = ticker_meta.get(t) or ticker_meta.get(str(t).upper())
+            layer_raw = str((meta or {}).get("supply_chain_layer", "")).strip()
+            gkey = _norm_layer(layer_raw)
+            if not gkey:
+                continue
+            cur = groups.setdefault(gkey, [])
+            if t not in cur:
+                cur.append(t)
+            df = prices_dict.get(t)
+            rets[t] = _last_window_return(df) if df is not None else None
+
+        intra_clip: dict[str, float] = {}
+        for gkey, members in groups.items():
+            grp_rets = {x: float(rets[x]) for x in members if rets.get(x) is not None}
+            if len(grp_rets) < 3:
+                for x in members:
+                    intra_clip[x] = 0.0
+                continue
+            mu_g = sum(grp_rets.values()) / len(grp_rets)
+            rel = {x: grp_rets[x] - mu_g for x in grp_rets}
+            ser = pd.Series(rel, dtype=float)
+            std = float(ser.std(ddof=0))
+            for x in members:
+                if x not in rel:
+                    intra_clip[x] = 0.0
+                    continue
+                z_raw = rel[x] / std if std > 0 and not math.isnan(std) else 0.0
+                intra_clip[x] = max(-2.0, min(2.0, -z_raw))
+
+        for t in list(out.keys()):
+            if _is_etf_ticker(t):
+                continue
+            intra_clip.setdefault(t, 0.0)
+
+        vals = list(intra_clip.values())
+        lo, hi = min(vals), max(vals)
+        if hi > lo:
+            intra_01 = {k: (intra_clip[k] - lo) / (hi - lo) for k in intra_clip}
+        else:
+            intra_01 = {k: 0.5 for k in intra_clip}
+
+        for t in list(out.keys()):
+            if _is_etf_ticker(t):
+                continue
+            meta = ticker_meta.get(t) or ticker_meta.get(str(t).upper())
+            layer_raw = str((meta or {}).get("supply_chain_layer", "")).strip()
+            gkey = _norm_layer(layer_raw)
+            gv = layer_gates.get(gkey, 1.0) if gkey else 1.0
+            gated = float(intra_01.get(t, 0.5)) * float(gv)
+            out[t] = float(out[t]) + float(il_weight) * gated
+
+        return out
 
     # ------------------------------------------------------------------
     # Regime detection (Stage 3 wiring)
@@ -455,8 +779,7 @@ class SignalEngine:
         spy_df = prices_dict.get(regime_ticker)
         if spy_df is None:
             logger.warning(
-                "Regime ticker '%s' not in prices_dict; "
-                "cannot auto-detect regime",
+                "Regime ticker '%s' not in prices_dict; " "cannot auto-detect regime",
                 regime_ticker,
             )
             return None, None
@@ -476,7 +799,8 @@ class SignalEngine:
             if regime_state is not None:
                 logger.info(
                     "Regime auto-detected: %s (HMM, as_of=%s)",
-                    regime_state, as_of_date,
+                    regime_state,
+                    as_of_date,
                 )
                 return regime_state, None
         except Exception as exc:
@@ -492,7 +816,8 @@ class SignalEngine:
                 regime_label = "BULL" if above else "BEAR"
                 logger.info(
                     "Regime auto-detected: %s (SMA-200 fallback, as_of=%s)",
-                    regime_label, as_of_date,
+                    regime_label,
+                    as_of_date,
                 )
                 return regime_label, above
 
@@ -583,7 +908,9 @@ class SignalEngine:
                 )
                 for sig in signals:
                     # Keep original casing for universe tickers; use sig.ticker for others
-                    target_key = universe_upper.get(sig.ticker.upper()) or sig.ticker.upper()
+                    target_key = (
+                        universe_upper.get(sig.ticker.upper()) or sig.ticker.upper()
+                    )
                     propagated_by_target.setdefault(target_key, []).append(sig)
             except Exception as exc:
                 logger.debug("Propagation from %s failed: %s", t, exc)
@@ -654,4 +981,53 @@ class SignalEngine:
                 top_stocks[score_col].fillna(0.5).tolist(),
             )
         )
-        return scores, {}
+        # Layered engine: target_weight_pipeline reads aux["indicator_rows"] (weekly path was always empty).
+        _preferred = [
+            "rsi_norm",
+            "macd_norm",
+            "cmf_norm",
+            "momentum_avg",
+            "volume_ratio_norm",
+            "trend_norm",
+            "sentiment_norm",
+        ]
+        indicator_rows: dict[str, dict[str, Any]] = {}
+        cols = list(top_stocks.columns)
+        wanted: list[str] = [c for c in _preferred if c in cols]
+        for c in sorted(
+            x for x in cols if str(x).endswith("_norm") and x not in wanted
+        ):
+            wanted.append(c)
+        if wanted and "ticker" in top_stocks.columns:
+            for _, row in top_stocks.iterrows():
+                t = str(row["ticker"]).strip()
+                if not t:
+                    continue
+                out: dict[str, Any] = {}
+                for c in wanted:
+                    try:
+                        v = row[c]
+                    except (KeyError, TypeError):
+                        continue
+                    if isinstance(v, pd.Series):
+                        if len(v) == 1:
+                            v = v.iloc[0]
+                        else:
+                            continue
+                    if v is None or pd.isna(v):
+                        continue
+                    try:
+                        out[str(c)] = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                if out:
+                    indicator_rows[t] = out
+        project_root = Path(__file__).resolve().parents[2]
+        pd_week = data_context.get("prices_dict") or {}
+        scores = self._apply_post_assembly_master_score(
+            scores,
+            pd_week,
+            as_of_date,
+            project_root,
+        )
+        return scores, {"indicator_rows": indicator_rows}

@@ -11,6 +11,7 @@ Usage:
 
 Default date = today. Exit 0 on success, 1 on error.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,7 +27,9 @@ import pandas as pd
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate daily target weights table")
-    parser.add_argument("--date", type=str, default=None, help="As-of date YYYY-MM-DD (default: today)")
+    parser.add_argument(
+        "--date", type=str, default=None, help="As-of date YYYY-MM-DD (default: today)"
+    )
     args = parser.parse_args()
 
     try:
@@ -80,12 +83,20 @@ def main() -> int:
     rows = []
     for ticker in weights_series.index:
         w = float(weights_series.get(ticker, 0.0))
-        if ticker not in prices_dict or prices_dict[ticker].empty or "close" not in prices_dict[ticker].columns:
+        if (
+            ticker not in prices_dict
+            or prices_dict[ticker].empty
+            or "close" not in prices_dict[ticker].columns
+        ):
             latest_close = float("nan")
             notional_units = 0
         else:
             close_series = prices_dict[ticker]["close"]
-            _asof_val = close_series.asof(as_of) if hasattr(close_series, "asof") else float("nan")
+            _asof_val = (
+                close_series.asof(as_of)
+                if hasattr(close_series, "asof")
+                else float("nan")
+            )
             if isinstance(_asof_val, pd.Series):
                 _asof_val = _asof_val.iloc[-1] if not _asof_val.empty else float("nan")
             latest_close = float(_asof_val)
@@ -95,7 +106,9 @@ def main() -> int:
                 notional_units = int(w * 100_000 / latest_close)
         _score_val = _scores.get(ticker)
         _vol_t = 1 if _vol_triggered.get(ticker) else 0
-        rows.append((date_str, ticker, w, latest_close, notional_units, _score_val, _vol_t))
+        rows.append(
+            (date_str, ticker, w, latest_close, notional_units, _score_val, _vol_t)
+        )
 
     # Task 7: append to outputs/daily_signals.csv (header on first run; mode 'a', newline='')
     _out_dir = ROOT / "outputs"
@@ -105,7 +118,17 @@ def main() -> int:
     with open(_signals_path, "a", newline="", encoding="utf-8") as _f:
         _writer = csv.writer(_f)
         if _write_header:
-            _writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units", "score", "vol_triggered"])
+            _writer.writerow(
+                [
+                    "date",
+                    "ticker",
+                    "target_weight",
+                    "latest_close",
+                    "notional_units",
+                    "score",
+                    "vol_triggered",
+                ]
+            )
         for _r in rows:
             _writer.writerow(_r)
 
@@ -122,11 +145,22 @@ def main() -> int:
             "vol_triggered": bool(_vt),
         }
     import json
+
     with open(_out_dir / "last_signal.json", "w", encoding="utf-8") as _jf:
         json.dump(_last_signal, _jf, indent=2)
 
     writer = csv.writer(sys.stdout)
-    writer.writerow(["date", "ticker", "target_weight", "latest_close", "notional_units", "score", "vol_triggered"])
+    writer.writerow(
+        [
+            "date",
+            "ticker",
+            "target_weight",
+            "latest_close",
+            "notional_units",
+            "score",
+            "vol_triggered",
+        ]
+    )
     for r in rows:
         writer.writerow(r)
 

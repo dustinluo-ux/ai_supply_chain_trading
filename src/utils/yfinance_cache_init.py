@@ -3,6 +3,7 @@ yfinance cache initialization to avoid SQLite crashes on first use.
 
 Call init_yfinance_cache() once at pipeline start (e.g. in run scripts or main).
 """
+
 import os
 import logging
 from pathlib import Path
@@ -28,6 +29,7 @@ def init_yfinance_cache(cache_dir: str = None) -> str:
     # Trigger a minimal yfinance import so cache is primed (optional)
     try:
         import yfinance as yf
+
         if hasattr(yf, "set_tz_cache_location"):
             yf.set_tz_cache_location(cache_dir)
     except Exception as e:

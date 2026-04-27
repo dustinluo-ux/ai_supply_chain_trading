@@ -3,6 +3,7 @@ PolicyEngine: apply(as_of_date, scores, aux, context) -> (gated_scores, flags).
 P0: Single canonical regime policy for backtest and execution (identical risk behavior).
 All paths use _apply_backtest(): CASH_OUT, SIDEWAYS scaling, kill-switch.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -54,7 +55,12 @@ class PolicyEngine:
         elif regime_state == "SIDEWAYS":
             gated = {t: w * sideways_risk_scale for t, w in gated.items()}
             action = "Trade"
-        elif regime_state is not None and context.get("kill_switch_active") and spy_below_sma200 and regime_state != "BULL":
+        elif (
+            regime_state is not None
+            and context.get("kill_switch_active")
+            and spy_below_sma200
+            and regime_state != "BULL"
+        ):
             if kill_switch_mode == "cash":
                 gated = {t: 0.0 for t in gated}
                 action = "Cash"
@@ -67,7 +73,9 @@ class PolicyEngine:
             "regime": regime_state,
             "cash_out": action == "Cash",
             "action": action,
-            "sideways_scale_applied": sideways_risk_scale if regime_state == "SIDEWAYS" else None,
+            "sideways_scale_applied": (
+                sideways_risk_scale if regime_state == "SIDEWAYS" else None
+            ),
         }
         return gated, flags
 

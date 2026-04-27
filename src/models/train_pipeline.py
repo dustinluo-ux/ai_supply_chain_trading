@@ -15,7 +15,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional
 
 from .model_factory import create_model
 from .base_predictor import BaseReturnPredictor
@@ -27,47 +27,48 @@ _MIN_PRICE_ROWS = 60
 class ModelTrainingPipeline:
     """
     End-to-end model training pipeline.
-    
+
     Usage:
         pipeline = ModelTrainingPipeline('config/model_config.yaml')
         model = pipeline.train(prices_dict, news_signals={})
         ic, fold_ics = pipeline.evaluate_ic(model, prices_dict, test_start='...', test_end='...')
         predictions = model.predict(current_features)
     """
-    
-    def __init__(self, config_path: str = 'config/model_config.yaml'):
+
+    def __init__(self, config_path: str = "config/model_config.yaml"):
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
-        
-        self.active_model_type = self.config['active_model']
-        self.model_config = self.config['models'][self.active_model_type]
-        self.feature_names = self.config['features']['feature_names']
-        
+
+        self.active_model_type = self.config["active_model"]
+        self.model_config = self.config["models"][self.active_model_type]
+        self.feature_names = self.config["features"]["feature_names"]
+
         print(f"[Pipeline] Loaded config: {config_path}")
         print(f"[Pipeline] Active model: {self.active_model_type}")
-    
-    def prepare_training_data(self,
-                             prices_dict: Dict,
-                             technical_signals: Optional[Dict] = None,
-                             news_signals: Optional[Dict] = None,
-                             train_start: Optional[pd.Timestamp] = None,
-                             train_end: Optional[pd.Timestamp] = None,
-                             ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+
+    def prepare_training_data(
+        self,
+        prices_dict: Dict,
+        technical_signals: Optional[Dict] = None,
+        news_signals: Optional[Dict] = None,
+        train_start: Optional[pd.Timestamp] = None,
+        train_end: Optional[pd.Timestamp] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
         """
         Build training dataset. Features computed from prices_dict via calculate_all_indicators.
-        
+
         For each stock, for each week in period:
             X = [momentum_avg, volume_ratio_norm, rsi_norm, news_supply, news_sentiment]
             y = forward 1-week return
-        
+
         Returns:
             X: Features (n_samples, n_features)
             y: Forward returns (n_samples,)
             metadata: DataFrame with [ticker, date, forward_return]
         """
-        train_config = self.config['training']
-        use_residual = train_config.get('residual_target', False)
-        beta_window = train_config.get('rolling_beta_window', 60)
+        train_config = self.config["training"]
+        use_residual = train_config.get("residual_target", False)
+        beta_window = train_config.get("rolling_beta_window", 60)
         if use_residual:
             try:
                 smh_df = self._load_smh_prices()
@@ -76,44 +77,60 @@ class ModelTrainingPipeline:
         else:
             smh_df = None
 
-        start = train_start if train_start is not None else pd.to_datetime(train_config['train_start'])
-        end = train_end if train_end is not None else pd.to_datetime(train_config['train_end'])
+        start = (
+            train_start
+            if train_start is not None
+            else pd.to_datetime(train_config["train_start"])
+        )
+        end = (
+            train_end
+            if train_end is not None
+            else pd.to_datetime(train_config["train_end"])
+        )
         news_signals = news_signals or {}
-        
+
         X_list, y_list, meta_list = [], [], []
-        
+
         for ticker in prices_dict.keys():
-            dates = pd.date_range(start, end, freq='W-MON')
+            dates = pd.date_range(start, end, freq="W-MON")
             for date in dates:
-                features = self._extract_features(ticker, date, prices_dict, news_signals)
+                features = self._extract_features(
+                    ticker, date, prices_dict, news_signals
+                )
                 if features is None:
                     continue
-                forward_return = self._calculate_forward_return(ticker, date, prices_dict)
+                forward_return = self._calculate_forward_return(
+                    ticker, date, prices_dict
+                )
                 if forward_return is None:
                     continue
                 if use_residual and smh_df is not None:
-                    smh_fwd = self._calculate_smh_forward_return(smh_df, date, horizon_days=7)
-                    beta = self._calculate_rolling_beta(prices_dict[ticker], smh_df, date, window=beta_window)
+                    smh_fwd = self._calculate_smh_forward_return(
+                        smh_df, date, horizon_days=7
+                    )
+                    beta = self._calculate_rolling_beta(
+                        prices_dict[ticker], smh_df, date, window=beta_window
+                    )
                     if smh_fwd is not None:
                         forward_return = forward_return - (beta * smh_fwd)
                 X_list.append(features)
                 y_list.append(forward_return)
-                meta_list.append({
-                    'ticker': ticker,
-                    'date': date,
-                    'forward_return': forward_return
-                })
-        
+                meta_list.append(
+                    {"ticker": ticker, "date": date, "forward_return": forward_return}
+                )
+
         if len(X_list) == 0:
-            raise ValueError("No training samples found. Check date ranges and data availability.")
-        
+            raise ValueError(
+                "No training samples found. Check date ranges and data availability."
+            )
+
         # Iteration 2 (docs/ml_ic_diagnosis.md): cross-sectional z-score label — group by date,
         # replace each raw return with (return − date_mean) / date_std; if std=0 keep raw return.
         # Applied identically for train and test (evaluate_ic uses prepare_training_data).
         metadata = pd.DataFrame(meta_list)
         y_arr = np.array(y_list, dtype=float)
-        for date in metadata['date'].unique():
-            mask = (metadata['date'] == date).values
+        for date in metadata["date"].unique():
+            mask = (metadata["date"] == date).values
             indices = np.where(mask)[0]
             returns = y_arr[indices]
             date_mean = float(np.mean(returns))
@@ -122,23 +139,31 @@ class ModelTrainingPipeline:
                 z = (returns - date_mean) / date_std
                 y_arr[indices] = z
                 for k, idx in enumerate(indices):
-                    meta_list[idx]['forward_return'] = float(z[k])
+                    meta_list[idx]["forward_return"] = float(z[k])
         y = y_arr
         metadata = pd.DataFrame(meta_list)
         X = np.array(X_list)
-        
+
         print(f"[Pipeline] Prepared {len(X)} training samples")
         if use_residual:
-            print(f"  Target: Residual Return (beta-adjusted vs SMH, window={beta_window}d)")
+            print(
+                f"  Target: Residual Return (beta-adjusted vs SMH, window={beta_window}d)"
+            )
         else:
             print(f"  Target: Absolute Forward Return")
         print(f"  Features: {X.shape[1]}")
         if len(metadata) > 0:
             print(f"  Date range: {metadata['date'].min()} to {metadata['date'].max()}")
-        
+
         return X, y, metadata
-    
-    def extract_features_for_date(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, news_signals: Optional[Dict] = None) -> Optional[list]:
+
+    def extract_features_for_date(
+        self,
+        ticker: str,
+        date: pd.Timestamp,
+        prices_dict: Dict,
+        news_signals: Optional[Dict] = None,
+    ) -> Optional[list]:
         """
         Extract feature vector for one ticker/date from prices_dict using calculate_all_indicators.
         Requires at least 60 rows of price history before date. News from news_signals (default 0.5 = neutral).
@@ -147,7 +172,7 @@ class ModelTrainingPipeline:
         if ticker not in prices_dict:
             return None
         df = prices_dict[ticker]
-        if df.empty or 'close' not in df.columns:
+        if df.empty or "close" not in df.columns:
             return None
         slice_df = df[df.index <= date]
         if slice_df is None or slice_df.empty or len(slice_df) < _MIN_PRICE_ROWS:
@@ -155,28 +180,40 @@ class ModelTrainingPipeline:
         try:
             from src.signals.technical_library import calculate_all_indicators
             from src.data.csv_provider import ensure_ohlcv
+
             slice_df = ensure_ohlcv(slice_df.copy())
-            if not all(c in slice_df.columns for c in ['open', 'high', 'low', 'close', 'volume']):
+            if not all(
+                c in slice_df.columns
+                for c in ["open", "high", "low", "close", "volume"]
+            ):
                 return None
             ind = calculate_all_indicators(slice_df)
             if ind is None or ind.empty:
                 return None
             row = ind.iloc[-1]
-            rsi_norm = float(row.get('rsi_norm', 0.5))
-            volume_ratio_norm = float(row.get('volume_ratio_norm', 0.5))
-            m5 = float(row.get('momentum_5d_norm', 0.5))
-            m20 = float(row.get('momentum_20d_norm', 0.5))
+            rsi_norm = float(row.get("rsi_norm", 0.5))
+            volume_ratio_norm = float(row.get("volume_ratio_norm", 0.5))
+            m5 = float(row.get("momentum_5d_norm", 0.5))
+            m20 = float(row.get("momentum_20d_norm", 0.5))
             momentum_avg = (m5 + m20) / 2.0
             news_signals = news_signals or {}
-            date_str = date.strftime("%Y-%m-%d") if isinstance(date, pd.Timestamp) else str(date)
+            date_str = (
+                date.strftime("%Y-%m-%d")
+                if isinstance(date, pd.Timestamp)
+                else str(date)
+            )
             ticker_news = (news_signals or {}).get(ticker, {})
             news = ticker_news.get(date_str) or ticker_news.get(date) or {}
             if news is None:
                 news = {}
             # Fix 2 (docs/ml_ic_result.md): NEWS NEUTRAL DEFAULT — pre-2025 rows have no news;
             # use 0.5 (neutral) not 0.0 (bearish) per Phase 3 technical-first ML policy.
-            news_supply = float(news.get('supply_chain_score', news.get('supply_chain', 0.5)))
-            news_sentiment = float(news.get('sentiment_score', news.get('sentiment', 0.5)))
+            news_supply = float(
+                news.get("supply_chain_score", news.get("supply_chain", 0.5))
+            )
+            news_sentiment = float(
+                news.get("sentiment_score", news.get("sentiment", 0.5))
+            )
 
             # sentiment_velocity: change in sentiment vs a recent past day (first match in [5,6,7,4,3] days back)
             past_sentiment = None
@@ -187,9 +224,15 @@ class ModelTrainingPipeline:
                     past_news = ticker_news.get(past_str) or {}
                     if past_news is None:
                         past_news = {}
-                    past_sentiment = float(past_news.get('sentiment_score', past_news.get('sentiment', 0.5)))
+                    past_sentiment = float(
+                        past_news.get(
+                            "sentiment_score", past_news.get("sentiment", 0.5)
+                        )
+                    )
                     break
-            sentiment_velocity = (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+            sentiment_velocity = (
+                (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+            )
 
             # news_spike: current news_supply relative to mean of prior 20 calendar days (need >= 5 entries)
             supply_values = []
@@ -201,7 +244,13 @@ class ModelTrainingPipeline:
                 back_news = ticker_news.get(back_str) or {}
                 if back_news is None:
                     back_news = {}
-                supply_values.append(float(back_news.get('supply_chain_score', back_news.get('supply_chain', 0.5))))
+                supply_values.append(
+                    float(
+                        back_news.get(
+                            "supply_chain_score", back_news.get("supply_chain", 0.5)
+                        )
+                    )
+                )
             if len(supply_values) >= 5:
                 mean_supply = float(np.mean(supply_values))
                 news_spike = (news_supply / mean_supply) if mean_supply > 0 else 1.0
@@ -220,6 +269,7 @@ class ModelTrainingPipeline:
             }
             # Fallback: any name in self.feature_names not in values — resolve via FEATURE_REGISTRY (extensibility)
             from src.signals import feature_factory
+
             FEATURE_REGISTRY = getattr(feature_factory, "FEATURE_REGISTRY", {})
             for name in self.feature_names:
                 if name in values:
@@ -248,16 +298,23 @@ class ModelTrainingPipeline:
     # Backward compatibility: private alias for use inside the class (prepare_training_data, etc.)
     _extract_features = extract_features_for_date
 
-    def _calculate_forward_return(self, ticker: str, date: pd.Timestamp, prices_dict: Dict, horizon_days: int = 7) -> Optional[float]:
+    def _calculate_forward_return(
+        self, ticker: str, date: pd.Timestamp, prices_dict: Dict, horizon_days: int = 7
+    ) -> Optional[float]:
         """Calculate forward return using asof to handle non-trading days. Returns None if NaN."""
+
         def _to_scalar(x):
             if isinstance(x, pd.Series):
-                x = x.iloc[-1] if len(x) else float('nan')
-            return float(x) if not pd.isna(x) else float('nan')
+                x = x.iloc[-1] if len(x) else float("nan")
+            return float(x) if not pd.isna(x) else float("nan")
 
         try:
             prices = prices_dict[ticker]
-            raw_close = prices['close'] if isinstance(prices.get('close'), pd.Series) else prices.loc[:, 'close']
+            raw_close = (
+                prices["close"]
+                if isinstance(prices.get("close"), pd.Series)
+                else prices.loc[:, "close"]
+            )
             if isinstance(raw_close, pd.DataFrame):
                 close = raw_close.iloc[:, 0]
             else:
@@ -281,7 +338,15 @@ class ModelTrainingPipeline:
         p = Path(path)
         if not p.is_absolute():
             import os
-            p = Path(os.environ.get("DATA_DIR", r"C:\ai_supply_chain_trading\trading_data")) / path
+
+            p = (
+                Path(
+                    os.environ.get(
+                        "DATA_DIR", r"C:\ai_supply_chain_trading\trading_data"
+                    )
+                )
+                / path
+            )
         if not p.exists():
             raise FileNotFoundError(f"SMH benchmark file not found: {p}")
         df = pd.read_csv(p, index_col=0, parse_dates=True)
@@ -293,7 +358,13 @@ class ModelTrainingPipeline:
             raise ValueError(f"SMH CSV missing 'close' column: {p}")
         return df
 
-    def _calculate_rolling_beta(self, ticker_df: pd.DataFrame, smh_df: pd.DataFrame, date: pd.Timestamp, window: int = 60) -> float:
+    def _calculate_rolling_beta(
+        self,
+        ticker_df: pd.DataFrame,
+        smh_df: pd.DataFrame,
+        date: pd.Timestamp,
+        window: int = 60,
+    ) -> float:
         """Rolling OLS beta of ticker vs SMH up to date. Returns 1.0 if insufficient data or Var(smh)=0."""
         try:
             close_t = ticker_df["close"]
@@ -304,7 +375,9 @@ class ModelTrainingPipeline:
                 close_s = close_s.iloc[:, 0]
             r_ticker = close_t.pct_change(fill_method=None).dropna()
             r_smh = close_s.pct_change(fill_method=None).dropna()
-            joint = pd.concat([r_ticker.rename("t"), r_smh.rename("s")], axis=1, join="inner").dropna()
+            joint = pd.concat(
+                [r_ticker.rename("t"), r_smh.rename("s")], axis=1, join="inner"
+            ).dropna()
             joint = joint[joint.index <= date].tail(window)
             if len(joint) < 30:
                 return 1.0
@@ -316,12 +389,16 @@ class ModelTrainingPipeline:
         except Exception:
             return 1.0
 
-    def _calculate_smh_forward_return(self, smh_df: pd.DataFrame, date: pd.Timestamp, horizon_days: int = 7) -> Optional[float]:
+    def _calculate_smh_forward_return(
+        self, smh_df: pd.DataFrame, date: pd.Timestamp, horizon_days: int = 7
+    ) -> Optional[float]:
         """Forward return of SMH over horizon_days from date. Same logic as _calculate_forward_return on smh_df."""
+
         def _to_scalar(x):
             if isinstance(x, pd.Series):
                 x = x.iloc[-1] if len(x) else float("nan")
             return float(x) if not pd.isna(x) else float("nan")
+
         try:
             close = smh_df["close"]
             if isinstance(close, pd.DataFrame):
@@ -336,11 +413,16 @@ class ModelTrainingPipeline:
             return float((price_future - price_current) / price_current)
         except (KeyError, TypeError, AttributeError):
             return None
-    
-    def train(self, prices_dict: Dict, technical_signals: Optional[Dict] = None, news_signals: Optional[Dict] = None) -> BaseReturnPredictor:
+
+    def train(
+        self,
+        prices_dict: Dict,
+        technical_signals: Optional[Dict] = None,
+        news_signals: Optional[Dict] = None,
+    ) -> BaseReturnPredictor:
         """
         Train the active model.
-        
+
         Returns:
             Trained model
         """
@@ -348,45 +430,54 @@ class ModelTrainingPipeline:
         X, y, metadata = self.prepare_training_data(
             prices_dict, technical_signals=technical_signals, news_signals=news_signals
         )
-        
+
         # Train/validation split
-        val_split = self.config['training']['validation_split']
+        val_split = self.config["training"]["validation_split"]
         split_idx = int(len(X) * (1 - val_split))
-        
+
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y[:split_idx], y[split_idx:]
-        
+
         print(f"[Pipeline] Train: {len(X_train)} samples, Val: {len(X_val)} samples")
-        
+
         model = create_model(
-            {**{'type': self.active_model_type}, **self.model_config},
-            self.feature_names
+            {**{"type": self.active_model_type}, **self.model_config},
+            self.feature_names,
         )
-        
+
         # Train
-        metrics = model.fit(X_train, y_train, X_val, y_val)
-        
+        _metrics = model.fit(X_train, y_train, X_val, y_val)  # noqa: F841
+
         # Log feature importance
-        if self.config['logging']['log_feature_importance']:
+        if self.config["logging"]["log_feature_importance"]:
             self._log_feature_importance(model)
-        
+
         # Save model (caller may skip if IC gate fails)
-        if self.config['training']['save_models']:
+        if self.config["training"]["save_models"]:
             _ROOT = Path(__file__).resolve().parent.parent.parent
-            save_dir_cfg = str(self.config['training']['model_save_dir'])
+            save_dir_cfg = str(self.config["training"]["model_save_dir"])
             _save_dir_raw = Path(save_dir_cfg)
-            save_dir = _save_dir_raw if _save_dir_raw.is_absolute() else (_ROOT / _save_dir_raw)
+            save_dir = (
+                _save_dir_raw
+                if _save_dir_raw.is_absolute()
+                else (_ROOT / _save_dir_raw)
+            )
             save_dir.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             save_path = save_dir / f"{self.active_model_type}_{timestamp}.pkl"
             model.save_model(str(save_path))
-        
+
         return model
-    
-    def evaluate_ic(self, model: BaseReturnPredictor, prices_dict: Dict,
-                    test_start: str, test_end: str,
-                    news_signals: Optional[Dict] = None) -> Tuple[float, List[float]]:
+
+    def evaluate_ic(
+        self,
+        model: BaseReturnPredictor,
+        prices_dict: Dict,
+        test_start: str,
+        test_end: str,
+        news_signals: Optional[Dict] = None,
+    ) -> Tuple[float, List[float]]:
         """
         Anchored walk-forward IC per DECISIONS.md D021: anchor fixed at config train_start,
         step through test period in 13-week folds. Fold k: train anchor→fold_k_start,
@@ -397,14 +488,14 @@ class ModelTrainingPipeline:
 
         # DECISIONS.md D021: anchored walk-forward — anchor fixed at train_start;
         # Fold 1: train anchor→test_start, test next 13 weeks; Fold 2: train anchor→fold1_end, test next 13 weeks; etc.
-        anchor = pd.to_datetime(self.config['training']['train_start'])
+        anchor = pd.to_datetime(self.config["training"]["train_start"])
         test_start_dt = pd.to_datetime(test_start)
         test_end_dt = pd.to_datetime(test_end)
         news_signals = news_signals or {}
         fold_weeks = 13
         week_days = 7 * fold_weeks
         ic_list = []
-        val_split = self.config['training']['validation_split']
+        val_split = self.config["training"]["validation_split"]
         fold_start = test_start_dt
 
         while fold_start + pd.Timedelta(days=week_days) <= test_end_dt:
@@ -425,8 +516,8 @@ class ModelTrainingPipeline:
             X_t, X_v = X_train[:split_idx], X_train[split_idx:]
             y_t, y_v = y_train[:split_idx], y_train[split_idx:]
             model_fold = create_model(
-                {**{'type': self.active_model_type}, **self.model_config},
-                self.feature_names
+                {**{"type": self.active_model_type}, **self.model_config},
+                self.feature_names,
             )
             model_fold.fit(X_t, y_t, X_v, y_v)
             # Test: [fold_start, test_end_fold]
@@ -444,32 +535,39 @@ class ModelTrainingPipeline:
             ic, _ = spearmanr(pred, y_test)
             ic_f = float(ic) if not np.isnan(ic) else 0.0
             ic_list.append(ic_f)
-            print(f"[IC] fold {len(ic_list)} (test {fold_start.date()} - {test_end_fold.date()}) Spearman IC = {ic_f:.4f} (n={len(y_test)})")
+            print(
+                f"[IC] fold {len(ic_list)} (test {fold_start.date()} - {test_end_fold.date()}) Spearman IC = {ic_f:.4f} (n={len(y_test)})"
+            )
             fold_start = test_end_fold
 
         if not ic_list:
             print("[IC] No walk-forward folds; mean IC = 0.0000")
             return 0.0, []
         mean_ic = float(np.mean(ic_list))
-        print(f"[IC] Walk-forward mean Spearman IC = {mean_ic:.4f} (folds={len(ic_list)})")
+        print(
+            f"[IC] Walk-forward mean Spearman IC = {mean_ic:.4f} (folds={len(ic_list)})"
+        )
         return mean_ic, ic_list
-    
+
     def _log_feature_importance(self, model):
         """Log feature importance to console and file."""
         importance = model.get_feature_importance()
-        
+
         print("\n[Feature Importance]")
-        for feature, value in sorted(importance.items(), key=lambda x: abs(x[1]), reverse=True):
+        for feature, value in sorted(
+            importance.items(), key=lambda x: abs(x[1]), reverse=True
+        ):
             print(f"  {feature:25s}: {value:8.4f}")
-        
+
         # Save to file
-        if self.config['logging'].get('log_dir'):
-            log_dir = Path(self.config['logging']['log_dir'])
+        if self.config["logging"].get("log_dir"):
+            log_dir = Path(self.config["logging"]["log_dir"])
             log_dir.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             log_file = log_dir / f"feature_importance_{timestamp}.json"
-            
+
             import json
-            with open(log_file, 'w') as f:
+
+            with open(log_file, "w") as f:
                 json.dump(importance, f, indent=2)

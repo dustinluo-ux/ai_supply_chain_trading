@@ -5,9 +5,11 @@ Ported from wealth_signal_mvp_v1. Works with:
 - IBDataProvider (get_account_info() -> {margin_info, positions})
 - Or an executor with get_positions() + get_account_value() (adapted to account_info)
 """
+
 import pandas as pd
 from typing import Optional, Union
 
+from src.execution.base_executor import BaseExecutor
 from src.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -24,7 +26,10 @@ def _account_info_from_executor(executor) -> dict:
             qty = float(row.get("quantity", 0))
             avg = float(row.get("avg_cost", 0))
             pos_list.append({"symbol": sym, "position": qty, "avgCost": avg})
-    return {"margin_info": {"NetLiquidation": nav, "TotalCashValue": nav}, "positions": pos_list}
+    return {
+        "margin_info": {"NetLiquidation": nav, "TotalCashValue": nav},
+        "positions": pos_list,
+    }
 
 
 class PositionManager:
@@ -39,7 +44,9 @@ class PositionManager:
         self.provider = account_provider
 
     def get_account_info(self) -> dict:
-        if hasattr(self.provider, "get_account_info") and callable(self.provider.get_account_info):
+        if hasattr(self.provider, "get_account_info") and callable(
+            self.provider.get_account_info
+        ):
             return self.provider.get_account_info()
         return _account_info_from_executor(self.provider)
 
@@ -59,7 +66,9 @@ class PositionManager:
             nav = float(margin_info.get("TotalCashValue", 0))
 
         if not positions:
-            return pd.DataFrame(columns=["symbol", "quantity", "avg_cost", "market_value", "weight"])
+            return pd.DataFrame(
+                columns=["symbol", "quantity", "avg_cost", "market_value", "weight"]
+            )
 
         pos_data = []
         for pos in positions:
@@ -69,14 +78,16 @@ class PositionManager:
             current_price = avg_cost
             market_value = qty * current_price if qty != 0 else 0
             weight = market_value / nav if nav > 0 else 0
-            pos_data.append({
-                "symbol": symbol,
-                "quantity": qty,
-                "avg_cost": avg_cost,
-                "current_price": current_price,
-                "market_value": market_value,
-                "weight": weight,
-            })
+            pos_data.append(
+                {
+                    "symbol": symbol,
+                    "quantity": qty,
+                    "avg_cost": avg_cost,
+                    "current_price": current_price,
+                    "market_value": market_value,
+                    "weight": weight,
+                }
+            )
         return pd.DataFrame(pos_data)
 
     def get_account_value(self) -> float:
@@ -134,23 +145,32 @@ class PositionManager:
                 pos_df = self.get_current_positions()
                 if not pos_df.empty and symbol in pos_df["symbol"].values:
                     row = pos_df[pos_df["symbol"] == symbol].iloc[0]
-                    current_price = row.get("current_price", 0) or row.get("avg_cost", 0)
+                    current_price = row.get("current_price", 0) or row.get(
+                        "avg_cost", 0
+                    )
 
-            if symbol in futm and futm[symbol] and float(futm[symbol]) > 0 and current_price > 0:
+            if (
+                symbol in futm
+                and futm[symbol]
+                and float(futm[symbol]) > 0
+                and current_price > 0
+            ):
                 denom = current_price * float(futm[symbol])
             else:
                 denom = current_price
             qty = int(round(abs(delta_d) / denom)) if denom > 0 else 0
             side = "BUY" if delta_w > 0 else "SELL" if delta_w < 0 else "HOLD"
-            trades.append({
-                "symbol": symbol,
-                "current_weight": current_aligned[symbol],
-                "optimal_weight": optimal_aligned[symbol],
-                "delta_weight": delta_w,
-                "delta_dollars": delta_d,
-                "current_price": current_price,
-                "quantity": qty if should_trade else 0,
-                "side": side,
-                "should_trade": should_trade,
-            })
+            trades.append(
+                {
+                    "symbol": symbol,
+                    "current_weight": current_aligned[symbol],
+                    "optimal_weight": optimal_aligned[symbol],
+                    "delta_weight": delta_w,
+                    "delta_dollars": delta_d,
+                    "current_price": current_price,
+                    "quantity": qty if should_trade else 0,
+                    "side": side,
+                    "should_trade": should_trade,
+                }
+            )
         return pd.DataFrame(trades)

@@ -5,6 +5,7 @@ Quarterly retrain pipeline:
 3) Promotion gate vs baseline
 4) Self-schedule next run via Windows Task Scheduler
 """
+
 from __future__ import annotations
 
 import json
@@ -175,9 +176,15 @@ def _promotion_gate(new_metrics: dict) -> int:
 
     if FACTORY_WINNER_BAK_PATH.exists():
         FACTORY_WINNER_BAK_PATH.replace(FACTORY_WINNER_PATH)
-        print("[STEP 3] Promotion rejected; restored previous factory_winner.json.", flush=True)
+        print(
+            "[STEP 3] Promotion rejected; restored previous factory_winner.json.",
+            flush=True,
+        )
     else:
-        print("[STEP 3][WARN] Promotion rejected, but no backup exists to restore.", flush=True)
+        print(
+            "[STEP 3][WARN] Promotion rejected, but no backup exists to restore.",
+            flush=True,
+        )
     return 2
 
 
@@ -207,7 +214,10 @@ def _schedule_next_run() -> None:
         msg = (res.stderr or res.stdout or "").strip()
         print(f"[STEP 4][WARN] schtasks exit {res.returncode}: {msg}", flush=True)
     else:
-        print(f"[STEP 4] Scheduled AITrading_QuarterlyRetrain on {next_date_str} at 06:00.", flush=True)
+        print(
+            f"[STEP 4] Scheduled AITrading_QuarterlyRetrain on {next_date_str} at 06:00.",
+            flush=True,
+        )
 
 
 def main() -> int:
@@ -215,7 +225,9 @@ def main() -> int:
 
     step1 = _run_factory_force_retrain()
     if step1 != 0:
-        print(f"[RETRAIN][ERROR] Step 1 failed with exit {step1}. Aborting.", flush=True)
+        print(
+            f"[RETRAIN][ERROR] Step 1 failed with exit {step1}. Aborting.", flush=True
+        )
         return 1
     print("[STEP 1] Factory retrain completed.", flush=True)
 

@@ -54,7 +54,9 @@ def _load_prices_and_context():
     data_dir = config["data_dir"]
     tickers = _discover_tickers(data_dir)
     if not tickers:
-        raise FileNotFoundError("No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs.")
+        raise FileNotFoundError(
+            "No CSV tickers found under data_dir; check data_config.yaml and CSV subdirs."
+        )
     prices_dict = load_prices(data_dir, tickers)
     if not prices_dict:
         raise ValueError("load_prices returned empty; check data_dir and tickers.")

@@ -2,6 +2,7 @@
 Minimal type aliases / data structures for data_context and context
 passed between engines. No behavior; caller-specific shape.
 """
+
 from __future__ import annotations
 
 from typing import Any

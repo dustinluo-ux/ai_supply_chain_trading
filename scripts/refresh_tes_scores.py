@@ -3,6 +3,7 @@ Refresh TES proxy scores (Damodaran anchor) for universe tickers → DATA_DIR/te
 
 See docs/DECISIONS.md D023. Fail-open defaults; atomic write.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -113,13 +114,19 @@ def _compute_multiplier(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Refresh TES proxy scores → DATA_DIR/tes_scores.json")
-    parser.add_argument("--dry-run", action="store_true", help="Print scores; do not write file")
+    parser = argparse.ArgumentParser(
+        description="Refresh TES proxy scores → DATA_DIR/tes_scores.json"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print scores; do not write file"
+    )
     args = parser.parse_args()
 
     tes_enabled, tes_min_mult, tes_score_cap = _load_tes_config()
     if not tes_enabled and not args.dry_run:
-        print("[TES] tes_enabled=false in strategy_params — nothing written.", flush=True)
+        print(
+            "[TES] tes_enabled=false in strategy_params — nothing written.", flush=True
+        )
         return 0
 
     tickers = _load_universe_tickers()

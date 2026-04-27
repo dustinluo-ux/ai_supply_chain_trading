@@ -3,6 +3,7 @@ Canonical target-weight pipeline: regime + spine (SignalEngine -> PolicyEngine -
 Single place for building target weights; used by backtest and execution entrypoints.
 Phase 3 (DECISIONS.md D021): optional ML blend when use_ml true — load model once, blend 0.7*base + 0.3*ML.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,10 +23,14 @@ _ML_PIPELINE_CACHE = None
 _ML_MODEL_PATH_CACHED: str | None = None
 
 
-def _news_features_for_date(ticker: str, as_of: pd.Timestamp, news_signals: dict) -> dict[str, float]:
+def _news_features_for_date(
+    ticker: str, as_of: pd.Timestamp, news_signals: dict
+) -> dict[str, float]:
     """Compute news-derived feature values (same logic as extract_features_for_date). Returns dict with news_supply, news_sentiment, sentiment_velocity, news_spike."""
     news_signals = news_signals or {}
-    date_str = as_of.strftime("%Y-%m-%d") if isinstance(as_of, pd.Timestamp) else str(as_of)
+    date_str = (
+        as_of.strftime("%Y-%m-%d") if isinstance(as_of, pd.Timestamp) else str(as_of)
+    )
     ticker_news = news_signals.get(ticker, {})
     news = ticker_news.get(date_str) or ticker_news.get(as_of) or {}
     if news is None:
@@ -38,22 +43,35 @@ def _news_features_for_date(ticker: str, as_of: pd.Timestamp, news_signals: dict
         past_str = past_date.strftime("%Y-%m-%d")
         if past_str in ticker_news:
             past_news = ticker_news.get(past_str) or {}
-            past_sentiment = float(past_news.get("sentiment_score", past_news.get("sentiment", 0.5)))
+            past_sentiment = float(
+                past_news.get("sentiment_score", past_news.get("sentiment", 0.5))
+            )
             break
-    sentiment_velocity = (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+    sentiment_velocity = (
+        (news_sentiment - past_sentiment) if past_sentiment is not None else 0.0
+    )
     supply_values = []
     for d in range(1, 21):
         back_str = (as_of - pd.Timedelta(days=d)).strftime("%Y-%m-%d")
         if back_str not in ticker_news:
             continue
         back_news = ticker_news.get(back_str) or {}
-        supply_values.append(float(back_news.get("supply_chain_score", back_news.get("supply_chain", 0.5))))
+        supply_values.append(
+            float(
+                back_news.get("supply_chain_score", back_news.get("supply_chain", 0.5))
+            )
+        )
     if len(supply_values) >= 5:
         mean_supply = float(np.mean(supply_values))
         news_spike = (news_supply / mean_supply) if mean_supply > 0 else 1.0
     else:
         news_spike = 1.0
-    return {"news_supply": news_supply, "news_sentiment": news_sentiment, "sentiment_velocity": sentiment_velocity, "news_spike": news_spike}
+    return {
+        "news_supply": news_supply,
+        "news_sentiment": news_sentiment,
+        "sentiment_velocity": sentiment_velocity,
+        "news_spike": news_spike,
+    }
 
 
 def _build_features_from_precomputed(
@@ -110,12 +128,21 @@ def apply_ml_blend(
     if not _model_cfg_path.exists():
         return week_scores
     import yaml as _yaml
+
     with open(_model_cfg_path, "r", encoding="utf-8") as _f:
         _model_cfg = _yaml.safe_load(_f)
-    _use_ml = use_ml_override if use_ml_override is not None else _model_cfg.get("use_ml", False)
+    _use_ml = (
+        use_ml_override
+        if use_ml_override is not None
+        else _model_cfg.get("use_ml", False)
+    )
     if not _use_ml:
         return week_scores
-    _ml_blend_weight = float(_model_cfg.get("models", {}).get("ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)))
+    _ml_blend_weight = float(
+        _model_cfg.get("models", {}).get(
+            "ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)
+        )
+    )
     if ml_blend_weight_override is not None:
         _ml_blend_weight = float(ml_blend_weight_override)
     # model_path_override (from --track A/B) takes priority over config
@@ -134,9 +161,12 @@ def apply_ml_blend(
         try:
             from src.models.model_factory import MODEL_REGISTRY
             from src.models.train_pipeline import ModelTrainingPipeline as _MLPipeline
+
             _active = _model_cfg.get("active_model", "ridge")
             _ML_MODEL_CACHE = MODEL_REGISTRY[_active].load_model(str(_path))
-            _ML_PIPELINE_CACHE = _MLPipeline(str(_root / "config" / "model_config.yaml"))
+            _ML_PIPELINE_CACHE = _MLPipeline(
+                str(_root / "config" / "model_config.yaml")
+            )
             _ML_MODEL_PATH_CACHED = str(_path)
         except Exception as _e:
             logging.warning("ML model load failed (apply_ml_blend): %s", _e)
@@ -153,7 +183,9 @@ def apply_ml_blend(
                 _t, as_of, precomputed_indicators[_t], _news_signals, _feature_names
             )
         if _feats is None and not precomputed_indicators:
-            _feats = _ML_PIPELINE_CACHE.extract_features_for_date(_t, as_of, prices_dict, _news_signals)
+            _feats = _ML_PIPELINE_CACHE.extract_features_for_date(
+                _t, as_of, prices_dict, _news_signals
+            )
         if _feats is not None:
             _X_list.append(_feats)
             _ticker_list.append(_t)
@@ -166,7 +198,9 @@ def apply_ml_blend(
         _ml_scaled = (_ml_raw - _mn) / (_mx - _mn)
     else:
         _ml_scaled = np.full_like(_ml_raw, 0.5)
-    _ml_score = {_ticker_list[_i]: float(_ml_scaled[_i]) for _i in range(len(_ticker_list))}
+    _ml_score = {
+        _ticker_list[_i]: float(_ml_scaled[_i]) for _i in range(len(_ticker_list))
+    }
     for _t in week_scores:
         if _t not in _ml_score:
             _ml_score[_t] = 0.5
@@ -197,7 +231,9 @@ def _spy_benchmark_series(data_dir: Path) -> Optional[tuple[pd.Series, pd.Series
         if "close" not in df.columns or len(df) < SMA_KILL_SWITCH_DAYS:
             return None
         close = df["close"]
-        sma = close.rolling(SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS).mean()
+        sma = close.rolling(
+            SMA_KILL_SWITCH_DAYS, min_periods=SMA_KILL_SWITCH_DAYS
+        ).mean()
         return (close, sma)
     except Exception:
         return None
@@ -243,7 +279,11 @@ def compute_target_weights(
                 as_of=pd.Timestamp(as_of),
                 weights={str(t): _D("0") for t in tickers},
                 scores={},
-                construction_meta={"top_n": top_n, "three_layer_engine_weight": 0.0, "use_layered": False},
+                construction_meta={
+                    "top_n": top_n,
+                    "three_layer_engine_weight": 0.0,
+                    "use_layered": False,
+                },
             )
             return (out, _aux_early)
         return out
@@ -263,13 +303,24 @@ def compute_target_weights(
     if spy_close_native is not None:
         from src.signals.weight_model import get_regime_hmm
 
-        regime_state, _ = get_regime_hmm(spy_close_native, as_of, min_obs=60, n_components=3)
-        if regime_state is None and kill_switch_active and spy_close_series is not None and spy_sma_series is not None:
+        regime_state, _ = get_regime_hmm(
+            spy_close_native, as_of, min_obs=60, n_components=3
+        )
+        if (
+            regime_state is None
+            and kill_switch_active
+            and spy_close_series is not None
+            and spy_sma_series is not None
+        ):
             up_to = spy_close_series.index[spy_close_series.index <= as_of]
             if len(up_to) > 0:
                 last_d = up_to[-1]
                 spy_cl = spy_close_series.loc[last_d]
-                sma_val = spy_sma_series.loc[last_d] if last_d in spy_sma_series.index else None
+                sma_val = (
+                    spy_sma_series.loc[last_d]
+                    if last_d in spy_sma_series.index
+                    else None
+                )
                 if pd.notna(spy_cl) and sma_val is not None and not pd.isna(sma_val):
                     spy_above_sma200 = bool(spy_cl >= sma_val)
                     regime_state = "BULL" if spy_above_sma200 else "BEAR"
@@ -278,6 +329,7 @@ def compute_target_weights(
     _news_dir = None
     try:
         import yaml
+
         _root = Path(__file__).resolve().parent.parent.parent
         _cfg_path = _root / "config" / "config.yaml"
         if _cfg_path.exists():
@@ -286,9 +338,15 @@ def compute_target_weights(
             _news = _cfg.get("news", {})
             if _news.get("enabled", False):
                 _path_str = _news.get("data_dir", "data/news")
-                _full = (_root / _path_str) if not Path(_path_str).is_absolute() else Path(_path_str)
+                _full = (
+                    (_root / _path_str)
+                    if not Path(_path_str).is_absolute()
+                    else Path(_path_str)
+                )
                 if _full.is_dir():
-                    _news_dir = _path_str if not Path(_path_str).is_absolute() else str(_full)
+                    _news_dir = (
+                        _path_str if not Path(_path_str).is_absolute() else str(_full)
+                    )
     except Exception:
         pass
 
@@ -297,7 +355,11 @@ def compute_target_weights(
         "tickers": tickers,
         "weight_mode": weight_mode,
         "regime_state": regime_state,
-        "spy_above_sma200": spy_above_sma200 if weight_mode == "regime" and regime_state is None else None,
+        "spy_above_sma200": (
+            spy_above_sma200
+            if weight_mode == "regime" and regime_state is None
+            else None
+        ),
         "category_weights_override": None,
         "news_dir": _news_dir,
         "sector_sentiments_this_week": {},
@@ -310,11 +372,16 @@ def compute_target_weights(
     three_layer_engine_weight = 0.0
     try:
         from src.utils.config_manager import get_config as _get_cfg
-        use_layered = bool(_get_cfg().get_param("strategy_params.use_layered_engine", False))
+
+        use_layered = bool(
+            _get_cfg().get_param("strategy_params.use_layered_engine", False)
+        )
         from src.signals.layered_signal_engine import load_layered_config
 
         _layered_cfg = load_layered_config()
-        three_layer_engine_weight = float((_layered_cfg or {}).get("three_layer_engine_weight", 0.0))
+        three_layer_engine_weight = float(
+            (_layered_cfg or {}).get("three_layer_engine_weight", 0.0)
+        )
     except Exception:
         pass
     week_scores, aux = signal_engine.generate(as_of, tickers, data_context)
@@ -326,22 +393,40 @@ def compute_target_weights(
     _model_cfg_path = _root / "config" / "model_config.yaml"
     if _model_cfg_path.exists():
         import yaml as _yaml
+
         with open(_model_cfg_path, "r", encoding="utf-8") as _f:
             _model_cfg = _yaml.safe_load(_f)
-        _use_ml = use_ml_override if use_ml_override is not None else _model_cfg.get("use_ml", False)
+        _use_ml = (
+            use_ml_override
+            if use_ml_override is not None
+            else _model_cfg.get("use_ml", False)
+        )
         if _use_ml:
-            _ml_bw = float(_model_cfg.get("models", {}).get("ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)))
+            _ml_bw = float(
+                _model_cfg.get("models", {}).get(
+                    "ml_blend_weight", _model_cfg.get("ml_blend_weight", 0.3)
+                )
+            )
             global _ML_MODEL_CACHE, _ML_PIPELINE_CACHE
             if _ML_MODEL_CACHE is None:
                 _path = _model_cfg.get("training", {}).get("model_path")
                 if _path:
-                    _path = (_root / _path) if not Path(_path).is_absolute() else Path(_path)
+                    _path = (
+                        (_root / _path)
+                        if not Path(_path).is_absolute()
+                        else Path(_path)
+                    )
                     try:
                         from src.models.model_factory import MODEL_REGISTRY
-                        from src.models.train_pipeline import ModelTrainingPipeline as _MLPipeline
+                        from src.models.train_pipeline import (
+                            ModelTrainingPipeline as _MLPipeline,
+                        )
+
                         _active = _model_cfg.get("active_model", "ridge")
                         _ML_MODEL_CACHE = MODEL_REGISTRY[_active].load_model(str(_path))
-                        _ML_PIPELINE_CACHE = _MLPipeline(str(_root / "config" / "model_config.yaml"))
+                        _ML_PIPELINE_CACHE = _MLPipeline(
+                            str(_root / "config" / "model_config.yaml")
+                        )
                     except Exception as _e:
                         logging.warning("ML model load failed (fail-open): %s", _e)
                         _ML_MODEL_CACHE = None
@@ -350,7 +435,9 @@ def compute_target_weights(
                 _news_signals = data_context.get("news_signals") or {}
                 _X_list, _ticker_list = [], []
                 for _t in week_scores:
-                    _feats = _ML_PIPELINE_CACHE.extract_features_for_date(_t, as_of, prices_dict, _news_signals)
+                    _feats = _ML_PIPELINE_CACHE.extract_features_for_date(
+                        _t, as_of, prices_dict, _news_signals
+                    )
                     if _feats is not None:
                         _X_list.append(_feats)
                         _ticker_list.append(_t)
@@ -362,7 +449,10 @@ def compute_target_weights(
                         _ml_scaled = (_ml_raw - _mn) / (_mx - _mn)
                     else:
                         _ml_scaled = np.full_like(_ml_raw, 0.5)
-                    _ml_score = {_ticker_list[_i]: float(_ml_scaled[_i]) for _i in range(len(_ticker_list))}
+                    _ml_score = {
+                        _ticker_list[_i]: float(_ml_scaled[_i])
+                        for _i in range(len(_ticker_list))
+                    }
                     for _t in week_scores:
                         if _t not in _ml_score:
                             _ml_score[_t] = 0.5
@@ -381,6 +471,7 @@ def compute_target_weights(
     _vol_cfg_path = _root / "config" / "technical_master_score.yaml"
     if _vol_cfg_path.exists():
         import yaml as _yaml_vol
+
         with open(_vol_cfg_path, "r", encoding="utf-8") as _f2:
             _vol_cfg = _yaml_vol.safe_load(_f2)
         _vf = _vol_cfg.get("volatility_filter") or {}
@@ -398,7 +489,11 @@ def compute_target_weights(
                 _slice = _df[_df.index <= as_of]
                 if _slice is None or len(_slice) < 60:
                     continue
-                _close = _slice["close"] if isinstance(_slice["close"], pd.Series) else _slice.loc[:, "close"]
+                _close = (
+                    _slice["close"]
+                    if isinstance(_slice["close"], pd.Series)
+                    else _slice.loc[:, "close"]
+                )
                 _close = _close.sort_index()
                 _log_ret = np.log(_close / _close.shift(1)).dropna()
                 if len(_log_ret) < 20:
@@ -419,7 +514,11 @@ def compute_target_weights(
                     _vol_triggered_dict[_t] = True
                     logging.warning(
                         "[VolFilter] %s vol=%.3f (p%.0f=%.3f) → score scaled by %.2f",
-                        _t, _today_vol, _pct, _threshold, _scale,
+                        _t,
+                        _today_vol,
+                        _pct,
+                        _threshold,
+                        _scale,
                     )
                 else:
                     _vol_triggered_dict[_t] = False
@@ -437,11 +536,21 @@ def compute_target_weights(
             if _row is None:
                 continue
             _entry = {"ticker": _t, "date": as_of}
-            for _col in ["rsi_norm", "macd_norm", "cmf_norm", "momentum_avg", "volume_ratio_norm"]:
-                _entry[_col] = float(_row.get(_col, 0.5)) if hasattr(_row, "get") else 0.5
+            for _col in [
+                "rsi_norm",
+                "macd_norm",
+                "cmf_norm",
+                "momentum_avg",
+                "volume_ratio_norm",
+            ]:
+                _entry[_col] = (
+                    float(_row.get(_col, 0.5)) if hasattr(_row, "get") else 0.5
+                )
             # news signals
             _ns = (data_context.get("news_signals") or {}).get(_t, {})
-            _dk = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
+            _dk = (
+                as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)
+            )
             _nd = _ns.get(_dk) or {}
             _entry["news_sentiment"] = float(_nd.get("sentiment_score", 0.5))
             _entry["news_supply"] = float(_nd.get("supply_chain_score", 0.5))
@@ -454,14 +563,24 @@ def compute_target_weights(
         if _rows:
             panel_df = _pd.DataFrame(_rows)
             # merge fundamentals from parquet if available
-            _data_dir = _Path(os.getenv("DATA_DIR", "C:/ai_supply_chain_trading/trading_data"))
+            _data_dir = _Path(
+                os.getenv("DATA_DIR", "C:/ai_supply_chain_trading/trading_data")
+            )
             _fund_path = _data_dir / "fundamentals" / "quarterly_signals.parquet"
             if _fund_path.exists():
                 _fund = _pd.read_parquet(str(_fund_path))
-                _fund["period_end"] = _pd.to_datetime(_fund["period_end"])
+                _fund["period_end"] = _pd.to_datetime(
+                    _fund["period_end"], utc=True
+                ).dt.tz_convert(None)
                 if "filing_date" in _fund.columns:
-                    _fund["filing_date"] = _pd.to_datetime(_fund["filing_date"], errors="coerce")
-                _as_of_ts = _pd.Timestamp(as_of)
+                    _fund["filing_date"] = _pd.to_datetime(
+                        _fund["filing_date"], errors="coerce", utc=True
+                    ).dt.tz_convert(None)
+                _as_of_ts = (
+                    _pd.Timestamp(as_of).tz_convert(None)
+                    if _pd.Timestamp(as_of).tzinfo is not None
+                    else _pd.Timestamp(as_of)
+                )
                 # Point-in-time: use filing_date when present; else conservative period_end + 45d proxy.
                 _pit_col = "filing_date" if "filing_date" in _fund.columns else None
                 if _pit_col:
@@ -500,13 +619,17 @@ def compute_target_weights(
                 ]
                 _fund_cols_present = [c for c in _fund_cols if c in _fund_pit.columns]
                 _fund_pit = _fund_pit[_fund_cols_present]
-                panel_df = panel_df.drop(columns=["fcf_ttm", "debt_to_equity"], errors="ignore")
+                panel_df = panel_df.drop(
+                    columns=["fcf_ttm", "debt_to_equity"], errors="ignore"
+                )
                 panel_df = panel_df.merge(_fund_pit, on="ticker", how="left")
                 for _c in ["fcf_ttm", "debt_to_equity"]:
                     if _c not in panel_df.columns:
                         panel_df[_c] = float("nan")
     except Exception as _panel_e:
-        logging.warning("panel_df construction failed (%s); layered engine will skip", _panel_e)
+        logging.warning(
+            "panel_df construction failed (%s); layered engine will skip", _panel_e
+        )
         panel_df = None
 
     existing_alpha = dict(scores_to_use)
@@ -535,17 +658,23 @@ def compute_target_weights(
                 _layered_out = compute_layered_positions(panel_df, _layered_cfg)
                 _as_of = pd.Timestamp(as_of).normalize()
                 _today = _layered_out[_layered_out["date"].dt.normalize() == _as_of]
-                three_layer_alpha = _normalize_alpha(_today.set_index("ticker")["final_position_weight"].to_dict())
+                three_layer_alpha = _normalize_alpha(
+                    _today.set_index("ticker")["final_position_weight"].to_dict()
+                )
                 if three_layer_alpha:
                     _w = max(0.0, min(1.0, float(three_layer_engine_weight)))
                     _all_tickers = set(existing_alpha) | set(three_layer_alpha)
                     final_alpha = {
-                        _t: (1.0 - _w) * float(existing_alpha.get(_t, 0.5)) + _w * float(three_layer_alpha.get(_t, 0.5))
+                        _t: (1.0 - _w) * float(existing_alpha.get(_t, 0.5))
+                        + _w * float(three_layer_alpha.get(_t, 0.5))
                         for _t in _all_tickers
                     }
                     scores_to_use = final_alpha
         except Exception as _e:
-            logging.warning("layered_signal_engine blend failed (%s); falling back to existing alpha path", _e)
+            logging.warning(
+                "layered_signal_engine blend failed (%s); falling back to existing alpha path",
+                _e,
+            )
             scores_to_use = existing_alpha
             final_alpha = existing_alpha
     aux["existing_alpha"] = existing_alpha
