@@ -17,14 +17,17 @@ No temp-file cleanup hook is enabled by default. If `.node` temp files become a 
 
 ## Permission Posture
 
-Keep day-to-day Claude Code usage low-prompt for normal repo work, but do not restore broad project-local command allowlists. Global permissions may allow common read/edit/test commands; project-local config should only add narrow repo-specific exceptions.
+**Consolidate to global.** Single developer, same machine = same settings everywhere. Keep all permissions, MCP servers, and hooks in `~/.claude/`.
 
-Hard boundaries:
+**Repo-local only for:**
+- Project-specific MCP path scoping (e.g., filesystem server restricted to project root)
+- Nothing else needed — global config covers all repos
+
+Hard boundaries (apply globally):
 
 - Do not auto-allow recursive deletion, drive-level cleanup, `git reset --hard`, or credential writes.
 - Do not auto-allow live IBKR order submission. Paper order submission still requires explicit command intent such as `--confirm-paper`.
 - Do not use fail-open hooks as safety controls. If a hook can fail open, treat it as telemetry only.
-- Do not let MCP tools read `.env` unless the specific MCP server needs exactly one named key and documents that access.
 
 ## Atomic Write Pattern (Windows)
 
