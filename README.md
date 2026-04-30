@@ -4,6 +4,12 @@
 
 ---
 
+## Why it exists
+
+Most retail algorithmic trading systems require constant manual intervention: re-running backtests, adjusting parameters, deciding when to rebalance. This system eliminates that. Once configured, it ingests fresh price and news data, retrains its own model on a rolling window, validates the strategy out-of-sample, sizes positions, and schedules its own next run — no human steps required between weekly cycles. The goal is a system that could run unattended for months while remaining auditable and overridable at any point.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -251,6 +257,24 @@ python -m spacy download en_core_web_md
 # Execution (IBKR, optional)
 pip install ib_insync
 ```
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in values. `DATA_DIR` is required; all others are optional depending on which pipeline stages you run.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATA_DIR` | Yes | Absolute path to trading data root (`C:\ai_supply_chain_trading\trading_data`) |
+| `GOOGLE_API_KEY` | Yes (pipeline) | Google/Gemini key — sentiment scoring and supply chain analysis |
+| `MARKETAUX_API_KEY` | Yes (pipeline) | Live weekly rebalance news source |
+| `TIINGO_API_KEY` | Yes (news) | 2025-present news data; live ticker tagging |
+| `FMP_API_KEY` | Optional | Fundamentals (20-quarter FCFF pipeline); Starter plan required |
+| `EODHD_API_KEY` | Optional | News backfill and non-US price refresh |
+| `EDGAR_IDENTITY` | Optional | SEC identity string (`"Name email"`) for 10-K XBRL audit checks |
+| `IBKR_HOST` | Optional | TWS host (default `127.0.0.1`) |
+| `IBKR_PORT` | Optional | TWS port (default `7497` for paper, `7496` for live) |
 
 ---
 

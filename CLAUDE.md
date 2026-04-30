@@ -21,6 +21,8 @@ All trading data lives **outside the repo** at: `C:\ai_supply_chain_trading\trad
 
 ## MVP Architecture (as of 2026-04-12)
 
+**Kit:** HEAVY
+
 The system is an autonomous end-to-end trading pipeline. No manual steps required between data refresh and config promotion.
 
 ### Pipeline Chain
@@ -143,3 +145,41 @@ python scripts/run_optimizer.py --n-trials 2 --skip-data
 ```
 
 Expected: two trials, optimizer_results.json written, strategy_params.yaml promoted, schtasks registered. Exit 0.
+
+---
+
+## Modular Rules (load when task touches their domain)
+
+- `.claude/rules/architecture.md` — repo scaffold, ADR conventions, Case Facts rule (all subagents must prepend CASE_FACTS.md verbatim), SPOF per milestone requirement
+- `.claude/rules/testing.md` — coverage gates (≥80%), fixture conventions, Decimal assertion rule, root cause discipline
+- `.claude/rules/windows-maintenance.md` — atomic writes (`.tmp` → `os.replace()`), path hygiene, PowerShell compatibility
+
+## Pipeline Agents (`.claude/agents/`)
+
+All 8 factory pipeline agents are available locally:
+
+| Agent | Role |
+|-------|------|
+| `architect` | Decomposes work into modules + execution graph. Read-only. |
+| `contract-writer` | Writes module contracts to `docs/contracts/`; updates CONTRACT_INDEX.md |
+| `risk-checker` | Validates risk register + SPOF coverage; blocks pipeline on open critical risks |
+| `builder` | Implements against approved contracts only |
+| `spec-reviewer` | Verifies code matches contract spec (contract compliance gate) |
+| `code-reviewer` | Verifies code quality (coverage, naming, Decimal rule, atomic writes) |
+| `reviewer` | Two-stage wrapper: spec-reviewer then code-reviewer in sequence |
+| `integrator` | End-to-end sweep after all builds; ≥80% coverage required |
+
+Global session-utility agents (`researcher`, `compressor`) remain in `~/.claude/agents/`.
+
+## State Files
+
+| File | Purpose |
+|------|---------|
+| `STATE_HANDOFF.md` | Read first on resume. Write before stopping. |
+| `ACTIVE_RISK_REGISTER.md` | Live risks with enforcement status |
+| `STORY.md` | Append-only audit trail — one line per milestone |
+| `PROJECT_MAP.md` | Execution spine and directory guide |
+| `TOOL_INDEX.md` | Python path, validation and ops commands |
+| `docs/CASE_FACTS.md` | Project identity, binding decisions, constraints — subagents prepend verbatim |
+| `docs/contracts/CONTRACT_INDEX.md` | Module boundary source of truth |
+| `docs/decisions/` | Durable architectural decisions (MADR format; template at `docs/adr/0000-template.md`) |

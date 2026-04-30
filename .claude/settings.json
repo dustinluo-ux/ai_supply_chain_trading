@@ -1,0 +1,52 @@
+{
+  "model": "claude-sonnet-4-6",
+  "permissions": {
+    "allow": [
+      "Agent",
+      "Bash(conda*)",
+      "Bash(git -C*)",
+      "Bash(cd * && git log*)",
+      "Bash(cd * && git status*)",
+      "Bash(cd * && git diff*)",
+      "Bash(cd * && git show*)",
+      "Bash(cd * && git branch*)",
+      "Bash(cd * && git remote*)",
+      "Bash(cd * && ls*)",
+      "Bash(cd * && find*)",
+      "Bash(cd * && grep*)",
+      "Bash(cd * && cat*)",
+      "Bash(cd * && head*)",
+      "Bash(cd * && tail*)",
+      "Bash(pytest*)",
+      "Bash(ruff*)",
+      "Bash(mypy*)",
+      "Write(*)",
+      "Edit(*)",
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__list_allowed_directories",
+      "mcp__filesystem__get_file_info"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(sudo*)",
+      "Bash(dd if=*)",
+      "Bash(shred*)",
+      "Bash(wipefs*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "conda run -n wealth python scripts/check_adr.py"
+      }]
+    }]
+  }
+}
